@@ -52,7 +52,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem("auth_token", data.access_token);
       setToken(data.access_token);
       setUser(data.user);
-      router.push("/");
+
+      const targetRoute = data.user?.role?.toLowerCase() === "admin" ? "/admin" : "/";
+      if (typeof window !== "undefined") {
+        window.location.href = targetRoute;
+      } else {
+        router.push(targetRoute);
+      }
     } catch (error) {
       localStorage.removeItem("auth_token");
       setToken(null);
@@ -67,7 +73,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem("auth_token");
     setToken(null);
     setUser(null);
-    router.push("/login");
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    } else {
+      router.push("/login");
+    }
   };
 
   return (

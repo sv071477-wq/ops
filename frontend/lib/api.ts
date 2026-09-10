@@ -3,13 +3,58 @@
 const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
 const API_BASE = rawApiUrl.endsWith("/api/v1") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api/v1`;
 
+export interface Role {
+  id: string;
+  name: string;
+  system_role: "Admin" | "Manager" | "Coordinator" | "Sales" | "Faculty";
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface User {
   id: string;
   email: string;
   full_name: string;
   role: "Admin" | "Manager" | "Coordinator" | "Sales" | "Faculty";
+  role_id?: string | null;
+  role_detail?: Role | null;
+  manager_id?: string | null;
+  manager_name?: string | null;
+  is_manager?: boolean;
+  direct_reports_count?: number;
   is_active: boolean;
   created_at: string;
+}
+
+export interface UserHierarchyNode {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  role_name?: string | null;
+  manager_id?: string | null;
+  direct_reports: UserHierarchyNode[];
+}
+
+export interface CreateUserPayload {
+  email: string;
+  full_name: string;
+  password: string;
+  role?: string;
+  role_id?: string;
+  manager_id?: string;
+  is_active?: boolean;
+}
+
+export interface CreateRolePayload {
+  name: string;
+  system_role: string;
+  is_active?: boolean;
+}
+
+export interface CoordinatorMappingPayload {
+  coordinator_id: string;
+  manager_id: string;
 }
 
 export interface Batch {
@@ -116,7 +161,7 @@ class ApiService {
     return response.json();
   }
 
-  // Auth APIs
+  // Auth & Users APIs
   async login(email: string, password: string): Promise<{ access_token: string; user: User }> {
     return this.request<{ access_token: string; user: User }>("/auth/login", {
       method: "POST",
@@ -126,6 +171,51 @@ class ApiService {
 
   async getMe(): Promise<User> {
     return this.request<User>("/auth/me");
+  }
+
+  async getUsers(): Promise<User[]> {
+    return this.request<User[]>("/auth/users");
+  }
+
+  async getHierarchy(): Promise<UserHierarchyNode[]> {
+    return this.request<UserHierarchyNode[]>("/auth/hierarchy");
+  }
+
+  async createUser(payload: CreateUserPayload): Promise<User> {
+    return this.request<User>("/auth/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getCoordinators(): Promise<User[]> {
+    return this.request<User[]>("/auth/users/coordinators");
+  }
+
+  async assignCoordinator(payload: CoordinatorMappingPayload): Promise<any> {
+    return this.request<any>("/auth/users/coordinator-mapping", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Roles APIs
+  async getRoles(isActive?: boolean): Promise<Role[]> {
+    const query = isActive !== undefined ? `?is_active=${isActive}` : "";
+    return this.request<Role[]>(`/roles${query}`);
+  }
+
+  async createRole(payload: CreateRolePayload): Promise<Role> {
+    return this.request<Role>("/roles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteRole(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/roles/${id}`, {
+      method: "DELETE",
+    });
   }
 
   // Batches APIs

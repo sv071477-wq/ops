@@ -46,13 +46,21 @@ class BatchService:
 
     def list(self, current_user: User, status_filter: Optional[str], domain: Optional[str], category: Optional[str], client_name: Optional[str], search: Optional[str], skip: int, limit: int) -> List[Batch]:
         query = self.db.query(Batch)
-        if current_user.role == "Manager":
-            coordinator_ids = get_managed_coordinator_ids(current_user.id, self.db)
-            query = query.filter(or_(Batch.primary_manager_id == current_user.id, Batch.coordinator_id.in_(coordinator_ids)))
-        elif current_user.role == "Coordinator":
-            query = query.filter(Batch.coordinator_id == current_user.id)
-        elif current_user.role == "Sales":
-            query = query.filter(Batch.sales_spoc_id == current_user.id)
+        user_role_lower = (current_user.role or "").lower()
+
+        if user_role_lower != "admin":
+            subordinate_ids = get_managed_coordinator_ids(current_user.id, self.db)
+            if subordinate_ids or user_role_lower == "manager":
+                team_user_ids = subordinate_ids + [current_user.id]
+                query = query.filter(or_(
+                    Batch.primary_manager_id.in_(team_user_ids),
+                    Batch.coordinator_id.in_(team_user_ids),
+                    Batch.sales_spoc_id.in_(team_user_ids)
+                ))
+            elif user_role_lower == "coordinator":
+                query = query.filter(Batch.coordinator_id == current_user.id)
+            elif user_role_lower == "sales":
+                query = query.filter(Batch.sales_spoc_id == current_user.id)
         if status_filter:
             query = query.filter(Batch.status == status_filter)
         if domain:

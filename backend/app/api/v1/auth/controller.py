@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from app.models.user import User
 from app.schemas.user import (
     UserCreate, UserResponse, UserLogin, Token,
-    CoordinatorMappingCreate, CoordinatorMappingResponse
+    CoordinatorMappingCreate, CoordinatorMappingResponse, UserHierarchyNode
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
@@ -22,6 +22,18 @@ def login(login_data: UserLogin, service: AuthService = Depends(get_auth_service
 def get_me(current_user: User = Depends(get_current_user)) -> Any:
     """Fetch profile of authenticated user."""
     return current_user
+
+
+@router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
+def list_users(service: AuthService = Depends(get_auth_service)) -> Any:
+    """Admin Only: List all organization users with their assigned roles."""
+    return service.list_all_users()
+
+
+@router.get("/hierarchy", response_model=List[UserHierarchyNode], dependencies=[Depends(get_current_user)])
+def get_organization_hierarchy(service: AuthService = Depends(get_auth_service)) -> Any:
+    """Fetch the full organization reporting tree."""
+    return service.get_organization_hierarchy()
 
 
 @router.post("/users", response_model=UserResponse, dependencies=[Depends(require_admin)])

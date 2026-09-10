@@ -20,9 +20,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from sqlalchemy import text
 from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.models.user import User  # noqa: E402
+from app.models.user import User, Role  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,8 +73,25 @@ def main() -> int:
         return 2
 
     Base.metadata.create_all(bind=engine)
+
+    # Auto-add role_id and manager_id columns to existing users table if not present
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL;"))
+            conn.commit()
+    except Exception as e:
+        print(f"Note: Column migration check returned: {e}")
+
     db = SessionLocal()
     try:
+        # Ensure Admin role exists
+        admin_role = db.query(Role).filter(Role.name == "Admin").first()
+        if not admin_role:
+            admin_role = Role(name="Admin", system_role="Admin", is_active=True)
+            db.add(admin_role)
+            db.flush()
+
         admin = db.query(User).filter(User.email == args.email.lower().strip()).first()
         if admin is None:
             admin = User(email=args.email.lower().strip())
@@ -84,6 +102,7 @@ def main() -> int:
 
         admin.full_name = args.full_name.strip()
         admin.role = "Admin"
+        admin.role_id = admin_role.id
         admin.is_active = True
         admin.hashed_password = get_password_hash(password)
         db.commit()

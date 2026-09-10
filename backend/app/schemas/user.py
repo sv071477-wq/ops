@@ -4,10 +4,35 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, ConfigDict
 
 
+class RoleBase(BaseModel):
+    name: str
+    system_role: str = "Coordinator"  # Admin, Manager, Coordinator, Sales, Faculty
+    is_active: bool = True
+
+
+class RoleCreate(RoleBase):
+    pass
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    system_role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class RoleResponse(RoleBase):
+    id: UUID
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UserBase(BaseModel):
     email: EmailStr
     full_name: str
     role: str = "Coordinator"  # Admin, Manager, Coordinator, Sales, Faculty
+    role_id: Optional[UUID] = None
+    manager_id: Optional[UUID] = None
     is_active: bool = True
 
 
@@ -19,6 +44,8 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     role: Optional[str] = None
+    role_id: Optional[UUID] = None
+    manager_id: Optional[UUID] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
 
@@ -26,6 +53,22 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     id: UUID
     created_at: datetime
+    role_detail: Optional[RoleResponse] = None
+    manager_name: Optional[str] = None
+    is_manager: bool = False
+    direct_reports_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserHierarchyNode(BaseModel):
+    id: UUID
+    full_name: str
+    email: str
+    role: str
+    role_name: Optional[str] = None
+    manager_id: Optional[UUID] = None
+    direct_reports: List["UserHierarchyNode"] = []
 
     model_config = ConfigDict(from_attributes=True)
 
