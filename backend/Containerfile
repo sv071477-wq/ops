@@ -1,0 +1,45 @@
+# Dockerfile for Enterprise Operations Backend (FastAPI)
+FROM docker.io/library/python:3.11-slim AS builder
+
+LABEL maintainer="Operations Platform Engineering Team"
+LABEL description="FastAPI Backend Service for Enterprise Operations Platform"
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get -o Acquire::ForceIPv4=true update \
+    && apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Final runtime stage
+FROM docker.io/library/python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get -o Acquire::ForceIPv4=true update \
+    && apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \
+        libpq5 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed dependencies from builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Copy application source code
+COPY . .
+
+# Expose FastAPI port
+EXPOSE 8000
+
+# Default startup command
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
