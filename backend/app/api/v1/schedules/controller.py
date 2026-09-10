@@ -12,7 +12,8 @@ from app.schemas.schedule import (
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.services.conflict_engine import ConflictEngine
-from app.services.excel_ingestion import ExcelIngestionService
+from app.api.v1.schedules.service import ScheduleFeatureService
+from app.api.deps_services import get_excel_ingestion_service
 
 router = APIRouter()
 
@@ -54,7 +55,8 @@ def validate_schedule_slots(
 async def ingest_timetable_file(
     file: UploadFile = File(...),
     target_batch_id: Optional[str] = Form(None),
-    current_user: User = Depends(require_coordinator_or_above)
+    current_user: User = Depends(require_coordinator_or_above),
+    service: ExcelIngestionService = Depends(get_excel_ingestion_service)
 ) -> Any:
     """Workflow 2: Extract timetable rows from Excel or CSV without persistence."""
     filename = file.filename or "uploaded_schedule"
@@ -65,7 +67,7 @@ async def ingest_timetable_file(
         )
 
     file_bytes = await file.read()
-    result = ExcelIngestionService.ingest_schedule_file(
+    result = service.ingest_schedule_file(
         file_contents=file_bytes,
         filename=filename,
         target_batch_id=target_batch_id

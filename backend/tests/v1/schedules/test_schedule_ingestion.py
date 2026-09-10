@@ -2,7 +2,7 @@ from io import BytesIO
 
 import pandas as pd
 
-from app.services.excel_ingestion import ExcelIngestionService
+from app.api.v1.schedules.service import ScheduleFeatureService
 
 
 def test_extracts_schedule_rows_from_all_excel_sheets():
@@ -29,7 +29,7 @@ def test_extracts_schedule_rows_from_all_excel_sheets():
         ]).to_excel(writer, sheet_name="Day 2", index=False)
     workbook.seek(0)
 
-    result = ExcelIngestionService.ingest_schedule_file(
+    result = ScheduleFeatureService.ingest_schedule_file(
         file_contents=workbook.getvalue(),
         filename="schedule.xlsx",
         target_batch_id="BATCH-DEFAULT",
@@ -51,7 +51,7 @@ def test_extracts_schedule_rows_from_all_excel_sheets():
 def test_reports_invalid_rows_without_discarding_valid_rows():
     csv_contents = b"Date,Topic,Faculty\n2026-10-15,Valid topic,Dr. Smith\nnot-a-date,,\n"
 
-    result = ExcelIngestionService.ingest_schedule_file(
+    result = ScheduleFeatureService.ingest_schedule_file(
         file_contents=csv_contents,
         filename="schedule.csv",
     )
@@ -68,7 +68,7 @@ def test_reports_invalid_rows_without_discarding_valid_rows():
 def test_missing_date_column_marks_rows_as_failed():
     csv_contents = b"Topic,Faculty\nSQL Workshop,Dr. Smith\n"
 
-    result = ExcelIngestionService.ingest_schedule_file(
+    result = ScheduleFeatureService.ingest_schedule_file(
         file_contents=csv_contents,
         filename="schedule.csv",
     )

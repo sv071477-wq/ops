@@ -1,5 +1,6 @@
+from app.api.v1 import analytics, auth, batches, faculty, fms_sync, schedules
 from fastapi import APIRouter
-from app.api.v1 import auth, batches, schedules, sessions, faculty, fms_sync, analytics
+from app.api.v1 import sessions
 
 api_router = APIRouter()
 
