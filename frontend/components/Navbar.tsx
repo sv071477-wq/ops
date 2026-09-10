@@ -10,16 +10,9 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
-  const { user, logout, switchRoleDemo } = useAuth();
+  const { user, logout } = useAuth();
 
   if (!user) return null;
-
-  const roleColors: Record<string, string> = {
-    Admin: "bg-purple-500/20 text-purple-400 border-purple-500/30",
-    Manager: "bg-sky-500/20 text-sky-400 border-sky-500/30",
-    Coordinator: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-    Sales: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  };
 
   return (
     <header style={{
@@ -66,73 +59,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
               3-Workflow Batch & Governance Platform
             </p>
           </div>
-        </div>
-
-        {/* Quick Role Switcher (For Demo / Multi-Role Testing) */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 600 }}>
-            Switch Persona:
-          </span>
-          <button
-            onClick={() => switchRoleDemo("admin@enterprise-ops.com", "Admin@12345")}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 6,
-              fontSize: "0.75rem",
-              fontWeight: user.role === "Admin" ? 700 : 500,
-              background: user.role === "Admin" ? "rgba(168, 85, 247, 0.25)" : "rgba(30, 41, 59, 0.6)",
-              border: `1px solid ${user.role === "Admin" ? "#a855f7" : "var(--border-subtle)"}`,
-              color: user.role === "Admin" ? "#d8b4fe" : "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            Admin
-          </button>
-          <button
-            onClick={() => switchRoleDemo("manager@enterprise-ops.com", "Manager@12345")}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 6,
-              fontSize: "0.75rem",
-              fontWeight: user.role === "Manager" ? 700 : 500,
-              background: user.role === "Manager" ? "rgba(56, 189, 248, 0.25)" : "rgba(30, 41, 59, 0.6)",
-              border: `1px solid ${user.role === "Manager" ? "#38bdf8" : "var(--border-subtle)"}`,
-              color: user.role === "Manager" ? "#7dd3fc" : "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            Manager
-          </button>
-          <button
-            onClick={() => switchRoleDemo("coordinator@enterprise-ops.com", "Coord@12345")}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 6,
-              fontSize: "0.75rem",
-              fontWeight: user.role === "Coordinator" ? 700 : 500,
-              background: user.role === "Coordinator" ? "rgba(245, 158, 11, 0.25)" : "rgba(30, 41, 59, 0.6)",
-              border: `1px solid ${user.role === "Coordinator" ? "#f59e0b" : "var(--border-subtle)"}`,
-              color: user.role === "Coordinator" ? "#fcd34d" : "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            Coordinator
-          </button>
-          <button
-            onClick={() => switchRoleDemo("sales@enterprise-ops.com", "Sales@12345")}
-            style={{
-              padding: "4px 8px",
-              borderRadius: 6,
-              fontSize: "0.75rem",
-              fontWeight: user.role === "Sales" ? 700 : 500,
-              background: user.role === "Sales" ? "rgba(16, 185, 129, 0.25)" : "rgba(30, 41, 59, 0.6)",
-              border: `1px solid ${user.role === "Sales" ? "#10b981" : "var(--border-subtle)"}`,
-              color: user.role === "Sales" ? "#6ee7b7" : "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            Sales
-          </button>
         </div>
 
         {/* Actions & User Profile */}

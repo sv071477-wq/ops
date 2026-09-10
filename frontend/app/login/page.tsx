@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { Layers, Lock, Mail, ArrowRight, Shield, UserCheck, Briefcase, Sparkles, AlertCircle } from "lucide-react";
+import { Layers, Lock, Mail, ArrowRight, AlertCircle } from "lucide-react";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -17,23 +17,9 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      await login(email.trim().toLowerCase(), password);
     } catch (err: any) {
-      setError(err.message || "Invalid credentials. Please verify your email and password.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleQuickLogin = async (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setError(null);
-    setIsLoading(true);
-    try {
-      await login(demoEmail, demoPass);
-    } catch (err: any) {
-      setError(err.message || "Failed to login with demo credentials");
+      setError(err.message || "Unable to sign in. Verify your email and password and try again.");
     } finally {
       setIsLoading(false);
     }
@@ -109,7 +95,7 @@ export default function LoginPage() {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@enterprise-ops.com"
+                  placeholder="name@company.com"
                   className="glass-input"
                   style={{ paddingLeft: 42 }}
                   required
@@ -127,7 +113,7 @@ export default function LoginPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
+                  placeholder="Enter your password"
                   className="glass-input"
                   style={{ paddingLeft: 42 }}
                   required
@@ -141,74 +127,10 @@ export default function LoginPage() {
               className="btn btn-primary"
               style={{ width: "100%", padding: "12px", marginTop: 8 }}
             >
-              <span>{isLoading ? "Signing in..." : "Sign In to Platform"}</span>
+              <span>{isLoading ? "Signing in..." : "Sign in"}</span>
               <ArrowRight size={18} />
             </button>
           </form>
-
-          {/* Quick Demo Login Switcher */}
-          <div style={{ marginTop: 28, paddingTop: 20, borderTop: "1px solid var(--border-subtle)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-              <Sparkles size={14} color="#38bdf8" />
-              <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase" }}>
-                1-Click Demo Personas
-              </span>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin("admin@enterprise-ops.com", "Admin@12345")}
-                className="btn btn-secondary"
-                style={{ padding: "8px 10px", fontSize: "0.775rem", justifyContent: "flex-start", gap: 8 }}
-              >
-                <Shield size={14} color="#a855f7" />
-                <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-                  <div style={{ fontWeight: 700, color: "#d8b4fe" }}>Admin</div>
-                  <div style={{ fontSize: "0.65rem", color: "var(--text-dim)" }}>Full System Access</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin("manager@enterprise-ops.com", "Manager@12345")}
-                className="btn btn-secondary"
-                style={{ padding: "8px 10px", fontSize: "0.775rem", justifyContent: "flex-start", gap: 8 }}
-              >
-                <UserCheck size={14} color="#38bdf8" />
-                <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-                  <div style={{ fontWeight: 700, color: "#7dd3fc" }}>Manager</div>
-                  <div style={{ fontSize: "0.65rem", color: "var(--text-dim)" }}>Approvals & Gates</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin("coordinator@enterprise-ops.com", "Coord@12345")}
-                className="btn btn-secondary"
-                style={{ padding: "8px 10px", fontSize: "0.775rem", justifyContent: "flex-start", gap: 8 }}
-              >
-                <Layers size={14} color="#f59e0b" />
-                <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-                  <div style={{ fontWeight: 700, color: "#fcd34d" }}>Coordinator</div>
-                  <div style={{ fontSize: "0.65rem", color: "var(--text-dim)" }}>Batch Creation</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin("sales@enterprise-ops.com", "Sales@12345")}
-                className="btn btn-secondary"
-                style={{ padding: "8px 10px", fontSize: "0.775rem", justifyContent: "flex-start", gap: 8 }}
-              >
-                <Briefcase size={14} color="#10b981" />
-                <div style={{ textAlign: "left", lineHeight: 1.2 }}>
-                  <div style={{ fontWeight: 700, color: "#6ee7b7" }}>Sales SPOC</div>
-                  <div style={{ fontSize: "0.65rem", color: "var(--text-dim)" }}>Client Request</div>
-                </div>
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </main>
