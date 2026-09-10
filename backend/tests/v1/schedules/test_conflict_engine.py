@@ -1,6 +1,6 @@
 from decimal import Decimal
 from datetime import datetime, timezone
-from app.services.conflict_engine import ConflictEngine
+from app.api.v1.schedules.conflict_engine import ConflictEngine
 
 
 def test_conflict_engine_detects_daily_overload(db_session):

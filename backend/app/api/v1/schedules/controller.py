@@ -11,8 +11,8 @@ from app.schemas.schedule import (
     ScheduleIngestResponse, ConflictDetail
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
-from app.services.conflict_engine import ConflictEngine
-from app.api.v1.schedules.service import ScheduleFeatureService
+from app.api.v1.schedules.conflict_engine import ConflictEngine
+from app.api.v1.schedules.service import ExcelIngestionService
 from app.api.deps_services import get_excel_ingestion_service
 
 router = APIRouter()

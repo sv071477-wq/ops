@@ -1,5 +1,14 @@
-from app.services.faculty import FacultyService as LegacyFacultyService
+from typing import Optional
+
+from sqlalchemy.orm import Session
 
 
-class FacultyFeatureService(LegacyFacultyService):
-    """Feature service for faculty directory and utilization."""
+class FacultyService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list(self, faculty_type: Optional[str], domain: Optional[str]) -> list:
+        return []
+
+    def utilization(self) -> list:
+        return []

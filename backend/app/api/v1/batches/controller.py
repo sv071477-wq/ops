@@ -1,6 +1,7 @@
 from typing import List, Optional, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
 from app.models.user import User
@@ -12,9 +13,9 @@ from app.api.deps import (
     get_current_user, require_manager_or_admin, require_coordinator_or_above
 )
 from app.api.deps_services import get_batch_service
-from app.api.v1.batches.service import BatchFeatureService as BatchService
-from app.services.gatekeeper import GatekeeperService
-from app.services.notifier import NotificationService
+from app.api.v1.batches.service import BatchService
+from app.api.v1.notifications.service import NotificationService
+from app.core.database import get_db
 
 router = APIRouter()
 
@@ -95,6 +96,7 @@ async def close_batch_gate2(
     id: UUID,
     closure_in: BatchNpsClosureCreate,
     db: Session = Depends(get_db),
+    service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import require_admin
 from app.api.deps_services import get_fms_sync_service
-from app.api.v1.fms_sync.service import FmsSyncFeatureService as FmsSyncService
+from app.api.v1.fms_sync.service import FmsSyncService
 
 router = APIRouter()
 

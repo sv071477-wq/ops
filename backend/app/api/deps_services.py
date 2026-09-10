@@ -2,13 +2,13 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.api.v1.auth.service import AuthFeatureService as AuthService
-from app.api.v1.batches.service import BatchFeatureService as BatchService
-from app.api.v1.analytics.service import AnalyticsFeatureService as AnalyticsService
-from app.api.v1.sessions.service import SessionFeatureService as SessionService
-from app.api.v1.faculty.service import FacultyFeatureService as FacultyService
-from app.api.v1.fms_sync.service import FmsSyncFeatureService as FmsSyncService
-from app.api.v1.schedules.service import ScheduleFeatureService as ExcelIngestionService
+from app.api.v1.auth.service import AuthService
+from app.api.v1.batches.service import BatchService
+from app.api.v1.analytics.service import AnalyticsService
+from app.api.v1.sessions.service import SessionService
+from app.api.v1.faculty.service import FacultyService
+from app.api.v1.fms_sync.service import FmsSyncService
+from app.api.v1.schedules.service import ExcelIngestionService
 
 
 def get_auth_service(db: Session = Depends(get_db)) -> AuthService:

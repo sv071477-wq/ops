@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from app.models.user import User
 from app.api.deps import get_current_user, require_manager_or_admin, require_coordinator_or_above
 from app.api.deps_services import get_faculty_service
-from app.api.v1.faculty.service import FacultyFeatureService as FacultyService
+from app.api.v1.faculty.service import FacultyService
 
 router = APIRouter()
 

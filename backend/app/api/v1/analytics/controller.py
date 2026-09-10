@@ -4,7 +4,7 @@ from app.models.user import User
 from app.schemas.analytics import ManagerDashboardSummary
 from app.api.deps import get_current_user, require_manager_or_admin
 from app.api.deps_services import get_analytics_service
-from app.api.v1.analytics.service import AnalyticsFeatureService as AnalyticsService
+from app.api.v1.analytics.service import AnalyticsService
 
 router = APIRouter()
 

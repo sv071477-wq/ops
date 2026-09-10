@@ -8,7 +8,7 @@ from app.schemas.user import (
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
-from app.api.v1.auth.service import AuthFeatureService as AuthService
+from app.api.v1.auth.service import AuthService
 
 router = APIRouter()
 

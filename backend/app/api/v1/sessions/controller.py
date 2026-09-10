@@ -8,8 +8,8 @@ from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.deps_services import get_session_service
-from app.api.v1.sessions.service import SessionFeatureService as SessionService
-from app.services.notifier import NotificationService
+from app.api.v1.sessions.service import SessionService
+from app.api.v1.notifications.service import NotificationService
 
 router = APIRouter()
 

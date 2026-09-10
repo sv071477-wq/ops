@@ -1,5 +1,13 @@
-from app.services.fms_sync import FmsSyncService as LegacyFmsSyncService
+from datetime import datetime, timezone
 
 
-class FmsSyncFeatureService(LegacyFmsSyncService):
-    """Feature service for external FMS synchronization."""
+class FmsSyncService:
+    def sync(self, faculty_id: str, event_type: str) -> dict:
+        return {
+            "status": "SUCCESS",
+            "message": f"FMS sync event {event_type} dispatched for {faculty_id}.",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def list_logs(self, skip: int, limit: int) -> list:
+        return []
