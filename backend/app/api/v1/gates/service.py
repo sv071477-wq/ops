@@ -67,11 +67,14 @@ class GatekeeperService:
 
         # Update batch metrics directly on Batch table
         batch.batch_nps = closure_data.nps_score
-        if closure_data.average_feedback_score:
+        if closure_data.average_feedback_score is not None:
             batch.batch_avg_feedback = closure_data.average_feedback_score
         batch.retrospective_notes = closure_data.retrospective_notes
-        batch.status = "Completed"
-        batch.is_schema_locked = True
+        if batch.batch_nps is not None and batch.batch_avg_feedback is not None:
+            batch.status = "Completed"
+            batch.is_schema_locked = True
+        else:
+            batch.status = "Ongoing"
         batch.updated_at = datetime.now(timezone.utc)
 
         db.commit()

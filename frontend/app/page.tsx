@@ -92,9 +92,20 @@ export default function DashboardPage() {
 
   const canApprove = user.role === "Admin" || user.role === "Manager";
 
+  const handleSubmitBatch = async (batch: Batch) => {
+    try {
+      await api.submitBatch(batch.id);
+      await fetchBatches();
+    } catch (err: any) {
+      alert(err.message || "Failed to submit batch for approval");
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const s = status.toLowerCase();
     if (s === "requested") return <span className="badge badge-requested">Requested</span>;
+    if (s === "approval 1 pending") return <span className="badge badge-requested">Approval 1 Pending</span>;
+    if (s === "approval 2 pending") return <span className="badge badge-requested">Approval 2 Pending</span>;
     if (s === "approved") return <span className="badge badge-approved">Approved</span>;
     if (s === "ongoing") return <span className="badge badge-ongoing">Ongoing</span>;
     if (s === "completed") return <span className="badge badge-completed">Completed</span>;
@@ -436,7 +447,17 @@ export default function DashboardPage() {
                       {/* Actions */}
                       <td style={{ padding: "16px 18px", textAlign: "right" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
-                          {canApprove && batch.status === "Requested" && (
+                          {batch.status === "Requested" && (
+                            <button
+                              onClick={() => handleSubmitBatch(batch)}
+                              className="btn btn-primary"
+                              style={{ padding: "6px 12px", fontSize: "0.8rem" }}
+                            >
+                              <CheckCircle2 size={14} />
+                              <span>Submit for Approval</span>
+                            </button>
+                          )}
+                          {canApprove && (batch.status === "Approval 1 Pending" || batch.status === "Approval 2 Pending") && (
                             <button
                               onClick={() => setSelectedBatchForApproval(batch)}
                               className="btn btn-primary"

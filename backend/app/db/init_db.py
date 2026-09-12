@@ -2,7 +2,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.core.database import SessionLocal, Base, engine
 from app.models.user import User, UserManagerMapping, Role
-from app.models.batch import Batch
+from app.models.batch import (
+    Accommodation,
+    ApprovalConfiguration,
+    Batch,
+    BatchCategory,
+    DeliveryMode,
+    Entity,
+)
+from app.models.session import TrainingSession
 
 
 def init_db(db: Session = None) -> None:
@@ -40,6 +48,20 @@ def init_db(db: Session = None) -> None:
                     is_active=True
                 )
                 db.add(role_obj)
+
+        default_options = [
+            (BatchCategory, ["Bootcamp", "RBT", "PJP", "Workshop"]),
+            (DeliveryMode, ["Online", "F2F", "Blended"]),
+            (Accommodation, ["Residential", "Non-Residential"]),
+            (Entity, ["Default"]),
+        ]
+        for option_model, names in default_options:
+            for name in names:
+                if not db.query(option_model).filter(option_model.name == name).first():
+                    db.add(option_model(name=name, is_active=True))
+
+        if not db.query(ApprovalConfiguration).first():
+            db.add(ApprovalConfiguration())
 
         db.commit()
         print("Database schema initialized and base roles configured (zero demo data).")

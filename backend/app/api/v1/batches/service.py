@@ -6,9 +6,16 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models.batch import Batch
+from app.models.batch import (
+    Accommodation,
+    ApprovalConfiguration,
+    Batch,
+    BatchCategory,
+    DeliveryMode,
+    Entity,
+)
 from app.models.user import User
-from app.schemas.batch import BatchApprove, BatchCreate, BatchUpdate
+from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreate, BatchUpdate
 from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.deps import get_managed_coordinator_ids
 from app.api.v1.gates.service import GatekeeperService
@@ -21,13 +28,112 @@ class BatchService:
     def create(self, batch_in: BatchCreate, current_user: User) -> Batch:
         if self.db.query(Batch).filter(Batch.batch_id == batch_in.batch_id).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Batch ID '{batch_in.batch_id}' is already registered.")
-        batch_data = batch_in.model_dump()
+        batch_data = batch_in.model_dump(exclude_none=True)
+        batch_data.pop("batch_request_date", None)
+        batch_data["calendar_days"] = self._calendar_days(batch_data.get("start_date"), batch_data.get("end_date"))
+        batch_data["category_id"] = self._option_id(BatchCategory, batch_data.get("category_id"), batch_data.get("category", "Bootcamp"))
+        batch_data["delivery_mode_id"] = self._option_id(DeliveryMode, batch_data.get("delivery_mode_id"), batch_data.get("delivery_mode", "Online"))
+        batch_data["accommodation_id"] = self._option_id(Accommodation, batch_data.get("accommodation_id"), batch_data.get("residential_type", "NR"))
+        batch_data["entity_id"] = self._option_id(Entity, batch_data.get("entity_id"), "Default")
+        batch_data["batch_request_date"] = datetime.now(timezone.utc)
+        batch_data["status"] = "Requested"
+        config = self.db.query(ApprovalConfiguration).first()
+        if config:
+            batch_data["approver_1_id"] = config.approver_1_id
+            batch_data["approver_2_id"] = config.approver_2_id
         if current_user.role == "Coordinator" and not batch_data.get("coordinator_id"):
             batch_data["coordinator_id"] = current_user.id
         elif current_user.role == "Sales" and not batch_data.get("sales_spoc_id"):
             batch_data["sales_spoc_id"] = current_user.id
         batch = Batch(**batch_data)
         self.db.add(batch)
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    @staticmethod
+    def _calendar_days(start_date, end_date) -> int:
+        if not start_date or not end_date:
+            return 0
+        if end_date < start_date:
+            raise HTTPException(status_code=422, detail="end_date must be on or after start_date")
+        return (end_date.date() - start_date.date()).days
+
+    def _option_id(self, model, option_id, legacy_name: str):
+        if option_id:
+            option = self.db.query(model).filter(model.id == option_id, model.is_active.is_(True)).first()
+            if not option:
+                raise HTTPException(status_code=422, detail=f"Inactive or invalid {model.__tablename__} option")
+            return option.id
+        normalized = "Non-Residential" if legacy_name == "NR" else "Residential" if legacy_name == "R" else legacy_name
+        option = self.db.query(model).filter(model.name == normalized).first()
+        if not option:
+            option = model(name=normalized, is_active=True)
+            self.db.add(option)
+            self.db.flush()
+        return option.id
+
+    def get_approval_config(self) -> ApprovalConfiguration:
+        config = self.db.query(ApprovalConfiguration).first()
+        if not config:
+            config = ApprovalConfiguration()
+            self.db.add(config)
+            self.db.commit()
+            self.db.refresh(config)
+        return config
+
+    def update_approval_config(self, config_in: ApprovalConfigurationBase) -> ApprovalConfiguration:
+        config = self.get_approval_config()
+        values = config_in.model_dump(exclude_unset=True)
+        for field, value in values.items():
+            if value:
+                user = self.db.query(User).filter(User.id == value, User.is_active.is_(True)).first()
+                if not user or user.role.lower() not in {"admin", "manager"}:
+                    raise HTTPException(status_code=422, detail=f"{field} must reference an active Admin or Manager")
+            setattr(config, field, value)
+        self.db.commit()
+        self.db.refresh(config)
+        return config
+
+    def submit_for_approval(self, batch_id: UUID) -> Batch:
+        batch = self.get(batch_id)
+        config = self.get_approval_config()
+        if not config.approver_1_id or not config.approver_2_id:
+            raise HTTPException(status_code=409, detail="Admin must configure both approvers before submission")
+        batch.approver_1_id = config.approver_1_id
+        batch.approver_2_id = config.approver_2_id
+        batch.approver_1_status = "Pending"
+        batch.approver_2_status = "Pending"
+        batch.status = "Approval 1 Pending"
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def decide(self, batch_id: UUID, level: int, decision: ApprovalDecision, current_user: User) -> Batch:
+        batch = self.get(batch_id)
+        expected_id = batch.approver_1_id if level == 1 else batch.approver_2_id
+        if expected_id != current_user.id:
+            raise HTTPException(status_code=403, detail=f"Only the configured approver {level} can decide this request")
+        if level == 2 and batch.approver_1_status != "Approved":
+            raise HTTPException(status_code=409, detail="Approver 1 must approve before Approver 2")
+        if decision.decision == "reject":
+            if level == 1:
+                batch.approver_1_status = "Rejected"
+            else:
+                batch.approver_2_status = "Rejected"
+            batch.status = "Requested"
+            if decision.reason:
+                batch.comments = f"Approval {level} rejected: {decision.reason}"
+        elif level == 1:
+            batch.approver_1_status = "Approved"
+            batch.approver_1_approved_at = datetime.now(timezone.utc)
+            batch.status = "Approval 2 Pending"
+        else:
+            batch.approver_2_status = "Approved"
+            batch.approver_2_approved_at = datetime.now(timezone.utc)
+            batch.status = "Approved"
+            batch.is_schema_locked = True
+        batch.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(batch)
         return batch
@@ -83,6 +189,12 @@ class BatchService:
     def update(self, batch_id: UUID, batch_in: BatchUpdate, current_user: User) -> Batch:
         batch = self.get(batch_id)
         update_data = batch_in.model_dump(exclude_unset=True)
+        update_data.pop("batch_request_date", None)
+        if "start_date" in update_data or "end_date" in update_data:
+            update_data["calendar_days"] = self._calendar_days(
+                update_data.get("start_date", batch.start_date),
+                update_data.get("end_date", batch.end_date),
+            )
         if batch.is_schema_locked and current_user.role not in ["Admin", "Manager"]:
             restricted = {"client_name", "category", "program_name", "technology", "domain"}
             for field in restricted.intersection(update_data):

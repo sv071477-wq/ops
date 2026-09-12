@@ -8,6 +8,20 @@ logger = logging.getLogger(__name__)
 class NotificationService:
 
     @classmethod
+    async def notify_approval_requested(cls, batch):
+        logger.info(
+            f"[NOTIFICATION TRIGGERED] Batch {batch.batch_id} submitted for approval. "
+            f"Approver 1: {batch.approver_1_id}, Approver 2: {batch.approver_2_id}"
+        )
+
+    @classmethod
+    async def notify_approval_decision(cls, batch, level: int, decision: str):
+        logger.info(
+            f"[NOTIFICATION TRIGGERED] Batch {batch.batch_id} approval level {level}: {decision}. "
+            f"Current status: {batch.status}"
+        )
+
+    @classmethod
     async def notify_batch_approved(cls, batch_id: str, approval_id: str, manager_email: Optional[str], sales_email: Optional[str]):
         """Dispatches automated notifications when a batch schema is locked and approved."""
         logger.info(

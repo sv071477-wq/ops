@@ -60,9 +60,14 @@ export interface CoordinatorMappingPayload {
 export interface Batch {
   id: string;
   batch_id: string;
+  sow_number?: string | null;
   approval_id?: string | null;
+  entity_id?: string | null;
   category: string;
   residential_type: string;
+  category_id?: string | null;
+  delivery_mode_id?: string | null;
+  accommodation_id?: string | null;
   program_name: string;
   technology?: string | null;
   domain?: string | null;
@@ -78,13 +83,21 @@ export interface Batch {
   total_enrollments: number;
   residential_enrollments: number;
   non_residential_enrollments: number;
-  status: "Requested" | "Approved" | "Upcoming" | "Ongoing" | "Completed" | "Cancelled" | "OnHold";
+  status: "Requested" | "Approval 1 Pending" | "Approval 2 Pending" | "Approved" | "Upcoming" | "Ongoing" | "Completed" | "Cancelled" | "OnHold";
   is_schema_locked: boolean;
+  approver_1_id?: string | null;
+  approver_2_id?: string | null;
+  approver_1_status?: "Pending" | "Approved" | "Rejected";
+  approver_2_status?: "Pending" | "Approved" | "Rejected";
+  approver_1_approved_at?: string | null;
+  approver_2_approved_at?: string | null;
   primary_manager_id?: string | null;
   coordinator_id?: string | null;
   sales_spoc_id?: string | null;
   faculty_assigned_text?: string | null;
   finance_status: string;
+  finance_status_check_date?: string | null;
+  finance_check?: number | null;
   batch_avg_feedback?: number | null;
   total_feedback_score?: number | null;
   batch_nps?: number | null;
@@ -97,8 +110,13 @@ export interface Batch {
 
 export interface CreateBatchPayload {
   batch_id: string;
+  sow_number?: string;
   approval_id?: string;
-  category: string;
+  entity_id?: string;
+  category_id?: string;
+  delivery_mode_id?: string;
+  accommodation_id?: string;
+  category?: string;
   residential_type?: string;
   program_name: string;
   technology?: string;
@@ -108,6 +126,7 @@ export interface CreateBatchPayload {
   location_city?: string;
   start_date?: string;
   end_date?: string;
+  calendar_days?: number;
   training_days?: number;
   total_hours?: number;
   total_enrollments?: number;
@@ -117,6 +136,58 @@ export interface CreateBatchPayload {
   faculty_assigned_text?: string;
   remarks?: string;
   comments?: string;
+  finance_status?: string;
+  finance_status_check_date?: string;
+  finance_check?: number;
+  sales_spoc_id?: string;
+  coordinator_id?: string;
+  primary_manager_id?: string;
+}
+
+export interface BatchOption {
+  id: string;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApprovalConfiguration {
+  id: string;
+  approver_1_id?: string | null;
+  approver_2_id?: string | null;
+  updated_at: string;
+}
+
+export interface TrainingSession {
+  id: string;
+  batch_id: string;
+  faculty_id: string;
+  date_of_training: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  topic: string;
+  no_of_hours: number;
+  venue?: string | null;
+  location_city?: string | null;
+  mode_of_delivery: string;
+  status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Rescheduled";
+  feedback_submitted: boolean;
+  created_at: string;
+}
+
+export interface CreateSessionPayload {
+  batch_id: string;
+  date_of_training: string;
+  start_time?: string;
+  end_time?: string;
+  topic: string;
+  faculty_id: string;
+  no_of_hours?: number;
+  venue?: string;
+  location_city?: string;
+  mode_of_delivery?: string;
 }
 
 class ApiService {
@@ -175,6 +246,10 @@ class ApiService {
 
   async getUsers(): Promise<User[]> {
     return this.request<User[]>("/auth/users");
+  }
+
+  async getAssignableUsers(role: "Sales" | "Coordinator" | "Manager"): Promise<User[]> {
+    return this.request<User[]>(`/auth/users/assignable?role=${role}`);
   }
 
   async getHierarchy(): Promise<UserHierarchyNode[]> {
@@ -245,6 +320,55 @@ class ApiService {
   async createBatch(payload: CreateBatchPayload): Promise<Batch> {
     return this.request<Batch>("/batches", {
       method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getBatchOptions(type: "categories" | "delivery-modes" | "accommodations" | "entities"): Promise<BatchOption[]> {
+    return this.request<BatchOption[]>(`/batch-options/${type}`);
+  }
+
+  async getApprovalConfiguration(): Promise<ApprovalConfiguration> {
+    return this.request<ApprovalConfiguration>("/batches/approval-config");
+  }
+
+  async updateApprovalConfiguration(payload: { approver_1_id?: string; approver_2_id?: string }): Promise<ApprovalConfiguration> {
+    return this.request<ApprovalConfiguration>("/batches/approval-config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async submitBatch(id: string): Promise<Batch> {
+    return this.request<Batch>(`/batches/${id}/submit`, { method: "POST" });
+  }
+
+  async decideBatch(id: string, level: 1 | 2, decision: "approve" | "reject", reason?: string): Promise<Batch> {
+    return this.request<Batch>(`/batches/${id}/approve-level-${level}`, {
+      method: "POST",
+      body: JSON.stringify({ decision, reason }),
+    });
+  }
+
+  async getSessions(params?: { batch_id?: string; faculty_name?: string; status?: string }): Promise<TrainingSession[]> {
+    const query = new URLSearchParams();
+    if (params?.batch_id) query.append("batch_id", params.batch_id);
+    if (params?.faculty_name) query.append("faculty_name", params.faculty_name);
+    if (params?.status) query.append("status", params.status);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.request<TrainingSession[]>(`/sessions${suffix}`);
+  }
+
+  async createSession(payload: CreateSessionPayload): Promise<TrainingSession> {
+    return this.request<TrainingSession>("/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateSession(id: string, payload: Partial<CreateSessionPayload> & { status?: string }): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     });
   }

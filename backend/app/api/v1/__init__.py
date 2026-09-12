@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.analytics.controller import router as analytics_router
+from app.api.v1.batch_options.controller import router as batch_options_router
 from app.api.v1.auth.controller import router as auth_router
 from app.api.v1.batches.controller import router as batches_router
 from app.api.v1.faculty.controller import router as faculty_router
@@ -13,6 +14,7 @@ api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["Auth & User Hierarchy"])
 api_router.include_router(roles_router, prefix="/roles", tags=["Role & Position Titles Management"])
+api_router.include_router(batch_options_router, prefix="/batch-options", tags=["Batch Configuration Options"])
 api_router.include_router(batches_router, prefix="/batches", tags=["Workflow 1: Batch Lifecycle"])
 api_router.include_router(schedules_router, prefix="/schedules", tags=["Workflow 2: Schedule Ingestion & Conflict Engine"])
 api_router.include_router(sessions_router, prefix="/sessions", tags=["Workflow 3: Sessions & Gate 1"])

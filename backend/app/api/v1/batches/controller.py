@@ -6,11 +6,18 @@ from sqlalchemy.orm import Session
 from app.models.batch import Batch
 from app.models.user import User
 from app.schemas.batch import (
-    BatchCreate, BatchUpdate, BatchApprove, BatchResponse, BatchDetailResponse
+    ApprovalConfigurationBase,
+    ApprovalConfigurationResponse,
+    ApprovalDecision,
+    BatchCreate,
+    BatchUpdate,
+    BatchApprove,
+    BatchResponse,
+    BatchDetailResponse,
 )
 from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.deps import (
-    get_current_user, require_manager_or_admin, require_coordinator_or_above
+    get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 )
 from app.api.deps_services import get_batch_service
 from app.api.v1.batches.service import BatchService
@@ -18,6 +25,23 @@ from app.api.v1.notifications.service import NotificationService
 from app.core.database import get_db
 
 router = APIRouter()
+
+
+@router.get("/approval-config", response_model=ApprovalConfigurationResponse)
+def get_approval_config(
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    return service.get_approval_config()
+
+
+@router.put("/approval-config", response_model=ApprovalConfigurationResponse)
+def update_approval_config(
+    config_in: ApprovalConfigurationBase,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    return service.update_approval_config(config_in)
 
 
 @router.post("", response_model=BatchResponse, status_code=status.HTTP_201_CREATED)
@@ -28,6 +52,41 @@ def create_batch(
 ) -> Any:
     """Workflow 1: Create a new batch in 'Requested' status."""
     return service.create(batch_in, current_user)
+
+
+@router.post("/{id}/submit", response_model=BatchResponse)
+async def submit_batch(
+    id: UUID,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    batch = service.submit_for_approval(id)
+    await NotificationService.notify_approval_requested(batch)
+    return batch
+
+
+@router.post("/{id}/approve-level-1", response_model=BatchResponse)
+async def approve_level_1(
+    id: UUID,
+    decision: ApprovalDecision,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    batch = service.decide(id, 1, decision, current_user)
+    await NotificationService.notify_approval_decision(batch, 1, decision.decision)
+    return batch
+
+
+@router.post("/{id}/approve-level-2", response_model=BatchResponse)
+async def approve_level_2(
+    id: UUID,
+    decision: ApprovalDecision,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    batch = service.decide(id, 2, decision, current_user)
+    await NotificationService.notify_approval_decision(batch, 2, decision.decision)
+    return batch
 
 
 @router.post("/{id}/approve", response_model=BatchResponse)

@@ -124,6 +124,9 @@ export default function AdminPortalPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [hierarchy, setHierarchy] = useState<UserHierarchyNode[]>([]);
+  const [approver1Id, setApprover1Id] = useState("");
+  const [approver2Id, setApprover2Id] = useState("");
+  const [isSavingApprovers, setIsSavingApprovers] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal States
@@ -167,20 +170,37 @@ export default function AdminPortalPage() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [fetchedRoles, fetchedUsers, fetchedHierarchy] = await Promise.all([
+      const [fetchedRoles, fetchedUsers, fetchedHierarchy, approvalConfig] = await Promise.all([
         api.getRoles(),
         api.getUsers().catch(() => []),
         api.getHierarchy().catch(() => []),
+        api.getApprovalConfiguration().catch(() => null),
       ]);
       setRoles(fetchedRoles);
       setUsers(fetchedUsers);
       setHierarchy(fetchedHierarchy);
+      if (approvalConfig) {
+        setApprover1Id(approvalConfig.approver_1_id || "");
+        setApprover2Id(approvalConfig.approver_2_id || "");
+      }
 
       if (fetchedRoles.length > 0 && !newUserRoleId) setNewUserRoleId(fetchedRoles[0].id);
     } catch (err) {
       console.error("Failed to load admin data:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveApprovers = async () => {
+    setIsSavingApprovers(true);
+    try {
+      await api.updateApprovalConfiguration({ approver_1_id: approver1Id, approver_2_id: approver2Id });
+      alert("Approval levels saved");
+    } catch (err: any) {
+      alert(err.message || "Failed to save approvers");
+    } finally {
+      setIsSavingApprovers(false);
     }
   };
 
@@ -484,6 +504,29 @@ export default function AdminPortalPage() {
                 <Plus size={16} />
                 <span>Add Position Title</span>
               </button>
+            </div>
+
+            <div style={{ border: "1px solid var(--border-subtle)", padding: 16, marginBottom: 24, background: "#f8fafc" }}>
+              <h3 style={{ margin: "0 0 12px", fontSize: "1rem", color: "var(--text-main)" }}>Batch Approval Configuration</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
+                <label style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  Approver 1
+                  <select value={approver1Id} onChange={(e) => setApprover1Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6 }}>
+                    <option value="">Select approver 1</option>
+                    {users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager")).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
+                  </select>
+                </label>
+                <label style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  Approver 2
+                  <select value={approver2Id} onChange={(e) => setApprover2Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6 }}>
+                    <option value="">Select approver 2</option>
+                    {users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager")).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
+                  </select>
+                </label>
+                <button onClick={handleSaveApprovers} disabled={isSavingApprovers} className="btn btn-primary">
+                  {isSavingApprovers ? "Saving..." : "Save Approvers"}
+                </button>
+              </div>
             </div>
 
             {/* Roles Table */}

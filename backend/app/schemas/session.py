@@ -3,7 +3,7 @@ from uuid import UUID
 from datetime import datetime, time
 from decimal import Decimal
 from pydantic import BaseModel, Field, ConfigDict
-from app.schemas.faculty import FacultyResponse
+from app.schemas.user import UserResponse
 from app.schemas.feedback import SessionFeedbackResponse
 
 
@@ -47,7 +47,7 @@ class SessionResponse(SessionBase):
 
 
 class SessionDetailResponse(SessionResponse):
-    faculty: Optional[FacultyResponse] = None
+    faculty: Optional[UserResponse] = None
     feedback: Optional[SessionFeedbackResponse] = None
 
     model_config = ConfigDict(from_attributes=True)

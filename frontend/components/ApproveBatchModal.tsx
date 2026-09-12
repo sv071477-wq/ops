@@ -17,7 +17,6 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
   onClose,
   onBatchApproved,
 }) => {
-  const [approvalId, setApprovalId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,15 +24,11 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
 
   const handleApprove = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!approvalId.trim()) {
-      setError("Please provide a valid Financial SOW / Approval ID.");
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
     try {
-      await api.approveBatch(batch.id, approvalId.trim());
+      const level = batch.approver_1_status === "Approved" ? 2 : 1;
+      await api.decideBatch(batch.id, level, "approve");
       onBatchApproved();
       onClose();
     } catch (err: any) {
@@ -41,13 +36,6 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const generateSowCode = () => {
-    const year = new Date().getFullYear();
-    const client = batch.client_name ? batch.client_name.substring(0, 3).toUpperCase() : "SOW";
-    const rand = Math.floor(100 + Math.random() * 900);
-    setApprovalId(`SOW-${year}-${client}-${rand}`);
   };
 
   return (
@@ -76,10 +64,10 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
             </div>
             <div>
               <h3 style={{ fontSize: "1.125rem", fontWeight: 700, fontFamily: "var(--font-display)", color: "var(--text-main)" }}>
-                Manager Batch Approval
+                Two-Level Batch Approval
               </h3>
               <p style={{ fontSize: "0.775rem", color: "var(--text-muted)" }}>
-                Locks schema & transitions status to Approved
+                {batch.approver_1_status === "Approved" ? "Approver 2 decision" : "Approver 1 decision"}
               </p>
             </div>
           </div>
@@ -127,35 +115,10 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
             </div>
           </div>
 
-          {/* SOW Approval Input */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <label style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text-main)" }}>
-                Financial SOW / Approval ID Reference <span style={{ color: "#f43f5e" }}>*</span>
-              </label>
-              <button
-                type="button"
-                onClick={generateSowCode}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--primary)",
-                  fontSize: "0.75rem",
-                  cursor: "pointer"
-                }}
-              >
-                Auto-generate
-              </button>
-            </div>
-            <input
-              type="text"
-              value={approvalId}
-              onChange={(e) => setApprovalId(e.target.value)}
-              placeholder="e.g. SOW-2026-DEL-089"
-              className="glass-input"
-              required
-              autoFocus
-            />
+          <div style={{ marginBottom: 20, color: "var(--text-muted)", fontSize: "0.85rem" }}>
+            Client SOW: <strong>{batch.sow_number || "Not provided"}</strong><br />
+            Approval 1: <strong>{batch.approver_1_status || "Pending"}</strong><br />
+            Approval 2: <strong>{batch.approver_2_status || "Pending"}</strong>
           </div>
 
           <div style={{
@@ -171,8 +134,8 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
             marginBottom: 24
           }}>
             <Lock size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-            <span>
-              Approving this batch locks its commercial parameters and allows the coordinator to proceed with <strong>Workflow 2 (Schedule Addition)</strong>.
+              <span>
+              Both configured approvers must approve before the batch is locked and can proceed with <strong>Workflow 2 (Schedule Addition)</strong>.
             </span>
           </div>
 
@@ -183,7 +146,7 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
             </button>
             <button type="submit" disabled={isLoading} className="btn btn-primary">
               <CheckCircle2 size={16} />
-              <span>{isLoading ? "Approving..." : "Approve & Lock Batch"}</span>
+              <span>{isLoading ? "Processing..." : "Approve Level"}</span>
             </button>
           </div>
         </form>

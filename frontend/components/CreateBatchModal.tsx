@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
-import { api, CreateBatchPayload } from "@/lib/api";
+import React, { useEffect, useState } from "react";
+import { api, BatchOption, CreateBatchPayload, User } from "@/lib/api";
 import { X, Sparkles, AlertCircle, Check } from "lucide-react";
 
 interface CreateBatchModalProps {
@@ -28,12 +28,33 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     technology: "",
     training_days: 15,
     total_hours: 120,
+    finance_status: "Pending",
+    finance_status_check_date: "",
+    finance_check: 0,
     faculty_assigned_text: "",
     remarks: "",
   });
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [options, setOptions] = useState<Record<string, BatchOption[]>>({});
+  const [assignableUsers, setAssignableUsers] = useState<Record<string, User[]>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    Promise.all([
+      api.getBatchOptions("entities"),
+      api.getBatchOptions("categories"),
+      api.getBatchOptions("delivery-modes"),
+      api.getBatchOptions("accommodations"),
+      api.getAssignableUsers("Sales"),
+      api.getAssignableUsers("Coordinator"),
+      api.getAssignableUsers("Manager"),
+    ]).then(([entities, categories, modes, accommodations, sales, coordinators, managers]) => {
+      setOptions({ entities, categories, modes, accommodations });
+      setAssignableUsers({ sales, coordinators, managers });
+    }).catch((err) => setError(err.message || "Failed to load batch options"));
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -52,6 +73,10 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
       return updated;
     });
   };
+
+  const calendarDays = formData.start_date && formData.end_date
+    ? Math.max(0, Math.round((new Date(formData.end_date).getTime() - new Date(formData.start_date).getTime()) / 86400000))
+    : 0;
 
   const generateRandomBatchId = () => {
     const client = formData.client_name ? formData.client_name.replace(/[^a-zA-Z0-9]/g, "").substring(0, 5).toUpperCase() : "ENT";
@@ -80,6 +105,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
         total_hours: Number(formData.total_hours) || 0,
         start_date: formData.start_date ? new Date(formData.start_date).toISOString() : undefined,
         end_date: formData.end_date ? new Date(formData.end_date).toISOString() : undefined,
+        calendar_days: calendarDays,
       };
 
       await api.createBatch(payload);
@@ -213,16 +239,23 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
               />
             </div>
 
+            {/* Entity */}
+            <div>
+              <label className="form-label">Entity</label>
+              <select name="entity_id" value={formData.entity_id || ""} onChange={handleChange} className="glass-input" required>
+                <option value="">Select entity</option>
+                {(options.entities || []).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+              </select>
+            </div>
+
             {/* Category */}
             <div>
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
                 Category
               </label>
-              <select name="category" value={formData.category} onChange={handleChange} className="glass-input">
-                <option value="Bootcamp">Bootcamp</option>
-                <option value="RBT">RBT (Role-Based Training)</option>
-                <option value="PJP">PJP (Pre-Joining Program)</option>
-                <option value="Workshop">Workshop</option>
+              <select name="category_id" value={formData.category_id || ""} onChange={handleChange} className="glass-input" required>
+                <option value="">Select category</option>
+                {(options.categories || []).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
               </select>
             </div>
 
@@ -245,10 +278,20 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
                 Delivery Mode
               </label>
-              <select name="delivery_mode" value={formData.delivery_mode} onChange={handleChange} className="glass-input">
-                <option value="Online">Online / Virtual ILT</option>
-                <option value="F2F">F2F (Face to Face)</option>
-                <option value="Blended">Blended Delivery</option>
+              <select name="delivery_mode_id" value={formData.delivery_mode_id || ""} onChange={handleChange} className="glass-input" required>
+                <option value="">Select mode</option>
+                {(options.modes || []).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+              </select>
+            </div>
+
+            {/* Accommodation */}
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Accommodation
+              </label>
+              <select name="accommodation_id" value={formData.accommodation_id || ""} onChange={handleChange} className="glass-input" required>
+                <option value="">Select accommodation</option>
+                {(options.accommodations || []).map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
               </select>
             </div>
 
@@ -293,6 +336,14 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 onChange={handleChange}
                 className="glass-input"
               />
+            </div>
+
+            {/* Calendar Days */}
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Calendar Days
+              </label>
+              <input type="number" value={calendarDays} className="glass-input" readOnly />
             </div>
 
             {/* Total Enrollments */}
@@ -340,6 +391,49 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
               />
             </div>
 
+            {/* SOW Number and Approval ID */}
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Client SOW Number
+              </label>
+              <input type="text" name="sow_number" value={formData.sow_number || ""} onChange={handleChange} className="glass-input" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Finance Approval ID
+              </label>
+              <input type="text" name="approval_id" value={formData.approval_id || ""} onChange={handleChange} className="glass-input" />
+            </div>
+
+            {/* Assignments */}
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Sales SPOC
+              </label>
+              <select name="sales_spoc_id" value={formData.sales_spoc_id || ""} onChange={handleChange} className="glass-input">
+                <option value="">Select Sales SPOC</option>
+                {(assignableUsers.sales || []).map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                SPOC / Coordinator
+              </label>
+              <select name="coordinator_id" value={formData.coordinator_id || ""} onChange={handleChange} className="glass-input">
+                <option value="">Select SPOC</option>
+                {(assignableUsers.coordinators || []).map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Manager
+              </label>
+              <select name="primary_manager_id" value={formData.primary_manager_id || ""} onChange={handleChange} className="glass-input">
+                <option value="">Select Manager</option>
+                {(assignableUsers.managers || []).map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}
+              </select>
+            </div>
+
             {/* Faculty Assigned Notes */}
             <div>
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
@@ -381,6 +475,35 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                   className="glass-input"
                 />
               </div>
+            </div>
+
+            {/* Remarks */}
+            {/* Finance Tracking */}
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Finance Status Check Date
+              </label>
+              <input
+                type="date"
+                name="finance_status_check_date"
+                value={formData.finance_status_check_date || ""}
+                onChange={handleChange}
+                className="glass-input"
+              />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                Finance Check
+              </label>
+              <input
+                type="number"
+                name="finance_check"
+                value={formData.finance_check ?? 0}
+                onChange={handleChange}
+                min={0}
+                step={1}
+                className="glass-input"
+              />
             </div>
 
             {/* Remarks */}

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
+from app.schemas.session import SessionCreate, SessionUpdate, SessionDetailResponse
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.deps_services import get_session_service
 from app.api.v1.sessions.service import SessionService
@@ -14,7 +15,7 @@ from app.api.v1.notifications.service import NotificationService
 router = APIRouter()
 
 
-@router.get("")
+@router.get("", response_model=List[SessionDetailResponse])
 def list_sessions(
     batch_id: Optional[UUID] = None,
     faculty_name: Optional[str] = None,
@@ -26,18 +27,31 @@ def list_sessions(
     return service.list(batch_id, faculty_name, status_filter)
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SessionDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
-    batch_id: UUID,
-    topic: str,
-    faculty_name: str,
-    date_of_training: datetime,
-    no_of_hours: Decimal = Decimal("8.0"),
+    session_in: SessionCreate,
     service: SessionService = Depends(get_session_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Schedule single session endpoint."""
-    return service.create(batch_id, topic, faculty_name, date_of_training, no_of_hours)
+    result = service.create(session_in)
+    await NotificationService.notify_session_scheduled(
+        faculty_name=result.faculty.full_name,
+        faculty_email=result.faculty.email,
+        date_str=result.date_of_training.isoformat(),
+        topic=result.topic,
+    )
+    return result
+
+
+@router.patch("/{id}", response_model=SessionDetailResponse)
+def update_session(
+    id: UUID,
+    session_in: SessionUpdate,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.update(id, session_in)
 
 
 @router.patch("/{id}/complete")
