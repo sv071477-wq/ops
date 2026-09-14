@@ -1,6 +1,8 @@
 from app.schemas.user import (
     UserBase, UserCreate, UserUpdate, UserResponse, UserLogin, Token, TokenPayload,
-    CoordinatorMappingCreate, CoordinatorMappingResponse
+    CoordinatorMappingCreate, CoordinatorMappingResponse,
+    TeamBase, TeamCreate, TeamUpdate, TeamResponse,
+    RoleBase, RoleCreate, RoleUpdate, RoleResponse
 )
 from app.schemas.client import ClientBase, ClientCreate, ClientUpdate, ClientResponse
 from app.schemas.faculty import FacultyBase, FacultyCreate, FacultyUpdate, FacultyResponse, FacultyUtilizationSummary

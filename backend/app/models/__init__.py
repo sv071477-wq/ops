@@ -1,4 +1,4 @@
-from app.models.user import User, UserManagerMapping, Role
+from app.models.user import User, UserManagerMapping, Role, Team
 from app.models.batch import (
     Batch,
     BatchCategory,
@@ -13,6 +13,7 @@ __all__ = [
     "User",
     "UserManagerMapping",
     "Role",
+    "Team",
     "Batch",
     "TrainingSession",
 ]

@@ -3,6 +3,16 @@
 const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
 const API_BASE = rawApiUrl.endsWith("/api/v1") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api/v1`;
 
+export interface Team {
+  id: string;
+  name: string;
+  department: string;
+  description?: string | null;
+  is_active: boolean;
+  member_count?: number;
+  created_at: string;
+}
+
 export interface Role {
   id: string;
   name: string;
@@ -18,6 +28,10 @@ export interface User {
   role: "Admin" | "Manager" | "Coordinator" | "Sales" | "Faculty";
   role_id?: string | null;
   role_detail?: Role | null;
+  team_id?: string | null;
+  team_detail?: Team | null;
+  team_name?: string | null;
+  department?: string | null;
   manager_id?: string | null;
   manager_name?: string | null;
   is_manager?: boolean;
@@ -32,6 +46,8 @@ export interface UserHierarchyNode {
   email: string;
   role: string;
   role_name?: string | null;
+  team_name?: string | null;
+  department?: string | null;
   manager_id?: string | null;
   direct_reports: UserHierarchyNode[];
 }
@@ -39,9 +55,10 @@ export interface UserHierarchyNode {
 export interface CreateUserPayload {
   email: string;
   full_name: string;
-  password: string;
+  password?: string;
   role?: string;
   role_id?: string;
+  team_id?: string;
   manager_id?: string;
   is_active?: boolean;
 }
@@ -49,6 +66,13 @@ export interface CreateUserPayload {
 export interface CreateRolePayload {
   name: string;
   system_role: string;
+  is_active?: boolean;
+}
+
+export interface CreateTeamPayload {
+  name: string;
+  department?: string;
+  description?: string;
   is_active?: boolean;
 }
 
@@ -153,6 +177,11 @@ export interface BatchOption {
   updated_at: string;
 }
 
+export interface CreateBatchOptionPayload {
+  name: string;
+  description?: string;
+}
+
 export interface ApprovalConfiguration {
   id: string;
   approver_1_id?: string | null;
@@ -163,7 +192,13 @@ export interface ApprovalConfiguration {
 export interface TrainingSession {
   id: string;
   batch_id: string;
-  faculty_id: string;
+  faculty_id?: string | null;
+  faculty?: {
+    id: string;
+    full_name: string;
+    email: string;
+    domain?: string;
+  } | null;
   date_of_training: string;
   start_time?: string | null;
   end_time?: string | null;
@@ -174,6 +209,8 @@ export interface TrainingSession {
   mode_of_delivery: string;
   status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Rescheduled";
   feedback_submitted: boolean;
+  rating?: number | null;
+  topic_feedback?: string | null;
   created_at: string;
 }
 
@@ -183,11 +220,122 @@ export interface CreateSessionPayload {
   start_time?: string;
   end_time?: string;
   topic: string;
-  faculty_id: string;
+  faculty_id?: string;
+  faculty_name?: string;
   no_of_hours?: number;
   venue?: string;
   location_city?: string;
   mode_of_delivery?: string;
+}
+
+export interface SessionFeedbackPayload {
+  rating: number; // 1.0 - 5.0
+  topic_feedback?: string;
+  total_students_present?: number;
+}
+
+export interface BatchNpsClosurePayload {
+  nps_score: number; // 0 - 10
+  average_feedback_score?: number; // 1.0 - 5.0
+  retrospective_notes?: string;
+}
+
+// Analytics Types
+export interface VerticalBreakdown {
+  vertical: string;
+  active_batches: number;
+  total_hours: number;
+  average_feedback: number;
+}
+
+export interface ManagerDashboardSummary {
+  total_active_batches: number;
+  total_ongoing_sessions: number;
+  total_hours_delivered: number;
+  overall_avg_nps?: number | null;
+  overall_avg_feedback?: number | null;
+  faculty_utilization_ratio: number;
+  pending_gate1_feedbacks: number;
+  pending_gate2_closures: number;
+  vertical_distribution: VerticalBreakdown[];
+}
+
+// Schedules & Conflict Engine Types
+export interface ScheduleValidationItem {
+  date_of_training: string;
+  no_of_hours: number;
+  faculty_name?: string;
+  topic?: string;
+  mode_of_delivery?: string;
+}
+
+export interface ConflictDetail {
+  conflict_type: string;
+  date: string;
+  faculty_name?: string;
+  reason: string;
+  existing_hours?: number;
+  requested_hours?: number;
+}
+
+export interface ScheduleValidationResponse {
+  is_valid: boolean;
+  total_slots: number;
+  valid_slots: number;
+  conflict_count: number;
+  conflicts: ConflictDetail[];
+}
+
+export interface ExtractedScheduleRow {
+  date_of_training: string;
+  topic: string;
+  faculty_name?: string;
+  no_of_hours: number;
+  start_time?: string;
+  end_time?: string;
+  venue?: string;
+  location_city?: string;
+  mode_of_delivery?: string;
+}
+
+export interface ScheduleIngestResponse {
+  batch_id?: string | null;
+  source_filename: string;
+  total_rows_parsed: number;
+  extracted_schedule: ExtractedScheduleRow[];
+}
+
+// Faculty Types
+export interface FacultyMember {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  faculty_type?: string;
+  domain?: string;
+  is_active: boolean;
+}
+
+export interface FacultyUtilizationSummary {
+  total_faculty_count: number;
+  active_deployed_faculty: number;
+  overall_utilization_percentage: number;
+  domain_breakdown: Array<{
+    domain: string;
+    faculty_count: number;
+    hours_scheduled: number;
+  }>;
+}
+
+// FMS Sync Types
+export interface FmsSyncLog {
+  id: string;
+  faculty_id: string;
+  event_type: string;
+  status: "SUCCESS" | "FAILED" | "PENDING";
+  response_code?: number | null;
+  message?: string | null;
+  timestamp: string;
 }
 
 class ApiService {
@@ -274,6 +422,10 @@ class ApiService {
     });
   }
 
+  async getMyReports(): Promise<User[]> {
+    return this.request<User[]>("/auth/my-reports");
+  }
+
   // Roles APIs
   async getRoles(isActive?: boolean): Promise<Role[]> {
     const query = isActive !== undefined ? `?is_active=${isActive}` : "";
@@ -289,6 +441,35 @@ class ApiService {
 
   async deleteRole(id: string): Promise<{ detail: string }> {
     return this.request<{ detail: string }>(`/roles/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Teams APIs
+  async getTeams(department?: string, isActive?: boolean): Promise<Team[]> {
+    const query = new URLSearchParams();
+    if (department) query.append("department", department);
+    if (isActive !== undefined) query.append("is_active", String(isActive));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return this.request<Team[]>(`/teams${qs}`);
+  }
+
+  async createTeam(payload: CreateTeamPayload): Promise<Team> {
+    return this.request<Team>("/teams", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateTeam(id: string, payload: Partial<CreateTeamPayload>): Promise<Team> {
+    return this.request<Team>(`/teams/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteTeam(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/teams/${id}`, {
       method: "DELETE",
     });
   }
@@ -324,18 +505,10 @@ class ApiService {
     });
   }
 
-  async getBatchOptions(type: "categories" | "delivery-modes" | "accommodations" | "entities"): Promise<BatchOption[]> {
-    return this.request<BatchOption[]>(`/batch-options/${type}`);
-  }
-
-  async getApprovalConfiguration(): Promise<ApprovalConfiguration> {
-    return this.request<ApprovalConfiguration>("/batches/approval-config");
-  }
-
-  async updateApprovalConfiguration(payload: { approver_1_id?: string; approver_2_id?: string }): Promise<ApprovalConfiguration> {
-    return this.request<ApprovalConfiguration>("/batches/approval-config", {
-      method: "PUT",
-      body: JSON.stringify(payload),
+  async updateBatch(id: string, updates: Partial<Batch>): Promise<Batch> {
+    return this.request<Batch>(`/batches/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
     });
   }
 
@@ -350,6 +523,57 @@ class ApiService {
     });
   }
 
+  async approveBatch(id: string, approvalId: string): Promise<Batch> {
+    return this.request<Batch>(`/batches/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ approval_id: approvalId }),
+    });
+  }
+
+  async closeBatchGate2(id: string, payload: BatchNpsClosurePayload): Promise<Batch> {
+    return this.request<Batch>(`/batches/${id}/close`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Batch Options & Taxonomy APIs
+  async getBatchOptions(type: "categories" | "delivery-modes" | "accommodations" | "entities" | string): Promise<BatchOption[]> {
+    return this.request<BatchOption[]>(`/batch-options/${type}`);
+  }
+
+  async createBatchOption(type: string, payload: CreateBatchOptionPayload): Promise<BatchOption> {
+    return this.request<BatchOption>(`/batch-options/${type}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateBatchOption(type: string, id: string, payload: CreateBatchOptionPayload): Promise<BatchOption> {
+    return this.request<BatchOption>(`/batch-options/${type}/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteBatchOption(type: string, id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/batch-options/${type}/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getApprovalConfiguration(): Promise<ApprovalConfiguration> {
+    return this.request<ApprovalConfiguration>("/batches/approval-config");
+  }
+
+  async updateApprovalConfiguration(payload: { approver_1_id?: string; approver_2_id?: string }): Promise<ApprovalConfiguration> {
+    return this.request<ApprovalConfiguration>("/batches/approval-config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Sessions APIs
   async getSessions(params?: { batch_id?: string; faculty_name?: string; status?: string }): Promise<TrainingSession[]> {
     const query = new URLSearchParams();
     if (params?.batch_id) query.append("batch_id", params.batch_id);
@@ -373,18 +597,104 @@ class ApiService {
     });
   }
 
-  async approveBatch(id: string, approvalId: string): Promise<Batch> {
-    return this.request<Batch>(`/batches/${id}/approve`, {
-      method: "POST",
-      body: JSON.stringify({ approval_id: approvalId }),
+  async completeSessionGate1(sessionId: string, payload: SessionFeedbackPayload): Promise<any> {
+    return this.request<any>(`/sessions/${sessionId}/complete`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
     });
   }
 
-  async updateBatch(id: string, updates: Partial<Batch>): Promise<Batch> {
-    return this.request<Batch>(`/batches/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(updates),
+  // Schedules Ingestion & Conflict Engine APIs
+  async ingestScheduleFile(file: File, targetBatchId?: string): Promise<ScheduleIngestResponse> {
+    const token = this.getToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    if (targetBatchId) {
+      formData.append("target_batch_id", targetBatchId);
+    }
+
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const url = `${API_BASE}/schedules/ingest`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
     });
+
+    if (!response.ok) {
+      let errorMsg = `Ingestion error: ${response.statusText}`;
+      try {
+        const errJson = await response.json();
+        if (errJson.detail) errorMsg = errJson.detail;
+      } catch {}
+      throw new Error(errorMsg);
+    }
+
+    return response.json();
+  }
+
+  async validateScheduleSlots(items: ScheduleValidationItem[]): Promise<ScheduleValidationResponse> {
+    return this.request<ScheduleValidationResponse>("/schedules/validate", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    });
+  }
+
+  // Analytics & MBR APIs
+  async getManagerDashboard(): Promise<ManagerDashboardSummary> {
+    return this.request<ManagerDashboardSummary>("/analytics/manager-dashboard");
+  }
+
+  async exportMbrReport(): Promise<void> {
+    const token = this.getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const url = `${API_BASE}/analytics/mbr-export`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      throw new Error(`Export failed: ${res.statusText}`);
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `MBR_Report_Export_${new Date().toISOString().split("T")[0]}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
+  // Faculty APIs
+  async getFacultyList(params?: { faculty_type?: string; domain?: string }): Promise<FacultyMember[]> {
+    const query = new URLSearchParams();
+    if (params?.faculty_type) query.append("faculty_type", params.faculty_type);
+    if (params?.domain) query.append("domain", params.domain);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return this.request<FacultyMember[]>(`/faculty${qs}`);
+  }
+
+  async getFacultyUtilization(): Promise<FacultyUtilizationSummary> {
+    return this.request<FacultyUtilizationSummary>("/faculty/utilization");
+  }
+
+  // FMS Sync APIs
+  async syncFacultyFms(facultyId: string, eventType: string = "HOURS_UPDATE"): Promise<any> {
+    const query = new URLSearchParams({
+      faculty_id: facultyId,
+      event_type: eventType,
+    });
+    return this.request<any>(`/integrations/fms/sync?${query.toString()}`, {
+      method: "POST",
+    });
+  }
+
+  async getFmsLogs(skip: number = 0, limit: number = 50): Promise<FmsSyncLog[]> {
+    return this.request<FmsSyncLog[]>(`/integrations/fms/logs?skip=${skip}&limit=${limit}`);
   }
 }
 

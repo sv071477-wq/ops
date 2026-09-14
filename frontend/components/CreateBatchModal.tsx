@@ -63,11 +63,10 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     setFormData((prev) => {
       const updated = { ...prev, [name]: value };
 
-      // Auto compute total vs residential/non-residential
-      if (name === "total_enrollments" || name === "residential_enrollments") {
-        const total = Number(name === "total_enrollments" ? value : prev.total_enrollments) || 0;
-        const resi = Number(name === "residential_enrollments" ? value : prev.residential_enrollments) || 0;
-        updated.non_residential_enrollments = Math.max(0, total - resi);
+      // Auto compute non-residential from total
+      if (name === "total_enrollments") {
+        const total = Number(value) || 0;
+        updated.non_residential_enrollments = total;
       }
 
       return updated;
@@ -357,21 +356,6 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 value={formData.total_enrollments}
                 onChange={handleChange}
                 min={1}
-                className="glass-input"
-              />
-            </div>
-
-            {/* Residential Enrollments */}
-            <div>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                Residential Headcount
-              </label>
-              <input
-                type="number"
-                name="residential_enrollments"
-                value={formData.residential_enrollments}
-                onChange={handleChange}
-                min={0}
                 className="glass-input"
               />
             </div>

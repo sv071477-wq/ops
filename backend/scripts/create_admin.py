@@ -74,10 +74,11 @@ def main() -> int:
 
     Base.metadata.create_all(bind=engine)
 
-    # Auto-add role_id and manager_id columns to existing users table if not present
+    # Auto-add role_id, team_id, and manager_id columns to existing users table if not present
     try:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL;"))
             conn.commit()
     except Exception as e:

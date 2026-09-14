@@ -5,6 +5,19 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+class Team(Base):
+    __tablename__ = "teams"
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    department = Column(String(100), nullable=False, default="Ops")
+    description = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    users = relationship("User", back_populates="team_detail")
+
+
 class Role(Base):
     __tablename__ = "roles"
 
@@ -26,12 +39,14 @@ class User(Base):
     full_name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="Coordinator")  # Admin, Manager, Coordinator, Sales, Faculty
     role_id = Column(Uuid(as_uuid=True), ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
+    team_id = Column(Uuid(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True)
     manager_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Relationships
     role_detail = relationship("Role", foreign_keys=[role_id], back_populates="users")
+    team_detail = relationship("Team", foreign_keys=[team_id], back_populates="users")
 
     # Self-referencing reporting hierarchy
     manager = relationship("User", remote_side=[id], back_populates="direct_reports", foreign_keys=[manager_id])

@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models.user import User, UserManagerMapping, Role
+from app.models.user import User, UserManagerMapping, Role, Team
 from app.schemas.user import CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode
 
 
@@ -31,6 +31,8 @@ class AuthService:
     def _enrich_user(self, user: User) -> UserResponse:
         direct_count = self.db.query(User).filter(User.manager_id == user.id, User.is_active == True).count()
         mgr_name = user.manager.full_name if user.manager else None
+        team_name = user.team_detail.name if user.team_detail else None
+        department = user.team_detail.department if user.team_detail else None
         
         is_mgr = direct_count > 0 or (user.role or "").lower() in ["admin", "manager"]
         
@@ -38,6 +40,8 @@ class AuthService:
         resp.manager_name = mgr_name
         resp.is_manager = is_mgr
         resp.direct_reports_count = direct_count
+        resp.team_name = team_name
+        resp.department = department
         return resp
 
     def create_user(self, user_in: UserCreate) -> UserResponse:
@@ -58,6 +62,12 @@ class AuthService:
                 role_id = role_obj.id
                 resolved_system_role = role_obj.system_role
 
+        team_id = user_in.team_id
+        if team_id:
+            team_obj = self.db.query(Team).filter(Team.id == team_id).first()
+            if not team_obj:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected team not found")
+
         if user_in.manager_id:
             manager_obj = self.db.query(User).filter(User.id == user_in.manager_id).first()
             if not manager_obj:
@@ -69,6 +79,7 @@ class AuthService:
             full_name=user_in.full_name,
             role=resolved_system_role,
             role_id=role_id,
+            team_id=team_id,
             manager_id=user_in.manager_id,
             is_active=user_in.is_active,
         )
@@ -100,6 +111,8 @@ class AuthService:
                 "email": u.email,
                 "role": u.role,
                 "role_name": u.role_detail.name if u.role_detail else u.role,
+                "team_name": u.team_detail.name if u.team_detail else None,
+                "department": u.team_detail.department if u.team_detail else None,
                 "manager_id": u.manager_id,
                 "direct_reports": []
             }

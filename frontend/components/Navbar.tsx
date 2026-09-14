@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Shield, Layers, PlusCircle, LayoutDashboard } from "lucide-react";
+import { LogOut, Shield, Layers, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -36,8 +36,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
         gap: 16
       }}>
         {/* Brand */}
-        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <Link href={isAdmin ? "/admin" : "/"} style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
             <div style={{
               width: 38,
               height: 38,
@@ -48,7 +48,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
               justifyContent: "center",
               boxShadow: "none"
             }}>
-              {isAdmin ? <Shield size={20} color="#ffffff" /> : <Layers size={20} color="#ffffff" />}
+              <Layers size={20} color="#ffffff" />
             </div>
             <div>
               <h1 style={{
@@ -59,53 +59,64 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
                 color: "var(--text-main)",
                 margin: 0
               }}>
-                {isAdmin ? "Enterprise Admin Portal" : "Enterprise Operations Hub"}
+                Enterprise Operations Hub
               </h1>
               <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", lineHeight: 1, margin: 0 }}>
-                {isAdmin ? "Organization Governance & Staff Management" : "Operations & Batch Execution Platform"}
+                Operations & Batch Execution Platform
               </p>
             </div>
           </Link>
 
-          {/* Navigation Links for Non-Admin Operations */}
-          {!isAdmin && (
-            <nav style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 16 }}>
+          {/* Navigation Links - Only visible to Admins who manage governance and operations */}
+          {isAdmin && (
+            <nav style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
               <Link
                 href="/"
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "6px 12px",
+                  padding: "7px 13px",
                   borderRadius: 6,
                   fontSize: "0.85rem",
                   fontWeight: 600,
                   textDecoration: "none",
-                  color: "#0b5cab",
-                  background: "#e8f2fb",
+                  color: pathname === "/" ? "#0b5cab" : "var(--text-muted)",
+                  background: pathname === "/" ? "#e8f2fb" : "transparent",
+                  border: pathname === "/" ? "1px solid #bae6fd" : "1px solid transparent",
                   transition: "all 0.15s"
                 }}
               >
                 <LayoutDashboard size={16} />
                 <span>Operations Dashboard</span>
               </Link>
+
+              <Link
+                href="/admin"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 13px",
+                  borderRadius: 6,
+                  fontSize: "0.85rem",
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  color: pathname.startsWith("/admin") ? "#0b5cab" : "var(--text-muted)",
+                  background: pathname.startsWith("/admin") ? "#e8f2fb" : "transparent",
+                  border: pathname.startsWith("/admin") ? "1px solid #bae6fd" : "1px solid transparent",
+                  transition: "all 0.15s"
+                }}
+              >
+                <Shield size={16} />
+                <span>Admin & Governance</span>
+              </Link>
             </nav>
           )}
         </div>
 
-        {/* Actions & User Profile */}
+        {/* User Profile & Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {/* New Batch is only for Operations staff (Coordinator, Sales, Manager) - never for strictly Admin */}
-          {!isAdmin && onOpenCreateModal && (
-            <button
-              onClick={onOpenCreateModal}
-              className="btn btn-primary"
-              style={{ padding: "8px 14px", fontSize: "0.85rem" }}
-            >
-              <PlusCircle size={16} />
-              <span>New Batch</span>
-            </button>
-          )}
 
           {/* User Pill */}
           <div style={{

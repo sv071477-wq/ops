@@ -21,9 +21,16 @@ def login(login_data: UserLogin, service: AuthService = Depends(get_auth_service
 
 
 @router.get("/me", response_model=UserResponse)
-def get_me(current_user: User = Depends(get_current_user)) -> Any:
+def get_me(current_user: User = Depends(get_current_user), service: AuthService = Depends(get_auth_service)) -> Any:
     """Fetch profile of authenticated user."""
-    return current_user
+    return service._enrich_user(current_user)
+
+
+@router.get("/my-reports", response_model=List[UserResponse])
+def get_my_reports(current_user: User = Depends(get_current_user), service: AuthService = Depends(get_auth_service)) -> Any:
+    """Fetch list of active users reporting directly to the authenticated user."""
+    reports = service.db.query(User).filter(User.manager_id == current_user.id, User.is_active.is_(True)).all()
+    return [service._enrich_user(u) for u in reports]
 
 
 @router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_admin)])

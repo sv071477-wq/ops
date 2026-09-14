@@ -4,6 +4,32 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, ConfigDict
 
 
+class TeamBase(BaseModel):
+    name: str
+    department: str = "Ops"
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class TeamCreate(TeamBase):
+    pass
+
+
+class TeamUpdate(BaseModel):
+    name: Optional[str] = None
+    department: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TeamResponse(TeamBase):
+    id: UUID
+    member_count: Optional[int] = 0
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RoleBase(BaseModel):
     name: str
     system_role: str = "Coordinator"  # Admin, Manager, Coordinator, Sales, Faculty
@@ -32,12 +58,13 @@ class UserBase(BaseModel):
     full_name: str
     role: str = "Coordinator"  # Admin, Manager, Coordinator, Sales, Faculty
     role_id: Optional[UUID] = None
+    team_id: Optional[UUID] = None
     manager_id: Optional[UUID] = None
     is_active: bool = True
 
 
 class UserCreate(UserBase):
-    password: str
+    password: str = "Sample@123"
 
 
 class UserUpdate(BaseModel):
@@ -45,6 +72,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     role_id: Optional[UUID] = None
+    team_id: Optional[UUID] = None
     manager_id: Optional[UUID] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
@@ -54,6 +82,9 @@ class UserResponse(UserBase):
     id: UUID
     created_at: datetime
     role_detail: Optional[RoleResponse] = None
+    team_detail: Optional[TeamResponse] = None
+    team_name: Optional[str] = None
+    department: Optional[str] = None
     manager_name: Optional[str] = None
     is_manager: bool = False
     direct_reports_count: int = 0
@@ -67,6 +98,8 @@ class UserHierarchyNode(BaseModel):
     email: str
     role: str
     role_name: Optional[str] = None
+    team_name: Optional[str] = None
+    department: Optional[str] = None
     manager_id: Optional[UUID] = None
     direct_reports: List["UserHierarchyNode"] = []
 

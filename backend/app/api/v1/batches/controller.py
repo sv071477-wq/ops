@@ -50,7 +50,12 @@ def create_batch(
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
-    """Workflow 1: Create a new batch in 'Requested' status."""
+    """Workflow 1: Create a new batch in 'Requested' status. Administrators act strictly in managerial/governance capacity."""
+    if (current_user.role or "").lower() == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrators cannot create batches. Admin acts strictly in a managerial and governance capacity."
+        )
     return service.create(batch_in, current_user)
 
 

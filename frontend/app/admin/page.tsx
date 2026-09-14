@@ -3,11 +3,14 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
-import { api, Role, User, UserHierarchyNode } from "@/lib/api";
+import {
+  api, Role, Team, User, UserHierarchyNode, BatchOption, FmsSyncLog
+} from "@/lib/api";
 import { Navbar } from "@/components/Navbar";
 import {
   Shield, Users, Tag, UserPlus, Plus, Trash2, CheckCircle2,
-  AlertCircle, RefreshCw, GitFork, Briefcase
+  AlertCircle, RefreshCw, GitFork, Briefcase, Layers, Building2,
+  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2
 } from "lucide-react";
 
 // Recursive Org Tree Node Component
@@ -39,7 +42,7 @@ const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ no
         justifyContent: "space-between",
         flexWrap: "wrap",
         gap: 12,
-        maxWidth: 750,
+        maxWidth: 800,
         boxShadow: isManager ? "0 1px 3px rgba(0,0,0,0.05)" : "none"
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -59,7 +62,7 @@ const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ no
           </div>
 
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--text-main)" }}>
                 {node.full_name}
               </span>
@@ -73,6 +76,19 @@ const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ no
               }}>
                 {node.role_name || node.role}
               </span>
+              {node.team_name && (
+                <span style={{
+                  fontSize: "0.725rem",
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 4,
+                  background: "#e0f2fe",
+                  color: "#0369a1",
+                  border: "1px solid #bae6fd"
+                }}>
+                  {node.team_name}
+                </span>
+              )}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
               {node.email}
@@ -120,7 +136,8 @@ export default function AdminPortalPage() {
   const { user, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<"roles" | "users" | "hierarchy">("roles");
+  const [activeTab, setActiveTab] = useState<"teams" | "roles" | "options" | "users" | "fms" | "hierarchy">("teams");
+  const [teams, setTeams] = useState<Team[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [hierarchy, setHierarchy] = useState<UserHierarchyNode[]>([]);
@@ -129,9 +146,43 @@ export default function AdminPortalPage() {
   const [isSavingApprovers, setIsSavingApprovers] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Batch Taxonomy Options state
+  const [selectedOptionType, setSelectedOptionType] = useState<"categories" | "delivery-modes" | "accommodations" | "entities">("categories");
+  const [batchOptions, setBatchOptions] = useState<BatchOption[]>([]);
+  const [isLoadingOptions, setIsLoadingOptions] = useState(false);
+  const [isCreateOptionOpen, setIsCreateOptionOpen] = useState(false);
+  const [newOptionName, setNewOptionName] = useState("");
+  const [newOptionDesc, setNewOptionDesc] = useState("");
+  const [optionFormError, setOptionFormError] = useState<string | null>(null);
+  const [isSubmittingOption, setIsSubmittingOption] = useState(false);
+
+  // FMS Integration state
+  const [fmsLogs, setFmsLogs] = useState<FmsSyncLog[]>([]);
+  const [isLoadingFms, setIsLoadingFms] = useState(false);
+  const [syncFacultyId, setSyncFacultyId] = useState("");
+  const [syncEventType, setSyncEventType] = useState("HOURS_UPDATE");
+  const [isSyncingFms, setIsSyncingFms] = useState(false);
+  const [fmsSyncMsg, setFmsSyncMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   // Modal States
+  const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
+  const [isEditTeamOpen, setIsEditTeamOpen] = useState(false);
+  const [editingTeam, setEditingTeam] = useState<Team | null>(null);
+  const [editTeamName, setEditTeamName] = useState("");
+  const [editTeamDepartment, setEditTeamDepartment] = useState("Ops");
+  const [editTeamDescription, setEditTeamDescription] = useState("");
+  const [editTeamError, setEditTeamError] = useState<string | null>(null);
+  const [isSubmittingEditTeam, setIsSubmittingEditTeam] = useState(false);
+
   const [isCreateRoleOpen, setIsCreateRoleOpen] = useState(false);
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
+
+  // Form States for Team Creation
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamDepartment, setNewTeamDepartment] = useState("Ops");
+  const [newTeamDescription, setNewTeamDescription] = useState("");
+  const [teamFormError, setTeamFormError] = useState<string | null>(null);
+  const [isSubmittingTeam, setIsSubmittingTeam] = useState(false);
 
   // Form States for Role Creation
   const [newRoleName, setNewRoleName] = useState("");
@@ -142,8 +193,8 @@ export default function AdminPortalPage() {
   // Form States for User Creation
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserFullName, setNewUserFullName] = useState("");
-  const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRoleId, setNewUserRoleId] = useState("");
+  const [newUserTeamId, setNewUserTeamId] = useState("");
   const [newUserReportsToId, setNewUserReportsToId] = useState<string>("");
   const [userFormError, setUserFormError] = useState<string | null>(null);
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
@@ -170,12 +221,14 @@ export default function AdminPortalPage() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [fetchedRoles, fetchedUsers, fetchedHierarchy, approvalConfig] = await Promise.all([
+      const [fetchedTeams, fetchedRoles, fetchedUsers, fetchedHierarchy, approvalConfig] = await Promise.all([
+        api.getTeams().catch(() => []),
         api.getRoles(),
         api.getUsers().catch(() => []),
         api.getHierarchy().catch(() => []),
         api.getApprovalConfiguration().catch(() => null),
       ]);
+      setTeams(fetchedTeams);
       setRoles(fetchedRoles);
       setUsers(fetchedUsers);
       setHierarchy(fetchedHierarchy);
@@ -185,12 +238,53 @@ export default function AdminPortalPage() {
       }
 
       if (fetchedRoles.length > 0 && !newUserRoleId) setNewUserRoleId(fetchedRoles[0].id);
+      if (fetchedTeams.length > 0 && !newUserTeamId) setNewUserTeamId(fetchedTeams[0].id);
     } catch (err) {
       console.error("Failed to load admin data:", err);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Fetch Batch Options
+  const fetchBatchOptions = async () => {
+    setIsLoadingOptions(true);
+    try {
+      const opts = await api.getBatchOptions(selectedOptionType);
+      setBatchOptions(opts);
+    } catch (err) {
+      console.error("Failed to load options:", err);
+    } finally {
+      setIsLoadingOptions(false);
+    }
+  };
+
+  // Fetch FMS Logs
+  const fetchFmsLogs = async () => {
+    setIsLoadingFms(true);
+    try {
+      const logs = await api.getFmsLogs();
+      setFmsLogs(logs);
+    } catch (err) {
+      console.error("Failed to load FMS logs:", err);
+    } finally {
+      setIsLoadingFms(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user && user.role?.toLowerCase() === "admin") {
+      fetchData();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (activeTab === "options") {
+      fetchBatchOptions();
+    } else if (activeTab === "fms") {
+      fetchFmsLogs();
+    }
+  }, [activeTab, selectedOptionType]);
 
   const handleSaveApprovers = async () => {
     setIsSavingApprovers(true);
@@ -204,11 +298,74 @@ export default function AdminPortalPage() {
     }
   };
 
-  useEffect(() => {
-    if (user && user.role?.toLowerCase() === "admin") {
-      fetchData();
+  // Handle Add Team
+  const handleCreateTeam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTeamFormError(null);
+    setIsSubmittingTeam(true);
+
+    try {
+      await api.createTeam({
+        name: newTeamName.trim(),
+        department: newTeamDepartment.trim() || "Ops",
+        description: newTeamDescription.trim() || undefined,
+        is_active: true,
+      });
+      setNewTeamName("");
+      setNewTeamDepartment("Ops");
+      setNewTeamDescription("");
+      setIsCreateTeamOpen(false);
+      await fetchData();
+    } catch (err: any) {
+      setTeamFormError(err.message || "Failed to create team");
+    } finally {
+      setIsSubmittingTeam(false);
     }
-  }, [user]);
+  };
+
+  // Handle Delete Team
+  const handleDeleteTeam = async (teamId: string, teamName: string) => {
+    if (!confirm(`Are you sure you want to delete team "${teamName}"? Any assigned users will become unassigned from this team.`)) return;
+    try {
+      await api.deleteTeam(teamId);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete team");
+    }
+  };
+
+  // Handle Open Edit Team
+  const handleOpenEditTeam = (team: Team) => {
+    setEditingTeam(team);
+    setEditTeamName(team.name);
+    setEditTeamDepartment(team.department || "Ops");
+    setEditTeamDescription(team.description || "");
+    setEditTeamError(null);
+    setIsEditTeamOpen(true);
+  };
+
+  // Handle Save Edited Team
+  const handleUpdateTeam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTeam) return;
+    setEditTeamError(null);
+    setIsSubmittingEditTeam(true);
+
+    try {
+      await api.updateTeam(editingTeam.id, {
+        name: editTeamName.trim(),
+        department: editTeamDepartment.trim() || "Ops",
+        description: editTeamDescription.trim() || undefined,
+      });
+      setIsEditTeamOpen(false);
+      setEditingTeam(null);
+      await fetchData();
+    } catch (err: any) {
+      setEditTeamError(err.message || "Failed to update team");
+    } finally {
+      setIsSubmittingEditTeam(false);
+    }
+  };
 
   // Handle Add Role
   const handleCreateRole = async (e: React.FormEvent) => {
@@ -243,6 +400,57 @@ export default function AdminPortalPage() {
     }
   };
 
+  // Handle Add Batch Option
+  const handleCreateOption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOptionFormError(null);
+    setIsSubmittingOption(true);
+
+    try {
+      await api.createBatchOption(selectedOptionType, {
+        name: newOptionName.trim(),
+        description: newOptionDesc.trim() || undefined,
+      });
+      setNewOptionName("");
+      setNewOptionDesc("");
+      setIsCreateOptionOpen(false);
+      await fetchBatchOptions();
+    } catch (err: any) {
+      setOptionFormError(err.message || "Failed to create option");
+    } finally {
+      setIsSubmittingOption(false);
+    }
+  };
+
+  // Handle Delete Batch Option
+  const handleDeleteOption = async (optionId: string, optionName: string) => {
+    if (!confirm(`Are you sure you want to deactivate "${optionName}"?`)) return;
+    try {
+      await api.deleteBatchOption(selectedOptionType, optionId);
+      await fetchBatchOptions();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete option");
+    }
+  };
+
+  // Handle FMS Sync Dispatch
+  const handleDispatchFmsSync = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!syncFacultyId) return;
+    setIsSyncingFms(true);
+    setFmsSyncMsg(null);
+
+    try {
+      await api.syncFacultyFms(syncFacultyId, syncEventType);
+      setFmsSyncMsg({ type: "success", text: `Successfully dispatched ${syncEventType} to external FMS!` });
+      await fetchFmsLogs();
+    } catch (err: any) {
+      setFmsSyncMsg({ type: "error", text: err.message || "FMS Sync dispatch failed" });
+    } finally {
+      setIsSyncingFms(false);
+    }
+  };
+
   // Handle Add User
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,14 +461,14 @@ export default function AdminPortalPage() {
       await api.createUser({
         email: newUserEmail.trim().toLowerCase(),
         full_name: newUserFullName.trim(),
-        password: newUserPassword,
+        password: "Sample@123",
         role_id: newUserRoleId || undefined,
+        team_id: newUserTeamId || undefined,
         manager_id: newUserReportsToId || undefined,
         is_active: true,
       });
       setNewUserEmail("");
       setNewUserFullName("");
-      setNewUserPassword("");
       setNewUserReportsToId("");
       setIsCreateUserOpen(false);
       await fetchData();
@@ -283,6 +491,7 @@ export default function AdminPortalPage() {
   }
 
   const managerCount = users.filter((u) => u.is_manager || (u.direct_reports_count && u.direct_reports_count > 0)).length;
+  const opsTeamCount = teams.filter((t) => (t.department || "").toLowerCase() === "ops").length;
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -322,10 +531,10 @@ export default function AdminPortalPage() {
               color: "var(--text-main)",
               marginTop: 6
             }}>
-              Organization & Role Governance Center
+              Enterprise Governance & Taxonomy Center
             </h1>
             <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>
-              Manage position titles, provision enterprise staff, and configure hierarchical reporting lines.
+              Manage Ops teams, position titles, batch taxonomy options, staff directory, and FMS integrations.
             </p>
           </div>
         </div>
@@ -333,10 +542,22 @@ export default function AdminPortalPage() {
         {/* Stats Grid */}
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
           gap: 16,
           marginBottom: 28
         }}>
+          <div className="glass-panel" style={{ padding: "16px 20px" }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              Configured Teams
+            </div>
+            <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#0284c7", marginTop: 4 }}>
+              {teams.length}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
+              Delivery • Sales • Finance
+            </div>
+          </div>
+
           <div className="glass-panel" style={{ padding: "16px 20px" }}>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
               Configured Roles
@@ -357,31 +578,31 @@ export default function AdminPortalPage() {
               {users.length}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Total employee accounts
+              Active employees
             </div>
           </div>
 
           <div className="glass-panel" style={{ padding: "16px 20px" }}>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Identified Managers / Leads
+              Managers / Leads
             </div>
             <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
               {managerCount}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Users with team reports
+              With direct reports
             </div>
           </div>
 
           <div className="glass-panel" style={{ padding: "16px 20px" }}>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Root Reporting Branches
+              Reporting Trees
             </div>
             <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#9333ea", marginTop: 4 }}>
               {hierarchy.length}
             </div>
             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Top-level department leaders
+              Root leadership branches
             </div>
           </div>
         </div>
@@ -391,8 +612,41 @@ export default function AdminPortalPage() {
           display: "flex",
           borderBottom: "1px solid var(--border-subtle)",
           marginBottom: 24,
-          gap: 8
+          gap: 8,
+          overflowX: "auto"
         }}>
+          <button
+            onClick={() => setActiveTab("teams")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 18px",
+              borderBottom: activeTab === "teams" ? "2px solid #0284c7" : "2px solid transparent",
+              color: activeTab === "teams" ? "#0284c7" : "var(--text-muted)",
+              fontWeight: 600,
+              fontSize: "0.9rem",
+              background: "transparent",
+              borderTop: "none",
+              borderLeft: "none",
+              borderRight: "none",
+              cursor: "pointer",
+              whiteSpace: "nowrap"
+            }}
+          >
+            <Layers size={18} />
+            <span>Ops Teams</span>
+            <span style={{
+              background: activeTab === "teams" ? "#e0f2fe" : "#f1f5f9",
+              color: activeTab === "teams" ? "#0284c7" : "var(--text-dim)",
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: "0.75rem"
+            }}>
+              {teams.length}
+            </span>
+          </button>
+
           <button
             onClick={() => setActiveTab("roles")}
             style={{
@@ -408,20 +662,35 @@ export default function AdminPortalPage() {
               borderTop: "none",
               borderLeft: "none",
               borderRight: "none",
-              cursor: "pointer"
+              cursor: "pointer",
+              whiteSpace: "nowrap"
             }}
           >
             <Tag size={18} />
             <span>Organization Roles & Titles</span>
-            <span style={{
-              background: activeTab === "roles" ? "#e8f2fb" : "#f1f5f9",
-              color: activeTab === "roles" ? "#0b5cab" : "var(--text-dim)",
-              padding: "2px 8px",
-              borderRadius: 10,
-              fontSize: "0.75rem"
-            }}>
-              {roles.length}
-            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("options")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 18px",
+              borderBottom: activeTab === "options" ? "2px solid #0b5cab" : "2px solid transparent",
+              color: activeTab === "options" ? "#0b5cab" : "var(--text-muted)",
+              fontWeight: 600,
+              fontSize: "0.9rem",
+              background: "transparent",
+              borderTop: "none",
+              borderLeft: "none",
+              borderRight: "none",
+              cursor: "pointer",
+              whiteSpace: "nowrap"
+            }}
+          >
+            <Sliders size={18} />
+            <span>Batch Taxonomy & Options</span>
           </button>
 
           <button
@@ -439,11 +708,12 @@ export default function AdminPortalPage() {
               borderTop: "none",
               borderLeft: "none",
               borderRight: "none",
-              cursor: "pointer"
+              cursor: "pointer",
+              whiteSpace: "nowrap"
             }}
           >
             <Users size={18} />
-            <span>Staff Directory & Provisioning</span>
+            <span>Staff Directory</span>
             <span style={{
               background: activeTab === "users" ? "#e8f2fb" : "#f1f5f9",
               color: activeTab === "users" ? "#0b5cab" : "var(--text-dim)",
@@ -453,6 +723,29 @@ export default function AdminPortalPage() {
             }}>
               {users.length}
             </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("fms")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 18px",
+              borderBottom: activeTab === "fms" ? "2px solid #0b5cab" : "2px solid transparent",
+              color: activeTab === "fms" ? "#0b5cab" : "var(--text-muted)",
+              fontWeight: 600,
+              fontSize: "0.9rem",
+              background: "transparent",
+              borderTop: "none",
+              borderLeft: "none",
+              borderRight: "none",
+              cursor: "pointer",
+              whiteSpace: "nowrap"
+            }}
+          >
+            <ArrowRightLeft size={18} />
+            <span>FMS External Sync</span>
           </button>
 
           <button
@@ -470,23 +763,155 @@ export default function AdminPortalPage() {
               borderTop: "none",
               borderLeft: "none",
               borderRight: "none",
-              cursor: "pointer"
+              cursor: "pointer",
+              whiteSpace: "nowrap"
             }}
           >
             <GitFork size={18} />
-            <span>Organization Hierarchy Tree</span>
+            <span>Hierarchy Tree</span>
           </button>
         </div>
 
-        {/* Tab 1: Organization Roles & Titles */}
-        {activeTab === "roles" && (
+        {/* TAB 1: OPS TEAMS */}
+        {activeTab === "teams" && (
           <div className="glass-panel" style={{ padding: "24px" }}>
             <div style={{
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: 20
+              marginBottom: 20,
+              flexWrap: "wrap",
+              gap: 12
             }}>
+              <div>
+                <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                  Ops Teams Management
+                </h2>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+                  Functional delivery, sales, and finance teams operating within the Operations Department.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setIsCreateTeamOpen(true)}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <Plus size={16} />
+                <span>Create New Team</span>
+              </button>
+            </div>
+
+            {/* Teams Table */}
+            <div style={{ overflowX: "auto" }}>
+              <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                    <th style={{ padding: "12px 16px" }}>Team Name</th>
+                    <th style={{ padding: "12px 16px" }}>Description</th>
+                    <th style={{ padding: "12px 16px" }}>Active Members</th>
+                    <th style={{ padding: "12px 16px" }}>Status</th>
+                    <th style={{ padding: "12px 16px" }}>Created At</th>
+                    <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teams.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: "center", padding: "32px", color: "var(--text-muted)" }}>
+                        No teams created yet. Click <strong>Create New Team</strong> to add operational teams.
+                      </td>
+                    </tr>
+                  ) : (
+                    teams.map((t) => (
+                      <tr key={t.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
+                          {t.name}
+                        </td>
+                        <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.825rem", maxWidth: 280 }}>
+                          {t.description || "—"}
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: 10,
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                            background: (t.member_count || 0) > 0 ? "#f0fdf4" : "#f8fafc",
+                            color: (t.member_count || 0) > 0 ? "#16a34a" : "#94a3b8",
+                            border: (t.member_count || 0) > 0 ? "1px solid #bbf7d0" : "1px solid #e2e8f0"
+                          }}>
+                            {t.member_count || 0} member(s)
+                          </span>
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            color: t.is_active ? "#16a34a" : "#94a3b8",
+                            fontSize: "0.8rem",
+                            fontWeight: 600
+                          }}>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: t.is_active ? "#16a34a" : "#94a3b8" }} />
+                            {t.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                          {new Date(t.created_at).toLocaleDateString()}
+                        </td>
+                        <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <button
+                              onClick={() => handleOpenEditTeam(t)}
+                              style={{
+                                background: "#f1f5f9",
+                                border: "1px solid var(--border-subtle)",
+                                color: "#0b5cab",
+                                cursor: "pointer",
+                                padding: "6px 8px",
+                                borderRadius: 4,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: "0.775rem",
+                                fontWeight: 600
+                              }}
+                              title="Edit Team"
+                            >
+                              <Edit2 size={13} />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTeam(t.id, t.name)}
+                              style={{
+                                background: "transparent",
+                                border: "1px solid transparent",
+                                color: "#f43f5e",
+                                cursor: "pointer",
+                                padding: "6px",
+                                borderRadius: 4
+                              }}
+                              title="Delete Team"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: ROLES & APPROVAL CONFIG */}
+        {activeTab === "roles" && (
+          <div className="glass-panel" style={{ padding: "24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
               <div>
                 <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
                   Roles & Position Titles
@@ -506,19 +931,19 @@ export default function AdminPortalPage() {
               </button>
             </div>
 
-            <div style={{ border: "1px solid var(--border-subtle)", padding: 16, marginBottom: 24, background: "#f8fafc" }}>
+            <div style={{ border: "1px solid var(--border-subtle)", padding: 16, marginBottom: 24, background: "#f8fafc", borderRadius: 6 }}>
               <h3 style={{ margin: "0 0 12px", fontSize: "1rem", color: "var(--text-main)" }}>Batch Approval Configuration</h3>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
                 <label style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
                   Approver 1
-                  <select value={approver1Id} onChange={(e) => setApprover1Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6 }}>
+                  <select value={approver1Id} onChange={(e) => setApprover1Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6, width: "100%" }}>
                     <option value="">Select approver 1</option>
                     {users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager")).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
                   </select>
                 </label>
                 <label style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
                   Approver 2
-                  <select value={approver2Id} onChange={(e) => setApprover2Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6 }}>
+                  <select value={approver2Id} onChange={(e) => setApprover2Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6, width: "100%" }}>
                     <option value="">Select approver 2</option>
                     {users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager")).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
                   </select>
@@ -529,7 +954,6 @@ export default function AdminPortalPage() {
               </div>
             </div>
 
-            {/* Roles Table */}
             <div style={{ overflowX: "auto" }}>
               <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
@@ -548,33 +972,13 @@ export default function AdminPortalPage() {
                         {r.name}
                       </td>
                       <td style={{ padding: "14px 16px" }}>
-                        <span style={{
-                          display: "inline-block",
-                          padding: "3px 8px",
-                          borderRadius: 4,
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          background: "#e8f2fb",
-                          color: "#0b5cab"
-                        }}>
+                        <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600, background: "#e8f2fb", color: "#0b5cab" }}>
                           {r.system_role}
                         </span>
                       </td>
                       <td style={{ padding: "14px 16px" }}>
-                        <span style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                          color: r.is_active ? "#16a34a" : "#94a3b8",
-                          fontSize: "0.8rem",
-                          fontWeight: 600
-                        }}>
-                          <span style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            background: r.is_active ? "#16a34a" : "#94a3b8"
-                          }} />
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: r.is_active ? "#16a34a" : "#94a3b8", fontSize: "0.8rem", fontWeight: 600 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: r.is_active ? "#16a34a" : "#94a3b8" }} />
                           {r.is_active ? "Active" : "Inactive"}
                         </span>
                       </td>
@@ -582,18 +986,7 @@ export default function AdminPortalPage() {
                         {new Date(r.created_at).toLocaleDateString()}
                       </td>
                       <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                        <button
-                          onClick={() => handleDeleteRole(r.id, r.name)}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            color: "#f43f5e",
-                            cursor: "pointer",
-                            padding: "6px",
-                            borderRadius: 4
-                          }}
-                          title="Delete Role"
-                        >
+                        <button onClick={() => handleDeleteRole(r.id, r.name)} style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: "6px" }}>
                           <Trash2 size={16} />
                         </button>
                       </td>
@@ -605,21 +998,114 @@ export default function AdminPortalPage() {
           </div>
         )}
 
-        {/* Tab 2: Staff Directory & User Provisioning */}
+        {/* TAB 3: BATCH TAXONOMY & DYNAMIC OPTIONS */}
+        {activeTab === "options" && (
+          <div className="glass-panel" style={{ padding: "24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                  Batch Taxonomy & Option Management
+                </h2>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+                  Configure predefined categories, delivery modes, accommodations, and legal entities.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setIsCreateOptionOpen(true)}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <Plus size={16} />
+                <span>Add Taxonomy Option</span>
+              </button>
+            </div>
+
+            {/* Sub-tabs for option types */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid var(--border-subtle)", paddingBottom: 10 }}>
+              {[
+                { key: "categories", label: "Categories" },
+                { key: "delivery-modes", label: "Delivery Modes" },
+                { key: "accommodations", label: "Accommodations" },
+                { key: "entities", label: "Legal Entities" },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setSelectedOptionType(tab.key as any)}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: selectedOptionType === tab.key ? "#0b5cab" : "#f1f5f9",
+                    color: selectedOptionType === tab.key ? "#ffffff" : "#475569",
+                    fontWeight: 600,
+                    fontSize: "0.825rem",
+                    cursor: "pointer"
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {isLoadingOptions ? (
+              <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
+                <RefreshCw className="animate-spin" size={24} color="#0b5cab" style={{ margin: "0 auto 8px" }} />
+                <div>Loading taxonomy options...</div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                      <th style={{ padding: "12px 16px" }}>Option Name</th>
+                      <th style={{ padding: "12px 16px" }}>Description</th>
+                      <th style={{ padding: "12px 16px" }}>Status</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchOptions.map((opt) => (
+                      <tr key={opt.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
+                          {opt.name}
+                        </td>
+                        <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
+                          {opt.description || "—"}
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{ color: opt.is_active ? "#16a34a" : "#94a3b8", fontWeight: 600, fontSize: "0.8rem" }}>
+                            {opt.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                          <button
+                            onClick={() => handleDeleteOption(opt.id, opt.name)}
+                            style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: "6px" }}
+                            title="Deactivate Option"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: STAFF DIRECTORY */}
         {activeTab === "users" && (
           <div className="glass-panel" style={{ padding: "24px" }}>
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 20
-            }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
               <div>
                 <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
                   Organization Staff Directory
                 </h2>
                 <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Provision new employees, assign position titles, and configure direct reporting managers.
+                  Provision new employees, assign position titles, assign teams (Ops, etc.), and configure reporting managers.
                 </p>
               </div>
 
@@ -633,7 +1119,6 @@ export default function AdminPortalPage() {
               </button>
             </div>
 
-            {/* Users Table */}
             <div style={{ overflowX: "auto" }}>
               <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
@@ -641,113 +1126,205 @@ export default function AdminPortalPage() {
                     <th style={{ padding: "12px 16px" }}>Full Name</th>
                     <th style={{ padding: "12px 16px" }}>Corporate Email</th>
                     <th style={{ padding: "12px 16px" }}>Assigned Role / Title</th>
+                    <th style={{ padding: "12px 16px" }}>Assigned Team (Dept)</th>
                     <th style={{ padding: "12px 16px" }}>Reports To (Manager)</th>
                     <th style={{ padding: "12px 16px" }}>Direct Reports</th>
                     <th style={{ padding: "12px 16px" }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: "center", padding: "32px", color: "var(--text-muted)" }}>
-                        No staff members registered. Click <strong>Add New User</strong> to provision accounts.
+                  {users.map((u) => (
+                    <tr key={u.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                      <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
+                        {u.full_name}
+                      </td>
+                      <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
+                        {u.email}
+                      </td>
+                      <td style={{ padding: "14px 16px" }}>
+                        <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600, background: "#e8f2fb", color: "#0b5cab" }}>
+                          {u.role_detail?.name || u.role}
+                        </span>
+                      </td>
+                      <td style={{ padding: "14px 16px" }}>
+                        {u.team_detail ? (
+                          <span style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "0.85rem" }}>
+                            {u.team_detail.name}
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>— Unassigned —</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "14px 16px", color: u.manager_name ? "var(--text-main)" : "var(--text-dim)", fontSize: "0.825rem" }}>
+                        {u.manager_name || "— Top Level —"}
+                      </td>
+                      <td style={{ padding: "14px 16px" }}>
+                        {u.direct_reports_count && u.direct_reports_count > 0 ? (
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 700, background: "#f0fdf4", color: "#16a34a" }}>
+                            {u.direct_reports_count} direct report(s)
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>0</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "14px 16px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: u.is_active ? "#16a34a" : "#94a3b8", fontSize: "0.8rem", fontWeight: 600 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.is_active ? "#16a34a" : "#94a3b8" }} />
+                          {u.is_active ? "Active" : "Inactive"}
+                        </span>
                       </td>
                     </tr>
-                  ) : (
-                    users.map((u) => (
-                      <tr key={u.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
-                          {u.full_name}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
-                          {u.email}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{
-                            display: "inline-block",
-                            padding: "3px 8px",
-                            borderRadius: 4,
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            background: "#e8f2fb",
-                            color: "#0b5cab",
-                            border: "1px solid #bfdbfe"
-                          }}>
-                            {u.role_detail?.name || u.role}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 16px", color: u.manager_name ? "var(--text-main)" : "var(--text-dim)", fontSize: "0.825rem" }}>
-                          {u.manager_name || "— Top Level —"}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          {u.direct_reports_count && u.direct_reports_count > 0 ? (
-                            <span style={{
-                              display: "inline-block",
-                              padding: "2px 8px",
-                              borderRadius: 10,
-                              fontSize: "0.75rem",
-                              fontWeight: 700,
-                              background: "#f0fdf4",
-                              color: "#16a34a",
-                              border: "1px solid #bbf7d0"
-                            }}>
-                              {u.direct_reports_count} direct report(s)
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>0</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            color: u.is_active ? "#16a34a" : "#94a3b8",
-                            fontSize: "0.8rem",
-                            fontWeight: 600
-                          }}>
-                            <span style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: "50%",
-                              background: u.is_active ? "#16a34a" : "#94a3b8"
-                            }} />
-                            {u.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
         )}
 
-        {/* Tab 3: Organization Hierarchy Tree */}
+        {/* TAB 5: FMS EXTERNAL SYNC */}
+        {activeTab === "fms" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Sync trigger panel */}
+            <div className="glass-panel" style={{ padding: "24px" }}>
+              <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                FMS (Faculty Management System) External Integration
+              </h2>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 16px 0" }}>
+                Dispatch real-time delivery logs, hours updates, and faculty synchronization payloads to enterprise FMS.
+              </p>
+
+              {fmsSyncMsg && (
+                <div style={{
+                  background: fmsSyncMsg.type === "success" ? "#f0fdf4" : "#fef2f2",
+                  border: `1px solid ${fmsSyncMsg.type === "success" ? "#bbf7d0" : "#fecaca"}`,
+                  color: fmsSyncMsg.type === "success" ? "#16a34a" : "#f43f5e",
+                  padding: "10px 14px",
+                  borderRadius: 6,
+                  fontSize: "0.85rem",
+                  marginBottom: 16
+                }}>
+                  {fmsSyncMsg.text}
+                </div>
+              )}
+
+              <form onSubmit={handleDispatchFmsSync} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 240px" }}>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Faculty Identifier / ID *
+                  </label>
+                  <input
+                    type="text"
+                    value={syncFacultyId}
+                    onChange={(e) => setSyncFacultyId(e.target.value)}
+                    placeholder="e.g. FAC-2026-CORE-001"
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  />
+                </div>
+
+                <div style={{ flex: "1 1 200px" }}>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Sync Event Type
+                  </label>
+                  <select
+                    value={syncEventType}
+                    onChange={(e) => setSyncEventType(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                  >
+                    <option value="HOURS_UPDATE">HOURS_UPDATE</option>
+                    <option value="FACULTY_PROFILE">FACULTY_PROFILE</option>
+                    <option value="GATE_STATUS">GATE_STATUS</option>
+                  </select>
+                </div>
+
+                <button type="submit" disabled={isSyncingFms} className="btn btn-primary" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <ArrowRightLeft size={16} />
+                  <span>{isSyncingFms ? "Dispatching..." : "Dispatch FMS Sync"}</span>
+                </button>
+              </form>
+            </div>
+
+            {/* Sync logs table */}
+            <div className="glass-panel" style={{ padding: "24px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                  Recent FMS Dispatch History ({fmsLogs.length})
+                </h3>
+                <button onClick={fetchFmsLogs} className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: "0.8rem" }}>
+                  Refresh Logs
+                </button>
+              </div>
+
+              {isLoadingFms ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)" }}>
+                  <RefreshCw className="animate-spin" size={20} color="#0b5cab" style={{ margin: "0 auto 6px" }} />
+                  <div>Loading sync logs...</div>
+                </div>
+              ) : fmsLogs.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
+                  No FMS sync dispatches recorded yet.
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc", textAlign: "left" }}>
+                        <th style={{ padding: "10px 14px" }}>Faculty ID</th>
+                        <th style={{ padding: "10px 14px" }}>Event Type</th>
+                        <th style={{ padding: "10px 14px" }}>Status</th>
+                        <th style={{ padding: "10px 14px" }}>Timestamp</th>
+                        <th style={{ padding: "10px 14px" }}>Message</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fmsLogs.map((log) => (
+                        <tr key={log.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                          <td style={{ padding: "10px 14px", fontWeight: 600 }}>{log.faculty_id}</td>
+                          <td style={{ padding: "10px 14px" }}>{log.event_type}</td>
+                          <td style={{ padding: "10px 14px" }}>
+                            <span style={{
+                              padding: "2px 8px",
+                              borderRadius: 4,
+                              fontSize: "0.75rem",
+                              fontWeight: 700,
+                              background: log.status === "SUCCESS" ? "#f0fdf4" : "#fef2f2",
+                              color: log.status === "SUCCESS" ? "#16a34a" : "#f43f5e"
+                            }}>
+                              {log.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                            {new Date(log.timestamp).toLocaleString()}
+                          </td>
+                          <td style={{ padding: "10px 14px", color: "var(--text-dim)", fontSize: "0.8rem" }}>
+                            {log.message || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: HIERARCHY TREE */}
         {activeTab === "hierarchy" && (
           <div className="glass-panel" style={{ padding: "24px" }}>
             <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
               Organization Hierarchy & Reporting Tree
             </h2>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 20px 0" }}>
-              Visual organizational tree showing manager reporting lines. Higher-level managers automatically see all nested sub-teams.
+              Visual organizational tree showing manager reporting lines and team allocations.
             </p>
 
             {hierarchy.length === 0 ? (
-              <div style={{
-                textAlign: "center",
-                padding: "48px 24px",
-                background: "#f8fafc",
-                borderRadius: 6,
-                border: "1px dashed var(--border-subtle)",
-                color: "var(--text-muted)"
-              }}>
+              <div style={{ textAlign: "center", padding: "48px 24px", background: "#f8fafc", borderRadius: 6, color: "var(--text-muted)" }}>
                 <GitFork size={32} style={{ margin: "0 auto 12px auto", color: "var(--text-dim)" }} />
                 <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>No Reporting Hierarchy Configured Yet</div>
-                <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
-                  Add users and assign their <strong>Reports To (Manager)</strong> in the Staff Directory to view the tree.
-                </div>
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -759,6 +1336,172 @@ export default function AdminPortalPage() {
           </div>
         )}
       </main>
+
+      {/* Modal: Create Team */}
+      {isCreateTeamOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 80,
+          padding: 16
+        }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
+            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+              Create New Team
+            </h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
+              Add a new functional team within the Ops Department.
+            </p>
+
+            {teamFormError && (
+              <div style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#f43f5e",
+                padding: "10px 14px",
+                borderRadius: 6,
+                fontSize: "0.85rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 16
+              }}>
+                <AlertCircle size={16} />
+                <span>{teamFormError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateTeam} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Team Name *
+                </label>
+                <input
+                  type="text"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                  placeholder="e.g. Core Operations, Delivery Team, Academic Ops"
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Description (Optional)
+                </label>
+                <textarea
+                  value={newTeamDescription}
+                  onChange={(e) => setNewTeamDescription(e.target.value)}
+                  placeholder="Brief summary of team responsibilities..."
+                  className="glass-input"
+                  style={{ width: "100%", minHeight: 70, resize: "vertical" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
+                <button type="button" onClick={() => setIsCreateTeamOpen(false)} className="btn btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={isSubmittingTeam} className="btn btn-primary">
+                  {isSubmittingTeam ? "Creating..." : "Create Team"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Team */}
+      {isEditTeamOpen && editingTeam && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 80,
+          padding: 16
+        }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
+            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+              Edit Team: {editingTeam.name}
+            </h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
+              Update team title and description within the Ops Department.
+            </p>
+
+            {editTeamError && (
+              <div style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#f43f5e",
+                padding: "10px 14px",
+                borderRadius: 6,
+                fontSize: "0.85rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 16
+              }}>
+                <AlertCircle size={16} />
+                <span>{editTeamError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateTeam} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Team Name *
+                </label>
+                <input
+                  type="text"
+                  value={editTeamName}
+                  onChange={(e) => setEditTeamName(e.target.value)}
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Description (Optional)
+                </label>
+                <textarea
+                  value={editTeamDescription}
+                  onChange={(e) => setEditTeamDescription(e.target.value)}
+                  className="glass-input"
+                  style={{ width: "100%", minHeight: 70, resize: "vertical" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
+                <button type="button" onClick={() => setIsEditTeamOpen(false)} className="btn btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={isSubmittingEditTeam} className="btn btn-primary">
+                  {isSubmittingEditTeam ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Create Role */}
       {isCreateRoleOpen && (
@@ -773,10 +1516,10 @@ export default function AdminPortalPage() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 50,
+          zIndex: 80,
           padding: 16
         }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24 }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
               Add Position Title / Role
             </h3>
@@ -838,28 +1581,92 @@ export default function AdminPortalPage() {
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateRoleOpen(false)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid var(--border-subtle)",
-                    padding: "8px 16px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontSize: "0.85rem",
-                    fontWeight: 600
-                  }}
-                >
+                <button type="button" onClick={() => setIsCreateRoleOpen(false)} className="btn btn-secondary">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingRole}
-                  className="btn btn-primary"
-                  style={{ padding: "8px 16px", fontSize: "0.85rem" }}
-                >
+                <button type="submit" disabled={isSubmittingRole} className="btn btn-primary">
                   {isSubmittingRole ? "Creating..." : "Create Position Title"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Create Taxonomy Option */}
+      {isCreateOptionOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 80,
+          padding: 16
+        }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
+            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+              Add Taxonomy Option
+            </h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
+              Add a new value under <strong>{selectedOptionType === "categories" ? "Categories" : selectedOptionType === "delivery-modes" ? "Delivery Modes" : selectedOptionType === "accommodations" ? "Accommodations" : "Legal Entities"}</strong>.
+            </p>
+
+            {optionFormError && (
+              <div style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#f43f5e",
+                padding: "10px 14px",
+                borderRadius: 6,
+                fontSize: "0.85rem",
+                marginBottom: 16
+              }}>
+                {optionFormError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateOption} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Option Name *
+                </label>
+                <input
+                  type="text"
+                  value={newOptionName}
+                  onChange={(e) => setNewOptionName(e.target.value)}
+                  placeholder="e.g. Masterclass, Hybrid 2.0"
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Description (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={newOptionDesc}
+                  onChange={(e) => setNewOptionDesc(e.target.value)}
+                  placeholder="Short description..."
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
+                <button type="button" onClick={() => setIsCreateOptionOpen(false)} className="btn btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={isSubmittingOption} className="btn btn-primary">
+                  {isSubmittingOption ? "Saving..." : "Add Option"}
                 </button>
               </div>
             </form>
@@ -880,15 +1687,15 @@ export default function AdminPortalPage() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 50,
+          zIndex: 80,
           padding: 16
         }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 24 }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
               Provision New User
             </h3>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Create an employee account, assign their position title, and set their reporting manager.
+              Create an employee account, assign their position role, team (Ops, etc.), and reporting manager.
             </p>
 
             {userFormError && (
@@ -940,20 +1747,21 @@ export default function AdminPortalPage() {
                 />
               </div>
 
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Initial Password * (minimum 8 characters)
-                </label>
-                <input
-                  type="password"
-                  value={newUserPassword}
-                  onChange={(e) => setNewUserPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  minLength={8}
-                  required
-                />
+              <div style={{
+                background: "#f8fafc",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: 6,
+                padding: "10px 14px",
+                fontSize: "0.825rem",
+                color: "var(--text-muted)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8
+              }}>
+                <Shield size={16} color="#0b5cab" />
+                <span>
+                  Default initial password: <strong style={{ color: "var(--text-main)", fontFamily: "monospace" }}>Sample@123</strong>
+                </span>
               </div>
 
               <div>
@@ -970,6 +1778,25 @@ export default function AdminPortalPage() {
                   {roles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name} ({r.system_role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Assigned Team
+                </label>
+                <select
+                  value={newUserTeamId}
+                  onChange={(e) => setNewUserTeamId(e.target.value)}
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                >
+                  <option value="">— No Team Assigned —</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
                     </option>
                   ))}
                 </select>
@@ -995,27 +1822,10 @@ export default function AdminPortalPage() {
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateUserOpen(false)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid var(--border-subtle)",
-                    padding: "8px 16px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontSize: "0.85rem",
-                    fontWeight: 600
-                  }}
-                >
+                <button type="button" onClick={() => setIsCreateUserOpen(false)} className="btn btn-secondary">
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingUser}
-                  className="btn btn-primary"
-                  style={{ padding: "8px 16px", fontSize: "0.85rem" }}
-                >
+                <button type="submit" disabled={isSubmittingUser} className="btn btn-primary">
                   {isSubmittingUser ? "Creating..." : "Create User Account"}
                 </button>
               </div>

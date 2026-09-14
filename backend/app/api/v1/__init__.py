@@ -7,6 +7,7 @@ from app.api.v1.batches.controller import router as batches_router
 from app.api.v1.faculty.controller import router as faculty_router
 from app.api.v1.fms_sync.controller import router as fms_sync_router
 from app.api.v1.roles.controller import router as roles_router
+from app.api.v1.teams.controller import router as teams_router
 from app.api.v1.schedules.controller import router as schedules_router
 from app.api.v1.sessions.controller import router as sessions_router
 
@@ -14,6 +15,7 @@ api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["Auth & User Hierarchy"])
 api_router.include_router(roles_router, prefix="/roles", tags=["Role & Position Titles Management"])
+api_router.include_router(teams_router, prefix="/teams", tags=["Teams & Department Management"])
 api_router.include_router(batch_options_router, prefix="/batch-options", tags=["Batch Configuration Options"])
 api_router.include_router(batches_router, prefix="/batches", tags=["Workflow 1: Batch Lifecycle"])
 api_router.include_router(schedules_router, prefix="/schedules", tags=["Workflow 2: Schedule Ingestion & Conflict Engine"])

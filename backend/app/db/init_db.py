@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.core.database import SessionLocal, Base, engine
-from app.models.user import User, UserManagerMapping, Role
+from app.models.user import User, UserManagerMapping, Role, Team
 from app.models.batch import (
     Accommodation,
     ApprovalConfiguration,
@@ -21,6 +21,7 @@ def init_db(db: Session = None) -> None:
     try:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL;"))
             conn.commit()
     except Exception as e:
@@ -48,6 +49,23 @@ def init_db(db: Session = None) -> None:
                     is_active=True
                 )
                 db.add(role_obj)
+
+        # Seed Default Teams (Delivery, Sales, Finance by default under Ops department)
+        default_teams = [
+            {"name": "Delivery", "department": "Ops", "description": "Batch Delivery & Training Operations Team"},
+            {"name": "Sales", "department": "Ops", "description": "Enterprise Accounts & Sales Operations Team"},
+            {"name": "Finance", "department": "Ops", "description": "Financial Approvals, Invoicing & Billing Team"},
+        ]
+        for t_spec in default_teams:
+            team_obj = db.query(Team).filter(Team.name == t_spec["name"]).first()
+            if not team_obj:
+                team_obj = Team(
+                    name=t_spec["name"],
+                    department=t_spec["department"],
+                    description=t_spec["description"],
+                    is_active=True
+                )
+                db.add(team_obj)
 
         default_options = [
             (BatchCategory, ["Bootcamp", "RBT", "PJP", "Workshop"]),
