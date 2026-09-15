@@ -15,22 +15,19 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     batch_id: "",
     program_name: "",
     client_name: "",
-    category: "Bootcamp",
-    domain: "IT/ITES",
+    category: "",
+    domain: "",
     delivery_mode: "Online",
-    location_city: "Bengaluru",
-    residential_type: "NR",
+    location_city: "",
+    residential_type: "",
     start_date: "",
     end_date: "",
-    total_enrollments: 30,
+    total_enrollments: 0,
     residential_enrollments: 0,
-    non_residential_enrollments: 30,
+    non_residential_enrollments: 0,
     technology: "",
-    training_days: 15,
-    total_hours: 120,
-    finance_status: "Pending",
-    finance_status_check_date: "",
-    finance_check: 0,
+    training_days: 0,
+    total_hours: 0,
     faculty_assigned_text: "",
     remarks: "",
   });
@@ -39,6 +36,13 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<Record<string, BatchOption[]>>({});
   const [assignableUsers, setAssignableUsers] = useState<Record<string, User[]>>({});
+
+  const selectedDeliveryMode =
+    (options.modes || []).find((option) => option.id === formData.delivery_mode_id)?.name ||
+    formData.delivery_mode ||
+    "Online";
+
+  const requiresLocation = ["F2F", "Blended"].includes(selectedDeliveryMode);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -62,6 +66,14 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     const { name, value } = e.target;
     setFormData((prev) => {
       const updated = { ...prev, [name]: value };
+
+      if (name === "delivery_mode_id") {
+        const selectedMode = (options.modes || []).find((option) => option.id === value)?.name || "Online";
+        updated.delivery_mode = selectedMode;
+        if (selectedMode === "Online") {
+          updated.location_city = "";
+        }
+      }
 
       // Auto compute non-residential from total
       if (name === "total_enrollments") {
@@ -89,14 +101,49 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    const requiredChecks = [
+      { value: formData.batch_id?.trim(), label: "Batch ID" },
+      { value: formData.client_name?.trim(), label: "Client Name" },
+      { value: formData.program_name?.trim(), label: "Program Curriculum Title" },
+      { value: formData.entity_id, label: "Entity" },
+      { value: formData.category_id, label: "Category" },
+      { value: formData.sow_number?.trim(), label: "Client SOW Number" },
+      { value: formData.domain?.trim(), label: "Domain / Vertical" },
+      { value: formData.delivery_mode_id, label: "Delivery Mode" },
+      { value: formData.accommodation_id, label: "Accommodation" },
+      { value: formData.location_city?.trim(), label: "Location / City", required: requiresLocation },
+      { value: formData.start_date, label: "Start Date" },
+      { value: formData.end_date, label: "End Date" },
+      { value: Number(formData.total_enrollments) > 0 ? String(formData.total_enrollments) : "", label: "Total Enrollments" },
+      { value: String(formData.training_days ?? "").trim(), label: "Training Days" },
+      { value: String(formData.total_hours ?? "").trim(), label: "Total Hours of Training" },
+      { value: formData.technology?.trim(), label: "Technology Stack / Modules" },
+    ];
+
+    const missingField = requiredChecks.find((item) => item.required !== false && !item.value);
+    if (missingField) {
+      setError(`${missingField.label} is required`);
+      return;
+    }
+
+    if (formData.start_date && formData.end_date && new Date(formData.end_date) < new Date(formData.start_date)) {
+      setError("End Date must be on or after Start Date");
+      return;
+    }
+
+    if (requiresLocation && !formData.location_city?.trim()) {
+      setError("Location / City is required for F2F and Blended modes");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      if (!formData.batch_id.trim()) throw new Error("Batch ID is required");
-      if (!formData.program_name.trim()) throw new Error("Program Name is required");
-
       const payload: CreateBatchPayload = {
         ...formData,
+        delivery_mode: selectedDeliveryMode,
+        location_city: requiresLocation ? formData.location_city || undefined : undefined,
         total_enrollments: Number(formData.total_enrollments) || 0,
         residential_enrollments: Number(formData.residential_enrollments) || 0,
         non_residential_enrollments: Number(formData.non_residential_enrollments) || 0,
@@ -263,13 +310,15 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
                 Domain / Vertical
               </label>
-              <select name="domain" value={formData.domain} onChange={handleChange} className="glass-input">
-                <option value="IT/ITES">IT/ITES</option>
-                <option value="Cloud">Cloud & DevOps</option>
-                <option value="DS/ML">Data Science & AI/ML</option>
-                <option value="CyberSecurity">CyberSecurity</option>
-                <option value="FullStack">Full Stack Engineering</option>
-              </select>
+              <input
+                type="text"
+                name="domain"
+                value={formData.domain || ""}
+                onChange={handleChange}
+                placeholder="e.g. IT/ITES, Cloud, Data Science"
+                className="glass-input"
+                required
+              />
             </div>
 
             {/* Delivery Mode */}
@@ -295,19 +344,22 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
             </div>
 
             {/* Location City */}
-            <div>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                Location / City
-              </label>
-              <input
-                type="text"
-                name="location_city"
-                value={formData.location_city}
-                onChange={handleChange}
-                placeholder="e.g. Bengaluru, Hyderabad, Remote"
-                className="glass-input"
-              />
-            </div>
+            {requiresLocation ? (
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                  Location / City
+                </label>
+                <input
+                  type="text"
+                  name="location_city"
+                  value={formData.location_city || ""}
+                  onChange={handleChange}
+                  placeholder="e.g. Bengaluru, Hyderabad, Remote"
+                  className="glass-input"
+                  required
+                />
+              </div>
+            ) : null}
 
             {/* Start Date */}
             <div>
@@ -320,6 +372,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 value={formData.start_date}
                 onChange={handleChange}
                 className="glass-input"
+                required
               />
             </div>
 
@@ -334,6 +387,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 value={formData.end_date}
                 onChange={handleChange}
                 className="glass-input"
+                required
               />
             </div>
 
@@ -357,6 +411,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 onChange={handleChange}
                 min={1}
                 className="glass-input"
+                required
               />
             </div>
 
@@ -372,23 +427,17 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 onChange={handleChange}
                 placeholder="e.g. PySpark, Databricks, Scala, Delta Lake"
                 className="glass-input"
+                required
               />
             </div>
 
-            {/* SOW Number and Approval ID */}
+            {/* SOW Number */}
             <div>
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
                 Client SOW Number
               </label>
-              <input type="text" name="sow_number" value={formData.sow_number || ""} onChange={handleChange} className="glass-input" />
+              <input type="text" name="sow_number" value={formData.sow_number || ""} onChange={handleChange} className="glass-input" required />
             </div>
-            <div>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                Finance Approval ID
-              </label>
-              <input type="text" name="approval_id" value={formData.approval_id || ""} onChange={handleChange} className="glass-input" />
-            </div>
-
             {/* Assignments */}
             <div>
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
@@ -437,7 +486,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Days
+                  Training Days
                 </label>
                 <input
                   type="number"
@@ -445,11 +494,12 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                   value={formData.training_days}
                   onChange={handleChange}
                   className="glass-input"
+                  required
                 />
               </div>
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Hours
+                  Total Hours of Training
                 </label>
                 <input
                   type="number"
@@ -457,39 +507,12 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                   value={formData.total_hours}
                   onChange={handleChange}
                   className="glass-input"
+                  required
                 />
               </div>
             </div>
 
             {/* Remarks */}
-            {/* Finance Tracking */}
-            <div>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                Finance Status Check Date
-              </label>
-              <input
-                type="date"
-                name="finance_status_check_date"
-                value={formData.finance_status_check_date || ""}
-                onChange={handleChange}
-                className="glass-input"
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                Finance Check
-              </label>
-              <input
-                type="number"
-                name="finance_check"
-                value={formData.finance_check ?? 0}
-                onChange={handleChange}
-                min={0}
-                step={1}
-                className="glass-input"
-              />
-            </div>
-
             {/* Remarks */}
             <div style={{ gridColumn: "1 / -1" }}>
               <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>

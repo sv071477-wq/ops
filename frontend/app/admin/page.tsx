@@ -39,10 +39,11 @@ const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ no
         padding: "12px 16px",
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
+        justifyContent: "flex-start",
         flexWrap: "wrap",
         gap: 12,
-        maxWidth: 800,
+        width: "100%",
+        maxWidth: "100%",
         boxShadow: isManager ? "0 1px 3px rgba(0,0,0,0.05)" : "none"
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -176,6 +177,8 @@ export default function AdminPortalPage() {
 
   const [isCreateRoleOpen, setIsCreateRoleOpen] = useState(false);
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
+  const [isEditUserOpen, setIsEditUserOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
 
   // Form States for Team Creation
   const [newTeamName, setNewTeamName] = useState("");
@@ -198,6 +201,15 @@ export default function AdminPortalPage() {
   const [newUserReportsToId, setNewUserReportsToId] = useState<string>("");
   const [userFormError, setUserFormError] = useState<string | null>(null);
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
+  const [editUserEmail, setEditUserEmail] = useState("");
+  const [editUserFullName, setEditUserFullName] = useState("");
+  const [editUserPassword, setEditUserPassword] = useState("");
+  const [editUserRoleId, setEditUserRoleId] = useState("");
+  const [editUserTeamId, setEditUserTeamId] = useState("");
+  const [editUserReportsToId, setEditUserReportsToId] = useState("");
+  const [editUserIsActive, setEditUserIsActive] = useState(true);
+  const [editUserFormError, setEditUserFormError] = useState<string | null>(null);
+  const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
 
   // Security Check
   useEffect(() => {
@@ -461,7 +473,7 @@ export default function AdminPortalPage() {
       await api.createUser({
         email: newUserEmail.trim().toLowerCase(),
         full_name: newUserFullName.trim(),
-        password: "Sample@123",
+        password: "",
         role_id: newUserRoleId || undefined,
         team_id: newUserTeamId || undefined,
         manager_id: newUserReportsToId || undefined,
@@ -476,6 +488,59 @@ export default function AdminPortalPage() {
       setUserFormError(err.message || "Failed to provision user");
     } finally {
       setIsSubmittingUser(false);
+    }
+  };
+
+  const handleOpenEditUser = (staffUser: User) => {
+    setEditingUser(staffUser);
+    setEditUserEmail(staffUser.email);
+    setEditUserFullName(staffUser.full_name);
+    setEditUserPassword("");
+    setEditUserRoleId(staffUser.role_id || "");
+    setEditUserTeamId(staffUser.team_id || "");
+    setEditUserReportsToId(staffUser.manager_id || "");
+    setEditUserIsActive(staffUser.is_active);
+    setEditUserFormError(null);
+    setIsEditUserOpen(true);
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setEditUserFormError(null);
+    setIsSubmittingEditUser(true);
+
+    try {
+      await api.updateUser(editingUser.id, {
+        email: editUserEmail.trim().toLowerCase(),
+        full_name: editUserFullName.trim(),
+        password: editUserPassword.trim() || undefined,
+        role_id: editUserRoleId || null,
+        team_id: editUserTeamId || null,
+        manager_id: editUserReportsToId || null,
+        is_active: editUserIsActive,
+      });
+      setIsEditUserOpen(false);
+      await fetchData();
+    } catch (err: any) {
+      setEditUserFormError(err.message || "Failed to update staff member");
+    } finally {
+      setIsSubmittingEditUser(false);
+    }
+  };
+
+  const handleDeleteUser = async (staffUser: User) => {
+    if (staffUser.id === user?.id) {
+      alert("You cannot delete your own admin account.");
+      return;
+    }
+    if (!confirm(`Delete staff member "${staffUser.full_name}"? This permanently removes their account.`)) return;
+
+    try {
+      await api.deleteUser(staffUser.id);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete staff member");
     }
   };
 
@@ -497,7 +562,7 @@ export default function AdminPortalPage() {
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <Navbar />
 
-      <main style={{ maxWidth: 1400, margin: "0 auto", width: "100%", padding: "28px 24px", flex: 1 }}>
+      <main style={{ width: "100%", padding: "28px 24px", flex: 1, margin: 0, display: "block" }}>
         {/* Header Title */}
         <div style={{
           display: "flex",
@@ -1130,6 +1195,7 @@ export default function AdminPortalPage() {
                     <th style={{ padding: "12px 16px" }}>Reports To (Manager)</th>
                     <th style={{ padding: "12px 16px" }}>Direct Reports</th>
                     <th style={{ padding: "12px 16px" }}>Status</th>
+                    <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1172,6 +1238,24 @@ export default function AdminPortalPage() {
                           <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.is_active ? "#16a34a" : "#94a3b8" }} />
                           {u.is_active ? "Active" : "Inactive"}
                         </span>
+                      </td>
+                      <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          onClick={() => handleOpenEditUser(u)}
+                          title="Edit staff member"
+                          aria-label={`Edit ${u.full_name}`}
+                          style={{ background: "transparent", border: "none", color: "#0b5cab", cursor: "pointer", padding: 6 }}
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(u)}
+                          title="Delete staff member"
+                          aria-label={`Delete ${u.full_name}`}
+                          style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: 6 }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1747,23 +1831,6 @@ export default function AdminPortalPage() {
                 />
               </div>
 
-              <div style={{
-                background: "#f8fafc",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: 6,
-                padding: "10px 14px",
-                fontSize: "0.825rem",
-                color: "var(--text-muted)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8
-              }}>
-                <Shield size={16} color="#0b5cab" />
-                <span>
-                  Default initial password: <strong style={{ color: "var(--text-main)", fontFamily: "monospace" }}>Sample@123</strong>
-                </span>
-              </div>
-
               <div>
                 <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
                   Assigned Position Title / Role *
@@ -1827,6 +1894,82 @@ export default function AdminPortalPage() {
                 </button>
                 <button type="submit" disabled={isSubmittingUser} className="btn btn-primary">
                   {isSubmittingUser ? "Creating..." : "Create User Account"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit User */}
+      {isEditUserOpen && editingUser && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 80,
+          padding: 16
+        }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 24, background: "#ffffff" }}>
+            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+              Edit Staff Member
+            </h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
+              Update account details, role, team, reporting manager, or status.
+            </p>
+
+            {editUserFormError && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#f43f5e", padding: "10px 14px", borderRadius: 6, fontSize: "0.85rem", marginBottom: 16 }}>
+                <AlertCircle size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+                {editUserFormError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateUser} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label className="form-label">Full Name *</label>
+                <input value={editUserFullName} onChange={(e) => setEditUserFullName(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+              </div>
+              <div>
+                <label className="form-label">Corporate Email *</label>
+                <input type="email" value={editUserEmail} onChange={(e) => setEditUserEmail(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+              </div>
+              <div>
+                <label className="form-label">New Password (optional)</label>
+                <input type="password" value={editUserPassword} onChange={(e) => setEditUserPassword(e.target.value)} placeholder="Leave blank to keep current password" className="glass-input" style={{ width: "100%" }} minLength={8} />
+              </div>
+              <div>
+                <label className="form-label">Assigned Position Title / Role *</label>
+                <select value={editUserRoleId} onChange={(e) => setEditUserRoleId(e.target.value)} className="glass-input" style={{ width: "100%" }} required>
+                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.system_role})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="form-label">Assigned Team</label>
+                <select value={editUserTeamId} onChange={(e) => setEditUserTeamId(e.target.value)} className="glass-input" style={{ width: "100%" }}>
+                  <option value="">— No Team Assigned —</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="form-label">Reports To (Manager)</label>
+                <select value={editUserReportsToId} onChange={(e) => setEditUserReportsToId(e.target.value)} className="glass-input" style={{ width: "100%" }}>
+                  <option value="">— No Manager —</option>
+                  {users.filter((u) => u.id !== editingUser.id).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role_detail?.name || u.role})</option>)}
+                </select>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem", color: "var(--text-main)" }}>
+                <input type="checkbox" checked={editUserIsActive} onChange={(e) => setEditUserIsActive(e.target.checked)} />
+                Account is active
+              </label>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
+                <button type="button" onClick={() => setIsEditUserOpen(false)} className="btn btn-secondary">Cancel</button>
+                <button type="submit" disabled={isSubmittingEditUser} className="btn btn-primary">
+                  {isSubmittingEditUser ? "Saving..." : "Save Changes"}
                 </button>
               </div>
             </form>

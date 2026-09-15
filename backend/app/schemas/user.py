@@ -88,6 +88,7 @@ class UserResponse(UserBase):
     manager_name: Optional[str] = None
     is_manager: bool = False
     direct_reports_count: int = 0
+    is_configured_approver: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

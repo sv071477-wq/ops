@@ -17,7 +17,7 @@ from app.models.batch import (
 from app.models.user import User
 from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreate, BatchUpdate
 from app.schemas.feedback import BatchNpsClosureCreate
-from app.api.deps import get_managed_coordinator_ids
+from app.api.deps import get_manager_scope_user_ids
 from app.api.v1.gates.service import GatekeeperService
 
 
@@ -155,18 +155,23 @@ class BatchService:
         user_role_lower = (current_user.role or "").lower()
 
         if user_role_lower != "admin":
-            subordinate_ids = get_managed_coordinator_ids(current_user.id, self.db)
-            if subordinate_ids or user_role_lower == "manager":
-                team_user_ids = subordinate_ids + [current_user.id]
+            team_user_ids = get_manager_scope_user_ids(current_user, self.db)
+            if len(team_user_ids) > 1:
                 query = query.filter(or_(
                     Batch.primary_manager_id.in_(team_user_ids),
                     Batch.coordinator_id.in_(team_user_ids),
-                    Batch.sales_spoc_id.in_(team_user_ids)
+                    Batch.sales_spoc_id.in_(team_user_ids),
+                    Batch.approver_1_id == current_user.id,
+                    Batch.approver_2_id == current_user.id,
                 ))
-            elif user_role_lower == "coordinator":
-                query = query.filter(Batch.coordinator_id == current_user.id)
-            elif user_role_lower == "sales":
-                query = query.filter(Batch.sales_spoc_id == current_user.id)
+            else:
+                query = query.filter(or_(
+                    Batch.primary_manager_id == current_user.id,
+                    Batch.coordinator_id == current_user.id,
+                    Batch.sales_spoc_id == current_user.id,
+                    Batch.approver_1_id == current_user.id,
+                    Batch.approver_2_id == current_user.id,
+                ))
         if status_filter:
             query = query.filter(Batch.status == status_filter)
         if domain:
@@ -180,16 +185,37 @@ class BatchService:
             query = query.filter(or_(Batch.batch_id.ilike(term), Batch.program_name.ilike(term), Batch.client_name.ilike(term), Batch.technology.ilike(term), Batch.location_city.ilike(term)))
         return query.order_by(Batch.created_at.desc()).offset(skip).limit(limit).all()
 
-    def get(self, batch_id: UUID) -> Batch:
+    def get(self, batch_id: UUID, current_user: Optional[User] = None) -> Batch:
         batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
+        if current_user and (current_user.role or "").lower() != "admin":
+            scope_ids = set(get_manager_scope_user_ids(current_user, self.db))
+            batch_user_ids = {
+                batch.primary_manager_id,
+                batch.coordinator_id,
+                batch.sales_spoc_id,
+            }
+            is_assigned_approver = current_user.id in {
+                batch.approver_1_id,
+                batch.approver_2_id,
+            }
+            if not scope_ids.intersection(batch_user_ids) and not is_assigned_approver:
+                raise HTTPException(status_code=404, detail="Batch not found")
         return batch
 
     def update(self, batch_id: UUID, batch_in: BatchUpdate, current_user: User) -> Batch:
         batch = self.get(batch_id)
         update_data = batch_in.model_dump(exclude_unset=True)
         update_data.pop("batch_request_date", None)
+        finance_fields = {"finance_status", "finance_status_check_date", "finance_check"}
+        if finance_fields.intersection(update_data):
+            team_name = current_user.team_detail.name if current_user.team_detail else ""
+            if team_name.strip().lower() != "finance":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only Finance team members can update finance fields."
+                )
         if "start_date" in update_data or "end_date" in update_data:
             update_data["calendar_days"] = self._calendar_days(
                 update_data.get("start_date", batch.start_date),

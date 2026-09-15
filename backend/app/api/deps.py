@@ -103,6 +103,29 @@ def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:
     return get_all_subordinate_ids(manager_id, db)
 
 
+def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
+    """Return the user's manager scope, including siblings and multiple manager assignments."""
+    scope_ids: Set[UUID] = {user.id}
+    manager_ids: Set[UUID] = set()
+
+    if user.manager_id:
+        manager_ids.add(user.manager_id)
+
+    mapped_manager_ids = db.query(UserManagerMapping.manager_id).filter(
+        UserManagerMapping.coordinator_id == user.id
+    ).all()
+    manager_ids.update(manager_id for (manager_id,) in mapped_manager_ids)
+
+    if (user.role or "").lower() == "manager":
+        manager_ids.add(user.id)
+
+    for manager_id in manager_ids:
+        scope_ids.add(manager_id)
+        scope_ids.update(get_all_subordinate_ids(manager_id, db))
+
+    return list(scope_ids)
+
+
 def is_manager_or_lead(user: User, db: Session) -> bool:
     """Returns True if user is automatically identified as a Manager (has direct reports) or has Manager/Admin role."""
     if (user.role or "").lower() in ["admin", "manager"]:

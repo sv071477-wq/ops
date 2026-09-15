@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Shield, Layers, LayoutDashboard } from "lucide-react";
+import { LogOut, Shield, Layers } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -20,12 +20,14 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
 
   return (
     <header style={{
-      borderBottom: "1px solid var(--border-subtle)",
-      background: "#ffffff",
+      borderBottom: "1px solid rgba(160, 190, 223, 0.7)",
+      background: "rgba(255, 255, 255, 0.8)",
+      backdropFilter: "blur(10px)",
       position: "sticky",
       top: 0,
       zIndex: 40,
-      padding: "12px 24px"
+      padding: "12px 24px",
+      boxShadow: "0 10px 30px rgba(15, 23, 42, 0.04)"
     }}>
       <div style={{
         maxWidth: 1400,
@@ -39,14 +41,14 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
           <Link href="/" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
             <div style={{
-              width: 38,
-              height: 38,
-              borderRadius: 6,
-              background: "#0b5cab",
+              width: 42,
+              height: 42,
+              borderRadius: 12,
+              background: "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              boxShadow: "none"
+              boxShadow: "0 10px 20px rgba(11, 92, 171, 0.2)"
             }}>
               <Layers size={20} color="#ffffff" />
             </div>
@@ -67,30 +69,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
             </div>
           </Link>
 
-          {/* Navigation Links - Only visible to Admins who manage governance and operations */}
+          {/* Governance navigation is the only admin destination. */}
           {isAdmin && (
             <nav style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
-              <Link
-                href="/"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 13px",
-                  borderRadius: 6,
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  textDecoration: "none",
-                  color: pathname === "/" ? "#0b5cab" : "var(--text-muted)",
-                  background: pathname === "/" ? "#e8f2fb" : "transparent",
-                  border: pathname === "/" ? "1px solid #bae6fd" : "1px solid transparent",
-                  transition: "all 0.15s"
-                }}
-              >
-                <LayoutDashboard size={16} />
-                <span>Operations Dashboard</span>
-              </Link>
-
               <Link
                 href="/admin"
                 style={{

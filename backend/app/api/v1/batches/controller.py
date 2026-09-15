@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
@@ -51,10 +51,16 @@ def create_batch(
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Workflow 1: Create a new batch in 'Requested' status. Administrators act strictly in managerial/governance capacity."""
+    team_name = current_user.team_detail.name if current_user.team_detail else ""
     if (current_user.role or "").lower() == "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrators cannot create batches. Admin acts strictly in a managerial and governance capacity."
+        )
+    if team_name.strip().lower() != "delivery":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Delivery team members can create batches."
         )
     return service.create(batch_in, current_user)
 
@@ -141,7 +147,7 @@ def get_batch_detail(
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """Fetch complete batch details."""
-    return service.get(id)
+    return service.get(id, current_user)
 
 
 @router.patch("/{id}", response_model=BatchResponse)

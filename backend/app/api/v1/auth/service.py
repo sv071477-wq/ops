@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User, UserManagerMapping, Role, Team
-from app.schemas.user import CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode
+from app.models.batch import ApprovalConfiguration
+from app.schemas.user import CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate
 
 
 class AuthService:
@@ -33,6 +34,7 @@ class AuthService:
         mgr_name = user.manager.full_name if user.manager else None
         team_name = user.team_detail.name if user.team_detail else None
         department = user.team_detail.department if user.team_detail else None
+        approval_config = self.db.query(ApprovalConfiguration).first()
         
         is_mgr = direct_count > 0 or (user.role or "").lower() in ["admin", "manager"]
         
@@ -42,6 +44,10 @@ class AuthService:
         resp.direct_reports_count = direct_count
         resp.team_name = team_name
         resp.department = department
+        resp.is_configured_approver = bool(
+            approval_config
+            and user.id in {approval_config.approver_1_id, approval_config.approver_2_id}
+        )
         return resp
 
     def create_user(self, user_in: UserCreate) -> UserResponse:
@@ -87,6 +93,72 @@ class AuthService:
         self.db.commit()
         self.db.refresh(user)
         return self._enrich_user(user)
+
+    def update_user(self, user_id: UUID, user_in: UserUpdate) -> UserResponse:
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        update_data = user_in.model_dump(exclude_unset=True)
+
+        if "email" in update_data:
+            email = str(update_data["email"]).lower().strip()
+            existing = self.db.query(User).filter(User.email == email, User.id != user_id).first()
+            if existing:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
+            user.email = email
+
+        if "full_name" in update_data:
+            full_name = (update_data["full_name"] or "").strip()
+            if not full_name:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Full name cannot be blank")
+            user.full_name = full_name
+
+        if "role_id" in update_data or "role" in update_data:
+            role_id = update_data.get("role_id")
+            role_obj = self.db.query(Role).filter(Role.id == role_id).first() if role_id else None
+            if role_id and not role_obj:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected role not found")
+            if role_obj:
+                user.role_id = role_obj.id
+                user.role = role_obj.system_role
+            elif "role" in update_data and update_data["role"]:
+                user.role = update_data["role"]
+                user.role_id = None
+
+        if "team_id" in update_data:
+            from app.models.user import Team
+            if update_data["team_id"] and not self.db.query(Team).filter(Team.id == update_data["team_id"]).first():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected team not found")
+            user.team_id = update_data["team_id"]
+
+        if "manager_id" in update_data:
+            manager_id = update_data["manager_id"]
+            if manager_id == user_id:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A user cannot report to themselves")
+            if manager_id and not self.db.query(User).filter(User.id == manager_id).first():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned manager not found")
+            user.manager_id = manager_id
+
+        if "is_active" in update_data and update_data["is_active"] is not None:
+            user.is_active = update_data["is_active"]
+        if "password" in update_data and update_data["password"]:
+            if len(update_data["password"]) < 8:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must contain at least 8 characters")
+            user.hashed_password = get_password_hash(update_data["password"])
+
+        self.db.commit()
+        self.db.refresh(user)
+        return self._enrich_user(user)
+
+    def delete_user(self, user_id: UUID) -> dict:
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        self.db.delete(user)
+        self.db.commit()
+        return {"detail": f"User '{user.email}' successfully deleted"}
 
     def list_all_users(self) -> List[UserResponse]:
         users = self.db.query(User).order_by(User.created_at.desc()).all()

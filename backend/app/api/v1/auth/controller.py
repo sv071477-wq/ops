@@ -1,10 +1,11 @@
 from typing import List, Any
 from fastapi import APIRouter, Depends, Query
+from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.schemas.user import (
-    UserCreate, UserResponse, UserLogin, Token,
+    UserCreate, UserUpdate, UserResponse, UserLogin, Token,
     CoordinatorMappingCreate, CoordinatorMappingResponse, UserHierarchyNode
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
@@ -57,6 +58,30 @@ def get_organization_hierarchy(service: AuthService = Depends(get_auth_service))
 @router.post("/users", response_model=UserResponse, dependencies=[Depends(require_admin)])
 def create_user(user_in: UserCreate, service: AuthService = Depends(get_auth_service)) -> Any:
     return service.create_user(user_in)
+
+
+@router.patch("/users/{id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
+def update_user(
+    id: UUID,
+    user_in: UserUpdate,
+    service: AuthService = Depends(get_auth_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    """Admin Only: Update a staff member's account and organization assignments."""
+    return service.update_user(id, user_in)
+
+
+@router.delete("/users/{id}", dependencies=[Depends(require_admin)])
+def delete_user(
+    id: UUID,
+    service: AuthService = Depends(get_auth_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    """Admin Only: Delete a staff member's account."""
+    if id == current_user.id:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own admin account")
+    return service.delete_user(id)
 
 
 @router.get("/users/coordinators", response_model=List[UserResponse], dependencies=[Depends(require_manager_or_admin)])

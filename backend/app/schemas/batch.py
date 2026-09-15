@@ -38,7 +38,7 @@ class BatchBase(BaseModel):
     faculty_assigned_text: Optional[str] = None
     finance_status: str = Field("Pending", max_length=50)
     finance_status_check_date: Optional[date] = None
-    finance_check: Optional[int] = Field(None, ge=0)
+    finance_check: Optional[int] = None
     remarks: Optional[str] = None
     comments: Optional[str] = None
 
@@ -46,6 +46,13 @@ class BatchBase(BaseModel):
     def validate_dates(self):
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+
+        mode = (self.delivery_mode or "").strip().lower()
+        if mode == "online":
+            self.location_city = None
+        elif mode in {"f2f", "blended"} and not self.location_city:
+            raise ValueError("location_city is required when delivery_mode is F2F or Blended")
+
         return self
 
 
@@ -105,7 +112,7 @@ class BatchUpdate(BaseModel):
     faculty_assigned_text: Optional[str] = None
     finance_status: Optional[str] = None
     finance_status_check_date: Optional[date] = None
-    finance_check: Optional[int] = Field(None, ge=0)
+    finance_check: Optional[int] = None
     remarks: Optional[str] = None
     comments: Optional[str] = None
 
@@ -113,6 +120,13 @@ class BatchUpdate(BaseModel):
     def validate_dates(self):
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+
+        mode = (self.delivery_mode or "").strip().lower()
+        if mode == "online":
+            self.location_city = None
+        elif mode in {"f2f", "blended"} and not self.location_city:
+            raise ValueError("location_city is required when delivery_mode is F2F or Blended")
+
         return self
 
 
@@ -125,8 +139,6 @@ class BatchResponse(BatchBase):
     approver_2_status: str = "Pending"
     approver_1_approved_at: Optional[datetime] = None
     approver_2_approved_at: Optional[datetime] = None
-    finance_status_check_date: Optional[date] = None
-    finance_check: Optional[int] = None
     batch_avg_feedback: Optional[Decimal] = None
     total_feedback_score: Optional[Decimal] = None
     batch_nps: Optional[Decimal] = None

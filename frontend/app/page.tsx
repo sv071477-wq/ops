@@ -12,9 +12,9 @@ import { ApproveBatchModal } from "@/components/ApproveBatchModal";
 import { BatchDetailDrawer } from "@/components/BatchDetailDrawer";
 import {
   Layers, Search, Filter, Plus, CheckCircle2, Clock, PlayCircle,
-  Archive, Star, Eye, Lock, Building2, MapPin, Sparkles, RefreshCw,
+  Archive, Eye, Lock, Building2, MapPin, Sparkles, RefreshCw,
   AlertTriangle, BarChart3, Download, Users, Briefcase, TrendingUp, Check,
-  PlusCircle, Calendar, ShieldCheck
+  PlusCircle, Calendar, ShieldCheck, Maximize2, Minimize2, FileSpreadsheet
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -22,18 +22,34 @@ export default function DashboardPage() {
   const router = useRouter();
 
   // Top-level Navigation View
-  const [activeView, setActiveView] = useState<"batches" | "analytics" | "faculty">("batches");
+  const [activeView, setActiveView] = useState<"batches" | "approvals" | "finance" | "analytics" | "faculty">("batches");
 
   // Direct reports state for managerial dashboard
   const [myReports, setMyReports] = useState<User[]>([]);
 
   // Batches state
   const [batches, setBatches] = useState<Batch[]>([]);
+  const [financeDrafts, setFinanceDrafts] = useState<Record<string, {
+    finance_status: string;
+    finance_status_check_date: string;
+    finance_check: number | null;
+  }>>({});
+  const [savingFinanceBatchId, setSavingFinanceBatchId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [domainFilter, setDomainFilter] = useState("ALL");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
+
+  // Finance review sheet state
+  const [isFinanceFullScreen, setIsFinanceFullScreen] = useState(false);
+  const [financeSearch, setFinanceSearch] = useState("");
+  const [financeStatusFilter, setFinanceStatusFilter] = useState("ALL");
+  const [financeCheckStatusFilter, setFinanceCheckStatusFilter] = useState("ALL");
+  const [financeDomainFilter, setFinanceDomainFilter] = useState("ALL");
+  const [financeModeFilter, setFinanceModeFilter] = useState("ALL");
+  const [financeStartDate, setFinanceStartDate] = useState("");
+  const [financeEndDate, setFinanceEndDate] = useState("");
 
   // Analytics state
   const [dashboardSummary, setDashboardSummary] = useState<ManagerDashboardSummary | null>(null);
@@ -55,24 +71,76 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!isAuthLoading && !user) {
       router.push("/login");
+    } else if (!isAuthLoading && user?.role?.toLowerCase() === "admin") {
+      router.replace("/admin");
     }
   }, [user, isAuthLoading, router]);
 
   // Fetch batches
-  const fetchBatches = async () => {
+  const fetchBatches = async (forApprovals = false) => {
     setIsLoading(true);
     try {
       const data = await api.getBatches({
-        status: statusFilter !== "ALL" ? statusFilter : undefined,
-        domain: domainFilter !== "ALL" ? domainFilter : undefined,
-        category: categoryFilter !== "ALL" ? categoryFilter : undefined,
-        search: searchQuery.trim() || undefined,
+        status: forApprovals ? undefined : statusFilter !== "ALL" ? statusFilter : undefined,
+        domain: forApprovals ? undefined : domainFilter !== "ALL" ? domainFilter : undefined,
+        category: forApprovals ? undefined : categoryFilter !== "ALL" ? categoryFilter : undefined,
+        search: forApprovals ? undefined : searchQuery.trim() || undefined,
       });
       setBatches(data);
     } catch (err) {
       console.error("Failed to load batches:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setFinanceDrafts((prev) => {
+      const next: Record<string, { finance_status: string; finance_status_check_date: string; finance_check: number | null }> = {};
+      batches.forEach((batch) => {
+        const previous = prev[batch.id];
+        next[batch.id] = {
+          finance_status: previous?.finance_status || batch.finance_status || "Pending",
+          finance_status_check_date: previous?.finance_status_check_date || batch.finance_status_check_date || "",
+          finance_check: previous?.finance_check ?? batch.finance_check ?? null,
+        };
+      });
+      return next;
+    });
+  }, [batches]);
+
+  const updateFinanceDraft = (
+    batchId: string,
+    field: "finance_status" | "finance_status_check_date" | "finance_check",
+    value: string | number | null,
+  ) => {
+    setFinanceDrafts((prev) => ({
+      ...prev,
+      [batchId]: {
+        finance_status: prev[batchId]?.finance_status || "Pending",
+        finance_status_check_date: prev[batchId]?.finance_status_check_date || "",
+        finance_check: prev[batchId]?.finance_check ?? null,
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveFinanceBatch = async (batch: Batch) => {
+    const draft = financeDrafts[batch.id];
+    if (!draft) return;
+
+    setSavingFinanceBatchId(batch.id);
+    try {
+      await api.updateBatch(batch.id, {
+        finance_status: draft.finance_status || "Pending",
+        finance_status_check_date: draft.finance_status_check_date || null,
+        finance_check: draft.finance_check ?? null,
+      });
+      await fetchBatches();
+    } catch (err: any) {
+      alert(err.message || "Failed to save finance details");
+    } finally {
+      setSavingFinanceBatchId(null);
     }
   };
 
@@ -110,6 +178,10 @@ export default function DashboardPage() {
     if (user) {
       if (activeView === "batches") {
         fetchBatches();
+      } else if (activeView === "approvals") {
+        fetchBatches(true);
+      } else if (activeView === "finance") {
+        fetchBatches(true);
       } else if (activeView === "analytics") {
         fetchAnalytics();
       } else if (activeView === "faculty") {
@@ -158,13 +230,105 @@ export default function DashboardPage() {
     const ongoing = batches.filter((b) => b.status === "Ongoing").length;
     const completed = batches.filter((b) => b.status === "Completed").length;
 
-    const feedbackScores = batches.filter((b) => b.batch_avg_feedback).map((b) => Number(b.batch_avg_feedback));
-    const avgFeedback = feedbackScores.length > 0 ? (feedbackScores.reduce((a, b) => a + b, 0) / feedbackScores.length).toFixed(2) : "4.85";
-
-    return { total, requested, approved, ongoing, completed, avgFeedback };
+    return { total, requested, approved, ongoing, completed };
   }, [batches]);
 
-  if (isAuthLoading || !user) {
+  const approvalQueue = useMemo(
+    () => batches.filter((b) => (
+      ((b.status === "Requested" || b.status === "Approval 1 Pending") && b.approver_1_id === user?.id)
+      || (b.status === "Approval 2 Pending" && b.approver_2_id === user?.id)
+    )),
+    [batches, user?.id]
+  );
+
+  const activeBatches = useMemo(
+    () => user?.is_configured_approver === true
+      ? batches.filter((b) => ["Approved", "Upcoming", "Ongoing"].includes(b.status))
+      : batches,
+    [batches, user?.is_configured_approver]
+  );
+
+  const filteredFinanceBatches = useMemo(() => {
+    const search = financeSearch.trim().toLowerCase();
+    return batches.filter((batch) => {
+      const draft = financeDrafts[batch.id];
+      const financeStatus = draft?.finance_status || batch.finance_status || "Pending";
+      const searchable = [
+        batch.batch_id,
+        batch.client_name,
+        batch.program_name,
+        batch.domain,
+        batch.delivery_mode,
+        batch.location_city,
+        batch.approval_id,
+        batch.sow_number,
+      ].join(" ").toLowerCase();
+      const startDate = batch.start_date ? batch.start_date.slice(0, 10) : "";
+
+      return (!search || searchable.includes(search))
+        && (financeStatusFilter === "ALL" || batch.status === financeStatusFilter)
+        && (financeCheckStatusFilter === "ALL" || financeStatus === financeCheckStatusFilter)
+        && (financeDomainFilter === "ALL" || batch.domain === financeDomainFilter)
+        && (financeModeFilter === "ALL" || batch.delivery_mode === financeModeFilter)
+        && (!financeStartDate || (startDate && startDate >= financeStartDate))
+        && (!financeEndDate || (startDate && startDate <= financeEndDate));
+    });
+  }, [
+    batches,
+    financeDrafts,
+    financeSearch,
+    financeStatusFilter,
+    financeCheckStatusFilter,
+    financeDomainFilter,
+    financeModeFilter,
+    financeStartDate,
+    financeEndDate,
+  ]);
+
+  const exportFinanceSheet = () => {
+    const headers = ["Batch ID", "Client", "Program", "Domain", "Mode", "Location", "Enrollments", "Training Days", "Total Hours", "SOW Ref", "Finance Status", "Check Date", "Finance Check", "Status"];
+    const escapeCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const rows = filteredFinanceBatches.map((batch) => {
+      const draft = financeDrafts[batch.id] || {};
+      return [
+        batch.batch_id,
+        batch.client_name || "",
+        batch.program_name,
+        batch.domain || "",
+        batch.delivery_mode,
+        batch.location_city || "",
+        batch.total_enrollments,
+        batch.training_days,
+        batch.total_hours,
+        batch.approval_id || batch.sow_number || "",
+        draft.finance_status || batch.finance_status || "Pending",
+        draft.finance_status_check_date || batch.finance_status_check_date || "",
+        draft.finance_check ?? batch.finance_check ?? "",
+        batch.status,
+      ].map(escapeCell).join(",");
+    });
+    const csv = `\uFEFF${headers.map(escapeCell).join(",")}\n${rows.join("\n")}`;
+    const blob = new Blob([csv], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `finance-review-${new Date().toISOString().slice(0, 10)}.xls`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const isApprover = user?.is_configured_approver === true;
+  const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance";
+  const canCreateBatch = user?.role?.toLowerCase() !== "admin" && user?.team_name?.trim().toLowerCase() === "delivery";
+  const canApprove = user?.is_configured_approver === true;
+
+  useEffect(() => {
+    if (!isFinanceViewAvailable && activeView === "finance") {
+      setActiveView("batches");
+    }
+  }, [isFinanceViewAvailable, activeView]);
+
+  if (isAuthLoading || !user || user.role?.toLowerCase() === "admin") {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
@@ -174,8 +338,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
-  const canApprove = user.role === "Admin" || user.role === "Manager";
 
   const handleSubmitBatch = async (batch: Batch) => {
     try {
@@ -198,90 +360,151 @@ export default function DashboardPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "#f8fafc" }}>
+    <div className="dashboard-shell" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <Navbar />
 
       <div style={{
-        maxWidth: 1480,
-        margin: "0 auto",
         width: "100%",
         padding: "24px 20px",
         flex: 1,
         display: "flex",
         gap: 24,
-        alignItems: "flex-start"
+        alignItems: "flex-start",
+        justifyContent: "flex-start"
       }}>
         {/* Unified Operational Sidebar */}
         <aside style={{
           width: 260,
           flexShrink: 0,
           position: "sticky",
-          top: 84
+          top: 76
         }}>
           <div className="glass-panel" style={{
-            background: "#ffffff",
-            borderRadius: 10,
-            border: "1px solid var(--border-subtle)",
-            boxShadow: "0 1px 4px rgba(0, 0, 0, 0.04)",
+            background: "#f4f9ff",
+            borderRadius: 16,
+            border: "1px solid #cfe0f7",
+            boxShadow: "0 8px 16px rgba(15, 23, 42, 0.05)",
             overflow: "hidden",
             display: "flex",
             flexDirection: "column"
           }}>
             {/* Unified Sidebar Actions & Navigation */}
-            <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ padding: "12px 10px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Quick Action: New Batch */}
-              {user.role?.toLowerCase() !== "admin" && (
+              {canCreateBatch && (
                 <button
                   onClick={() => setIsCreateOpen(true)}
                   className="btn btn-primary"
                   style={{
                     width: "100%",
-                    padding: "11px 14px",
+                    padding: "11px 12px",
                     display: "flex",
                     alignItems: "center",
-                    gap: 10,
-                    fontSize: "0.875rem",
-                    fontWeight: 600,
-                    borderRadius: 6,
-                    background: "#0b5cab",
+                    justifyContent: "center",
+                    gap: 8,
+                    fontSize: "0.94rem",
+                    fontWeight: 700,
+                    borderRadius: 12,
+                    background: "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)",
                     color: "#ffffff",
-                    border: "1px solid #0b5cab",
-                    boxShadow: "0 2px 4px rgba(11, 92, 171, 0.2)",
-                    cursor: "pointer"
+                    border: "1px solid rgba(11, 92, 171, 0.9)",
+                    boxShadow: "0 8px 16px rgba(11, 92, 171, 0.12)",
+                    cursor: "pointer",
+                    minHeight: 52
                   }}
                 >
-                  <PlusCircle size={18} />
+                  <PlusCircle size={18} strokeWidth={2.2} />
                   <span>New Batch</span>
                 </button>
               )}
 
-              {/* Schedule Ingestion */}
+              {/* Active Batches & Sessions */}
               <button
                 onClick={() => setActiveView("batches")}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 10,
+                  justifyContent: "center",
+                    gap: 10,
                   width: "100%",
-                  padding: "11px 14px",
-                  borderRadius: 6,
-                  border: activeView === "batches" ? "1px solid #38bdf8" : "1px solid #0b5cab",
-                  background: activeView === "batches" ? "#08427b" : "#0b5cab",
-                  color: "#ffffff",
-                  fontWeight: 600,
-                  fontSize: "0.875rem",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: activeView === "batches" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
+                    background: activeView === "batches" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
+                  color: activeView === "batches" ? "#ffffff" : "#0b5cab",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
                   cursor: "pointer",
                   textAlign: "left",
                   boxShadow: activeView === "batches"
-                    ? "0 2px 6px rgba(11, 92, 171, 0.35), 0 0 0 1px #38bdf8"
-                    : "0 2px 4px rgba(11, 92, 171, 0.2)",
-                  opacity: activeView === "batches" ? 1 : 0.9,
-                  transition: "all 0.15s"
+                    ? "0 10px 18px rgba(11, 92, 171, 0.14)"
+                    : "none",
+                  opacity: 1,
+                  transition: "all 0.15s",
+                    minHeight: 52
                 }}
               >
-                <Layers size={18} color="#ffffff" />
-                <span>Schedule Ingestion</span>
+                  <Layers size={18} color={activeView === "batches" ? "#ffffff" : "#0b5cab"} />
+                  <span style={{ lineHeight: 1.2 }}>Active Batches</span>
               </button>
+
+              {isApprover && (
+                <button
+                  onClick={() => setActiveView("approvals")}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                    width: "100%",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: activeView === "approvals" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
+                    background: activeView === "approvals" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
+                    color: activeView === "approvals" ? "#ffffff" : "#0b5cab",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    boxShadow: activeView === "approvals" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
+                    opacity: 1,
+                    transition: "all 0.15s",
+                    minHeight: 52
+                  }}
+                >
+                  <ShieldCheck size={18} color={activeView === "approvals" ? "#ffffff" : "#0b5cab"} />
+                  <span style={{ lineHeight: 1.2 }}>Approvals</span>
+                </button>
+              )}
+
+              {isFinanceViewAvailable && (
+                <button
+                  onClick={() => setActiveView("finance")}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                    width: "100%",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: activeView === "finance" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
+                    background: activeView === "finance" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
+                    color: activeView === "finance" ? "#ffffff" : "#0b5cab",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    boxShadow: activeView === "finance" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
+                    opacity: 1,
+                    transition: "all 0.15s",
+                    minHeight: 52
+                  }}
+                >
+                  <Briefcase size={18} color={activeView === "finance" ? "#ffffff" : "#0b5cab"} />
+                  <span style={{ lineHeight: 1.2 }}>Finance Review</span>
+                </button>
+              )}
 
               {/* Faculty Utilization */}
               <button
@@ -289,26 +512,26 @@ export default function DashboardPage() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 10,
+                  justifyContent: "center",
+                    gap: 10,
                   width: "100%",
-                  padding: "11px 14px",
-                  borderRadius: 6,
-                  border: activeView === "faculty" ? "1px solid #38bdf8" : "1px solid #0b5cab",
-                  background: activeView === "faculty" ? "#08427b" : "#0b5cab",
-                  color: "#ffffff",
-                  fontWeight: 600,
-                  fontSize: "0.875rem",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: activeView === "faculty" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
+                    background: activeView === "faculty" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
+                  color: activeView === "faculty" ? "#ffffff" : "#0b5cab",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
                   cursor: "pointer",
                   textAlign: "left",
-                  boxShadow: activeView === "faculty"
-                    ? "0 2px 6px rgba(11, 92, 171, 0.35), 0 0 0 1px #38bdf8"
-                    : "0 2px 4px rgba(11, 92, 171, 0.2)",
-                  opacity: activeView === "faculty" ? 1 : 0.9,
-                  transition: "all 0.15s"
+                    boxShadow: activeView === "faculty" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
+                  opacity: 1,
+                  transition: "all 0.15s",
+                    minHeight: 52
                 }}
               >
-                <Users size={18} color="#ffffff" />
-                <span>Faculty Utilization</span>
+                  <Users size={18} color={activeView === "faculty" ? "#ffffff" : "#0b5cab"} />
+                <span style={{ lineHeight: 1.2 }}>Faculty Utilization</span>
               </button>
 
               {/* Leadership Oversight - Visible if there are people reporting under this person */}
@@ -318,61 +541,62 @@ export default function DashboardPage() {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: "center",
                     gap: 10,
                     width: "100%",
-                    padding: "11px 14px",
-                    borderRadius: 6,
-                    border: activeView === "analytics" ? "1px solid #38bdf8" : "1px solid #0b5cab",
-                    background: activeView === "analytics" ? "#08427b" : "#0b5cab",
-                    color: "#ffffff",
-                    fontWeight: 600,
-                    fontSize: "0.875rem",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: activeView === "analytics" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
+                    background: activeView === "analytics" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
+                    color: activeView === "analytics" ? "#ffffff" : "#0b5cab",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
                     cursor: "pointer",
                     textAlign: "left",
-                    boxShadow: activeView === "analytics"
-                      ? "0 2px 6px rgba(11, 92, 171, 0.35), 0 0 0 1px #38bdf8"
-                      : "0 2px 4px rgba(11, 92, 171, 0.2)",
-                    opacity: activeView === "analytics" ? 1 : 0.9,
-                    transition: "all 0.15s"
+                    boxShadow: activeView === "analytics" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
+                    opacity: 1,
+                    transition: "all 0.15s",
+                    minHeight: 52
                   }}
                 >
-                  <BarChart3 size={18} color="#ffffff" />
-                  <span>Team Dashboard</span>
+                  <BarChart3 size={18} color={activeView === "analytics" ? "#ffffff" : "#0b5cab"} />
+                  <span style={{ lineHeight: 1.2 }}>Team Dashboard</span>
                 </button>
               )}
             </div>
 
             {/* Department Assignment Footer */}
             <div style={{
-              padding: "14px 16px",
-              borderTop: "1px solid var(--border-subtle)",
-              background: "#fafbfd",
+              padding: "12px 14px 14px",
+              borderTop: "1px solid rgba(140, 170, 210, 0.7)",
+              background: "#f2f8ff",
               display: "flex",
               flexDirection: "column",
               gap: 8,
-              fontSize: "0.775rem"
+              fontSize: "0.72rem"
             }}>
               <div style={{
-                fontSize: "0.68rem",
-                fontWeight: 700,
-                color: "var(--text-dim)",
+                fontSize: "0.67rem",
+                fontWeight: 800,
+                color: "#54739a",
                 textTransform: "uppercase",
-                letterSpacing: "0.06em"
+                letterSpacing: "0.08em",
+                marginBottom: 2
               }}>
                 Department Assignment
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ color: "var(--text-muted)" }}>Squad:</span>
-                <strong style={{ color: "var(--text-main)" }}>{user.team_name || "Delivery"}</strong>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#3c5474", fontWeight: 600 }}>Squad:</span>
+                <strong style={{ color: "#1f2f45", fontSize: "0.82rem" }}>{user.team_name || "Delivery"}</strong>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ color: "var(--text-muted)" }}>Role:</span>
-                <strong style={{ color: "#0b5cab" }}>{user.role_detail?.name || user.role}</strong>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#3c5474", fontWeight: 600 }}>Role:</span>
+                <strong style={{ color: "#0b5cab", fontSize: "0.8rem" }}>{user.role_detail?.name || user.role}</strong>
               </div>
               {hasReportingStaff && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Direct Reports:</span>
-                  <strong style={{ color: "#16a34a" }}>{myReports.length || user.direct_reports_count || 0} staff</strong>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "#3c5474", fontWeight: 600 }}>Direct Reports:</span>
+                  <strong style={{ color: "#15803d", fontSize: "0.8rem" }}>{myReports.length || user.direct_reports_count || 0} staff</strong>
                 </div>
               )}
             </div>
@@ -392,14 +616,16 @@ export default function DashboardPage() {
               gap: 16,
               marginBottom: 28
             }}>
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(239,246,255,0.9))", borderColor: "rgba(137, 176, 218, 0.9)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
                     Total Batches
                   </span>
-                  <Layers size={18} color="#0b5cab" />
+                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(11, 92, 171, 0.1)" }}>
+                    <Layers size={18} color="#0b5cab" />
+                  </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--text-main)", marginTop: 6, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--text-main)", marginTop: 8, fontFamily: "var(--font-display)" }}>
                   {metrics.total}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -407,14 +633,16 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,249,235,0.9))", borderColor: "rgba(225, 177, 85, 0.8)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
                     In Review / Pending
                   </span>
-                  <Clock size={18} color="#d97706" />
+                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(217, 119, 6, 0.10)" }}>
+                    <Clock size={18} color="#d97706" />
+                  </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#d97706", marginTop: 6, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#d97706", marginTop: 8, fontFamily: "var(--font-display)" }}>
                   {metrics.requested}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -422,14 +650,16 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(245,249,255,0.9))", borderColor: "rgba(134, 167, 214, 0.75)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
                     Approved Batches
                   </span>
-                  <CheckCircle2 size={18} color="#0b5cab" />
+                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(11, 92, 171, 0.10)" }}>
+                    <CheckCircle2 size={18} color="#0b5cab" />
+                  </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#0b5cab", marginTop: 6, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#0b5cab", marginTop: 8, fontFamily: "var(--font-display)" }}>
                   {metrics.approved}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -437,14 +667,16 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(240,253,250,0.9))", borderColor: "rgba(128, 201, 167, 0.8)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
                     Live Delivery
                   </span>
-                  <PlayCircle size={18} color="#16a34a" />
+                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(22, 163, 74, 0.10)" }}>
+                    <PlayCircle size={18} color="#16a34a" />
+                  </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#16a34a", marginTop: 6, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#16a34a", marginTop: 8, fontFamily: "var(--font-display)" }}>
                   {metrics.ongoing}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -452,20 +684,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                    Gate 1 Quality Avg
-                  </span>
-                  <Star size={18} color="#d97706" fill="#d97706" />
-                </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#b45309", marginTop: 6, fontFamily: "var(--font-display)" }}>
-                  {metrics.avgFeedback} <span style={{ fontSize: "1rem", color: "var(--text-dim)", fontWeight: 500 }}>/ 5.0</span>
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                  Module feedback score
-                </div>
-              </div>
             </div>
 
             {/* Filter & Search Bar */}
@@ -518,7 +736,7 @@ export default function DashboardPage() {
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Active Batch Roster ({batches.length})
+                  Active Batch Roster ({activeBatches.length})
                 </h3>
               </div>
 
@@ -542,7 +760,7 @@ export default function DashboardPage() {
                           <div style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Loading batch records...</div>
                         </td>
                       </tr>
-                    ) : batches.length === 0 ? (
+                    ) : activeBatches.length === 0 ? (
                       <tr>
                         <td colSpan={6} style={{ textAlign: "center", padding: "48px 0" }}>
                           <div style={{ color: "var(--text-dim)", fontSize: "0.95rem", fontWeight: 600 }}>No matching batches found</div>
@@ -552,7 +770,7 @@ export default function DashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      batches.map((b) => (
+                      activeBatches.map((b) => (
                         <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
                           <td style={{ padding: "14px 16px" }}>
                             <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</div>
@@ -584,16 +802,6 @@ export default function DashboardPage() {
                               >
                                 View Details & Sessions
                               </button>
-
-                              {canApprove && (b.status === "Requested" || b.status.includes("Pending")) && (
-                                <button
-                                  onClick={() => setSelectedBatchForApproval(b)}
-                                  className="btn btn-primary"
-                                  style={{ padding: "5px 10px", fontSize: "0.775rem" }}
-                                >
-                                  Approve
-                                </button>
-                              )}
                             </div>
                           </td>
                         </tr>
@@ -606,7 +814,265 @@ export default function DashboardPage() {
           </>
         )}
 
-        {/* VIEW 2: EXECUTIVE ANALYTICS & MBR */}
+        {/* VIEW 2: APPROVAL QUEUE */}
+        {activeView === "approvals" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
+                  Batch Approval Queue
+                </h2>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+                  Review and approve batches waiting for governance clearance.
+                </p>
+              </div>
+              <div style={{
+                background: "#e8f2fb",
+                border: "1px solid #bae6fd",
+                color: "#0b5cab",
+                borderRadius: 999,
+                padding: "6px 12px",
+                fontSize: "0.8rem",
+                fontWeight: 700
+              }}>
+                {approvalQueue.length} pending item(s)
+              </div>
+            </div>
+
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                  Pending Approvals
+                </h3>
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                      <th style={{ padding: "12px 16px" }}>Batch</th>
+                      <th style={{ padding: "12px 16px" }}>Client</th>
+                      <th style={{ padding: "12px 16px" }}>Mode</th>
+                      <th style={{ padding: "12px 16px" }}>Status</th>
+                      <th style={{ padding: "12px 16px", textAlign: "right" }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {approvalQueue.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                          No batches are currently waiting for approval.
+                        </td>
+                      </tr>
+                    ) : (
+                      approvalQueue.map((b) => (
+                        <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                          <td style={{ padding: "14px 16px" }}>
+                            <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</div>
+                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
+                          </td>
+                          <td style={{ padding: "14px 16px" }}>
+                            <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
+                            <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
+                          </td>
+                          <td style={{ padding: "14px 16px" }}>
+                            <div>{b.delivery_mode}</div>
+                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
+                          </td>
+                          <td style={{ padding: "14px 16px" }}>{getStatusBadge(b.status)}</td>
+                          <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                            <button
+                              onClick={() => setSelectedBatchForDetail(b)}
+                              className="btn btn-primary"
+                              style={{ padding: "5px 10px", fontSize: "0.775rem" }}
+                            >
+                              Review Full Details
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 3: FINANCE REVIEW SHEET */}
+        {activeView === "finance" && (
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 18,
+            ...(isFinanceFullScreen ? {
+              position: "fixed",
+              inset: 0,
+              zIndex: 100,
+              overflow: "auto",
+              padding: "24px",
+              background: "#f8fbff",
+            } : {})
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
+                  Finance Review Sheet
+                </h2>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+                  Excel-style batch review for finance tracking, approval status, and operational checks.
+                </p>
+              </div>
+              <div style={{ background: "#ecfeff", border: "1px solid #a5f3fc", color: "#0f766e", borderRadius: 999, padding: "6px 12px", fontSize: "0.8rem", fontWeight: 700 }}>
+                {filteredFinanceBatches.length} of {batches.length} batch rows
+              </div>
+            </div>
+
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flex: 1 }}>
+                  <input
+                    value={financeSearch}
+                    onChange={(e) => setFinanceSearch(e.target.value)}
+                    placeholder="Search batch, client, program, SOW..."
+                    className="glass-input"
+                    style={{ width: 250, padding: "8px 10px", fontSize: "0.8rem" }}
+                  />
+                  <select value={financeStatusFilter} onChange={(e) => setFinanceStatusFilter(e.target.value)} className="glass-input" style={{ width: 145, padding: "8px 10px", fontSize: "0.8rem" }}>
+                    <option value="ALL">All workflow status</option>
+                    <option value="Requested">Requested</option>
+                    <option value="Approval 1 Pending">Approval 1 Pending</option>
+                    <option value="Approval 2 Pending">Approval 2 Pending</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Upcoming">Upcoming</option>
+                    <option value="Ongoing">Ongoing</option>
+                    <option value="Completed">Completed</option>
+                  </select>
+                  <select value={financeCheckStatusFilter} onChange={(e) => setFinanceCheckStatusFilter(e.target.value)} className="glass-input" style={{ width: 140, padding: "8px 10px", fontSize: "0.8rem" }}>
+                    <option value="ALL">All finance status</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Cleared">Cleared</option>
+                    <option value="Invoiced">Invoiced</option>
+                  </select>
+                  <select value={financeDomainFilter} onChange={(e) => setFinanceDomainFilter(e.target.value)} className="glass-input" style={{ width: 120, padding: "8px 10px", fontSize: "0.8rem" }}>
+                    <option value="ALL">All domains</option>
+                    {[...new Set(batches.map((b) => b.domain).filter(Boolean))].map((domain) => <option key={domain} value={domain || ""}>{domain}</option>)}
+                  </select>
+                  <select value={financeModeFilter} onChange={(e) => setFinanceModeFilter(e.target.value)} className="glass-input" style={{ width: 125, padding: "8px 10px", fontSize: "0.8rem" }}>
+                    <option value="ALL">All modes</option>
+                    {[...new Set(batches.map((b) => b.delivery_mode).filter(Boolean))].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                  </select>
+                  <input type="date" value={financeStartDate} onChange={(e) => setFinanceStartDate(e.target.value)} className="glass-input" title="Start date from" style={{ width: 135, padding: "8px 10px", fontSize: "0.8rem" }} />
+                  <input type="date" value={financeEndDate} onChange={(e) => setFinanceEndDate(e.target.value)} className="glass-input" title="Start date to" style={{ width: 135, padding: "8px 10px", fontSize: "0.8rem" }} />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={exportFinanceSheet} className="btn btn-secondary" style={{ padding: "8px 11px", fontSize: "0.8rem" }} title="Export filtered finance rows to Excel">
+                    <FileSpreadsheet size={16} />
+                    <span>Export Excel</span>
+                  </button>
+                  <button onClick={() => setIsFinanceFullScreen((value) => !value)} className="btn btn-primary" style={{ padding: "8px 11px", fontSize: "0.8rem" }} title={isFinanceFullScreen ? "Exit full screen" : "Open full screen"}>
+                    {isFinanceFullScreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                    <span>{isFinanceFullScreen ? "Exit Full Screen" : "Full Screen"}</span>
+                  </button>
+                </div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="glass-table" style={{ width: "100%", minWidth: "1400px", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.78rem", color: "var(--text-dim)" }}>
+                      <th style={{ padding: "12px 14px" }}>Batch ID</th>
+                      <th style={{ padding: "12px 14px" }}>Client</th>
+                      <th style={{ padding: "12px 14px" }}>Program</th>
+                      <th style={{ padding: "12px 14px" }}>Domain</th>
+                      <th style={{ padding: "12px 14px" }}>Mode</th>
+                      <th style={{ padding: "12px 14px" }}>Enrollments</th>
+                      <th style={{ padding: "12px 14px" }}>Training Days</th>
+                      <th style={{ padding: "12px 14px" }}>Total Hours</th>
+                      <th style={{ padding: "12px 14px" }}>SOW Ref</th>
+                      <th style={{ padding: "12px 14px" }}>Finance Status</th>
+                      <th style={{ padding: "12px 14px" }}>Check Date</th>
+                      <th style={{ padding: "12px 14px" }}>Finance Check</th>
+                      <th style={{ padding: "12px 14px" }}>Status</th>
+                      <th style={{ padding: "12px 14px" }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredFinanceBatches.length === 0 ? (
+                      <tr>
+                        <td colSpan={14} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                          No batch data available for finance review.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredFinanceBatches.map((b) => {
+                        const draft = financeDrafts[b.id] || {
+                          finance_status: b.finance_status || "Pending",
+                          finance_status_check_date: b.finance_status_check_date || "",
+                          finance_check: b.finance_check ?? null,
+                        };
+
+                        return (
+                          <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.82rem" }}>
+                            <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.client_name || "—"}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.program_name}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.domain || "—"}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.delivery_mode}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.total_enrollments}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.training_days || 0}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.total_hours || 0}</td>
+                            <td style={{ padding: "12px 14px" }}>{b.approval_id || b.sow_number || "—"}</td>
+                            <td style={{ padding: "12px 14px" }}>
+                              <select
+                                value={draft.finance_status}
+                                onChange={(e) => updateFinanceDraft(b.id, "finance_status", e.target.value)}
+                                style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
+                              >
+                                <option value="Pending">Pending</option>
+                                <option value="Cleared">Cleared</option>
+                                <option value="Invoiced">Invoiced</option>
+                              </select>
+                            </td>
+                            <td style={{ padding: "12px 14px" }}>
+                              <input
+                                type="date"
+                                value={draft.finance_status_check_date}
+                                onChange={(e) => updateFinanceDraft(b.id, "finance_status_check_date", e.target.value)}
+                                style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
+                              />
+                            </td>
+                            <td style={{ padding: "12px 14px" }}>
+                              <input
+                                type="number"
+                                min={0}
+                                value={draft.finance_check ?? ""}
+                                onChange={(e) => updateFinanceDraft(b.id, "finance_check", e.target.value === "" ? null : Number(e.target.value))}
+                                style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
+                              />
+                            </td>
+                            <td style={{ padding: "12px 14px" }}>{getStatusBadge(b.status)}</td>
+                            <td style={{ padding: "12px 14px" }}>
+                              <button
+                                onClick={() => saveFinanceBatch(b)}
+                                disabled={savingFinanceBatchId === b.id}
+                                className="btn btn-primary"
+                                style={{ padding: "5px 10px", fontSize: "0.75rem", opacity: savingFinanceBatchId === b.id ? 0.7 : 1 }}
+                              >
+                                {savingFinanceBatchId === b.id ? "Saving..." : "Save"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 4: EXECUTIVE ANALYTICS & MBR */}
         {activeView === "analytics" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>

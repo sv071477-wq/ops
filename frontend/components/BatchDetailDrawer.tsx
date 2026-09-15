@@ -801,7 +801,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             Close Drawer
           </button>
 
-          {canApprove && batch.status === "Requested" && onOpenApprove && (
+          {canApprove && ["Requested", "Approval 1 Pending", "Approval 2 Pending"].includes(batch.status) && onOpenApprove && (
             <button
               onClick={() => {
                 onClose();

@@ -36,6 +36,7 @@ export interface User {
   manager_name?: string | null;
   is_manager?: boolean;
   direct_reports_count?: number;
+  is_configured_approver?: boolean;
   is_active: boolean;
   created_at: string;
 }
@@ -60,6 +61,17 @@ export interface CreateUserPayload {
   role_id?: string;
   team_id?: string;
   manager_id?: string;
+  is_active?: boolean;
+}
+
+export interface UpdateUserPayload {
+  email?: string;
+  full_name?: string;
+  password?: string;
+  role?: string;
+  role_id?: string | null;
+  team_id?: string | null;
+  manager_id?: string | null;
   is_active?: boolean;
 }
 
@@ -119,7 +131,7 @@ export interface Batch {
   coordinator_id?: string | null;
   sales_spoc_id?: string | null;
   faculty_assigned_text?: string | null;
-  finance_status: string;
+  finance_status?: string | null;
   finance_status_check_date?: string | null;
   finance_check?: number | null;
   batch_avg_feedback?: number | null;
@@ -135,7 +147,6 @@ export interface Batch {
 export interface CreateBatchPayload {
   batch_id: string;
   sow_number?: string;
-  approval_id?: string;
   entity_id?: string;
   category_id?: string;
   delivery_mode_id?: string;
@@ -160,9 +171,6 @@ export interface CreateBatchPayload {
   faculty_assigned_text?: string;
   remarks?: string;
   comments?: string;
-  finance_status?: string;
-  finance_status_check_date?: string;
-  finance_check?: number;
   sales_spoc_id?: string;
   coordinator_id?: string;
   primary_manager_id?: string;
@@ -408,6 +416,19 @@ class ApiService {
     return this.request<User>("/auth/users", {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  }
+
+  async updateUser(id: string, payload: UpdateUserPayload): Promise<User> {
+    return this.request<User>(`/auth/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteUser(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/auth/users/${id}`, {
+      method: "DELETE",
     });
   }
 
