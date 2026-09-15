@@ -100,6 +100,8 @@ class BatchService:
         config = self.get_approval_config()
         if not config.approver_1_id or not config.approver_2_id:
             raise HTTPException(status_code=409, detail="Admin must configure both approvers before submission")
+        if batch.start_date and batch.start_date.date() < datetime.now(timezone.utc).date():
+            raise HTTPException(status_code=422, detail="Cannot submit a batch whose start date has already passed")
         batch.approver_1_id = config.approver_1_id
         batch.approver_2_id = config.approver_2_id
         batch.approver_1_status = "Pending"
@@ -221,7 +223,7 @@ class BatchService:
                 update_data.get("start_date", batch.start_date),
                 update_data.get("end_date", batch.end_date),
             )
-        if batch.is_schema_locked and current_user.role not in ["Admin", "Manager"]:
+        if batch.is_schema_locked and (current_user.role or "").lower() not in ["admin", "manager", "coordinator"]:
             restricted = {"client_name", "category", "program_name", "technology", "domain"}
             for field in restricted.intersection(update_data):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Batch schema is locked. Modifying '{field}' requires Manager or Admin authorization.")

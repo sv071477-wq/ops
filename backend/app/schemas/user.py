@@ -138,3 +138,18 @@ class CoordinatorMappingResponse(BaseModel):
     manager: Optional[UserResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CoordinatorMappingListResponse(BaseModel):
+    """Flattened mapping response with coordinator and manager names for admin UI display."""
+    id: UUID
+    coordinator_id: UUID
+    coordinator_name: Optional[str] = None
+    coordinator_email: Optional[str] = None
+    manager_id: UUID
+    manager_name: Optional[str] = None
+    manager_email: Optional[str] = None
+    assigned_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

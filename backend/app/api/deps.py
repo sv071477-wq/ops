@@ -1,4 +1,5 @@
 from typing import Generator, List, Optional, Set
+from sqlalchemy import text
 from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -71,31 +72,36 @@ require_coordinator_or_above = require_roles(["Admin", "Manager", "Coordinator"]
 
 
 def get_all_subordinate_ids(manager_id: UUID, db: Session) -> List[UUID]:
-    """Recursively traverses and returns all direct and indirect subordinate user UUIDs under a given manager."""
-    subordinate_ids: Set[UUID] = set()
-    queue: List[UUID] = [manager_id]
+    """Return all direct and indirect subordinate UUIDs under a manager via a single recursive CTE.
+    Combines both the self-referential User.manager_id hierarchy and the legacy UserManagerMapping table.
+    """
+    # Single recursive CTE — avoids the N+1 BFS query loop
+    cte_sql = text("""
+        WITH RECURSIVE subordinates AS (
+            -- Anchor: direct reports via self-referential manager_id
+            SELECT u.id
+            FROM users u
+            WHERE u.manager_id = :manager_id AND u.is_active = TRUE
 
-    while queue:
-        current_parent_id = queue.pop(0)
+            UNION
 
-        # 1. Direct reports via self-referential manager_id
-        direct_reports = db.query(User.id).filter(
-            User.manager_id == current_parent_id,
-            User.is_active == True
-        ).all()
+            -- Anchor: legacy coordinator mappings for this manager
+            SELECT umm.coordinator_id AS id
+            FROM user_manager_mappings umm
+            WHERE umm.manager_id = :manager_id
 
-        # 2. Legacy mappings support
-        mapped_reports = db.query(UserManagerMapping.coordinator_id).filter(
-            UserManagerMapping.manager_id == current_parent_id
-        ).all()
+            UNION ALL
 
-        child_ids = [r[0] for r in direct_reports] + [m[0] for m in mapped_reports]
-        for cid in child_ids:
-            if cid not in subordinate_ids:
-                subordinate_ids.add(cid)
-                queue.append(cid)
-
-    return list(subordinate_ids)
+            -- Recursive: subordinates of discovered subordinates
+            SELECT u2.id
+            FROM users u2
+            INNER JOIN subordinates s ON u2.manager_id = s.id
+            WHERE u2.is_active = TRUE
+        )
+        SELECT DISTINCT id FROM subordinates
+    """)
+    rows = db.execute(cte_sql, {"manager_id": str(manager_id)}).fetchall()
+    return [UUID(str(row[0])) for row in rows]
 
 
 def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:

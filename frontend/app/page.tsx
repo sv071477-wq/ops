@@ -44,12 +44,13 @@ export default function DashboardPage() {
   // Finance review sheet state
   const [isFinanceFullScreen, setIsFinanceFullScreen] = useState(false);
   const [financeSearch, setFinanceSearch] = useState("");
-  const [financeStatusFilter, setFinanceStatusFilter] = useState("ALL");
+  const [financeStatusFilter, setFinanceStatusFilter] = useState("ACTIVE"); // default: exclude draft/pending
   const [financeCheckStatusFilter, setFinanceCheckStatusFilter] = useState("ALL");
   const [financeDomainFilter, setFinanceDomainFilter] = useState("ALL");
   const [financeModeFilter, setFinanceModeFilter] = useState("ALL");
   const [financeStartDate, setFinanceStartDate] = useState("");
   const [financeEndDate, setFinanceEndDate] = useState("");
+  const [isSavingAllFinance, setIsSavingAllFinance] = useState(false);
 
   // Analytics state
   const [dashboardSummary, setDashboardSummary] = useState<ManagerDashboardSummary | null>(null);
@@ -144,6 +145,37 @@ export default function DashboardPage() {
     }
   };
 
+  const saveAllDirtyFinanceBatches = async () => {
+    const dirtyBatches = filteredFinanceBatches.filter((b) => {
+      const draft = financeDrafts[b.id];
+      if (!draft) return false;
+      return (
+        draft.finance_status !== (b.finance_status || "Pending") ||
+        draft.finance_status_check_date !== (b.finance_status_check_date || "") ||
+        (draft.finance_check ?? null) !== (b.finance_check ?? null)
+      );
+    });
+    if (dirtyBatches.length === 0) return;
+    setIsSavingAllFinance(true);
+    try {
+      await Promise.all(
+        dirtyBatches.map((b) => {
+          const draft = financeDrafts[b.id];
+          return api.updateBatch(b.id, {
+            finance_status: draft.finance_status || "Pending",
+            finance_status_check_date: draft.finance_status_check_date || null,
+            finance_check: draft.finance_check ?? null,
+          });
+        })
+      );
+      await fetchBatches();
+    } catch (err: any) {
+      alert(err.message || "Failed to save some finance records");
+    } finally {
+      setIsSavingAllFinance(false);
+    }
+  };
+
   // Fetch Analytics
   const fetchAnalytics = async () => {
     setIsLoadingAnalytics(true);
@@ -235,7 +267,7 @@ export default function DashboardPage() {
 
   const approvalQueue = useMemo(
     () => batches.filter((b) => (
-      ((b.status === "Requested" || b.status === "Approval 1 Pending") && b.approver_1_id === user?.id)
+      (b.status === "Approval 1 Pending" && b.approver_1_id === user?.id)
       || (b.status === "Approval 2 Pending" && b.approver_2_id === user?.id)
     )),
     [batches, user?.id]
@@ -247,6 +279,8 @@ export default function DashboardPage() {
       : batches,
     [batches, user?.is_configured_approver]
   );
+
+  const FINANCE_ACTIVE_STATUSES = new Set(["Approved", "Upcoming", "Ongoing", "Completed"]);
 
   const filteredFinanceBatches = useMemo(() => {
     const search = financeSearch.trim().toLowerCase();
@@ -265,8 +299,16 @@ export default function DashboardPage() {
       ].join(" ").toLowerCase();
       const startDate = batch.start_date ? batch.start_date.slice(0, 10) : "";
 
+      // "ACTIVE" is a synthetic filter: show only finance-relevant statuses
+      const passesStatusFilter =
+        financeStatusFilter === "ALL"
+          ? true
+          : financeStatusFilter === "ACTIVE"
+          ? FINANCE_ACTIVE_STATUSES.has(batch.status)
+          : batch.status === financeStatusFilter;
+
       return (!search || searchable.includes(search))
-        && (financeStatusFilter === "ALL" || batch.status === financeStatusFilter)
+        && passesStatusFilter
         && (financeCheckStatusFilter === "ALL" || financeStatus === financeCheckStatusFilter)
         && (financeDomainFilter === "ALL" || batch.domain === financeDomainFilter)
         && (financeModeFilter === "ALL" || batch.delivery_mode === financeModeFilter)
@@ -284,6 +326,25 @@ export default function DashboardPage() {
     financeStartDate,
     financeEndDate,
   ]);
+
+  // Track which finance rows have unsaved changes
+  const dirtyFinanceIds = useMemo(() => {
+    const dirty = new Set<string>();
+    for (const b of batches) {
+      const draft = financeDrafts[b.id];
+      if (!draft) continue;
+      if (
+        draft.finance_status !== (b.finance_status || "Pending") ||
+        draft.finance_status_check_date !== (b.finance_status_check_date || "") ||
+        (draft.finance_check ?? null) !== (b.finance_check ?? null)
+      ) {
+        dirty.add(b.id);
+      }
+    }
+    return dirty;
+  }, [batches, financeDrafts]);
+
+  const dirtyFinanceCount = dirtyFinanceIds.size;
 
   const exportFinanceSheet = () => {
     const headers = ["Batch ID", "Client", "Program", "Domain", "Mode", "Location", "Enrollments", "Training Days", "Total Hours", "SOW Ref", "Finance Status", "Check Date", "Finance Check", "Status"];
@@ -469,11 +530,33 @@ export default function DashboardPage() {
                     boxShadow: activeView === "approvals" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
                     opacity: 1,
                     transition: "all 0.15s",
-                    minHeight: 52
+                    minHeight: 52,
+                    position: "relative",
                   }}
                 >
                   <ShieldCheck size={18} color={activeView === "approvals" ? "#ffffff" : "#0b5cab"} />
                   <span style={{ lineHeight: 1.2 }}>Approvals</span>
+                  {approvalQueue.length > 0 && (
+                    <span style={{
+                      position: "absolute",
+                      top: 8,
+                      right: 10,
+                      background: activeView === "approvals" ? "#ffffff" : "#dc2626",
+                      color: activeView === "approvals" ? "#dc2626" : "#ffffff",
+                      borderRadius: 999,
+                      fontSize: "0.7rem",
+                      fontWeight: 800,
+                      minWidth: 18,
+                      height: 18,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0 5px",
+                      lineHeight: 1,
+                    }}>
+                      {approvalQueue.length}
+                    </span>
+                  )}
                 </button>
               )}
 
@@ -853,6 +936,7 @@ export default function DashboardPage() {
                       <th style={{ padding: "12px 16px" }}>Batch</th>
                       <th style={{ padding: "12px 16px" }}>Client</th>
                       <th style={{ padding: "12px 16px" }}>Mode</th>
+                      <th style={{ padding: "12px 16px" }}>Submitted On</th>
                       <th style={{ padding: "12px 16px" }}>Status</th>
                       <th style={{ padding: "12px 16px", textAlign: "right" }}>Action</th>
                     </tr>
@@ -860,37 +944,64 @@ export default function DashboardPage() {
                   <tbody>
                     {approvalQueue.length === 0 ? (
                       <tr>
-                        <td colSpan={5} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                        <td colSpan={6} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
                           No batches are currently waiting for approval.
                         </td>
                       </tr>
                     ) : (
-                      approvalQueue.map((b) => (
-                        <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div>{b.delivery_mode}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>{getStatusBadge(b.status)}</td>
-                          <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                            <button
-                              onClick={() => setSelectedBatchForDetail(b)}
-                              className="btn btn-primary"
-                              style={{ padding: "5px 10px", fontSize: "0.775rem" }}
-                            >
-                              Review Full Details
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      approvalQueue.map((b) => {
+                        const submittedDays = b.batch_request_date
+                          ? Math.floor((Date.now() - new Date(b.batch_request_date).getTime()) / 86400000)
+                          : null;
+                        const isUrgent = submittedDays !== null && submittedDays >= 3;
+                        return (
+                          <tr key={b.id} style={{
+                            borderBottom: "1px solid var(--border-subtle)",
+                            fontSize: "0.875rem",
+                            background: isUrgent ? "rgba(251, 191, 36, 0.08)" : undefined,
+                          }}>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ fontWeight: 700, color: "var(--text-main)", display: "flex", alignItems: "center", gap: 6 }}>
+                                {b.batch_id}
+                                {isUrgent && (
+                                  <span style={{ fontSize: "0.65rem", background: "#fef3c7", color: "#d97706", border: "1px solid #fcd34d", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>OVERDUE</span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
+                              <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div>{b.delivery_mode}</div>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              {b.batch_request_date ? (
+                                <>
+                                  <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
+                                    {new Date(b.batch_request_date).toLocaleDateString()}
+                                  </div>
+                                  <div style={{ fontSize: "0.72rem", color: submittedDays !== null && submittedDays >= 3 ? "#d97706" : "var(--text-muted)", marginTop: 2 }}>
+                                    {submittedDays === 0 ? "Today" : `${submittedDays}d ago`}
+                                  </div>
+                                </>
+                              ) : <span style={{ color: "var(--text-dim)" }}>—</span>}
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>{getStatusBadge(b.status)}</td>
+                            <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                              <button
+                                onClick={() => setSelectedBatchForDetail(b)}
+                                className="btn btn-primary"
+                                style={{ padding: "5px 10px", fontSize: "0.775rem" }}
+                              >
+                                Review Full Details
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -928,6 +1039,43 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* Finance Summary Stats */}
+            {(() => {
+              const pendingCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status || "Pending") === "Pending").length;
+              const clearedCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status) === "Cleared").length;
+              const invoicedCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status) === "Invoiced").length;
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+                  {[
+                    { label: "Pending", count: pendingCount, bg: "#fef9ec", border: "#fcd34d", color: "#d97706" },
+                    { label: "Cleared", count: clearedCount, bg: "#f0fdf4", border: "#86efac", color: "#16a34a" },
+                    { label: "Invoiced", count: invoicedCount, bg: "#eff6ff", border: "#93c5fd", color: "#1d4ed8" },
+                  ].map(({ label, count, bg, border, color }) => (
+                    <div key={label} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+                        <div style={{ fontSize: "1.6rem", fontWeight: 800, color, fontFamily: "var(--font-display)" }}>{count}</div>
+                      </div>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: `${border}55`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: "1.1rem" }}>{label === "Pending" ? "⏳" : label === "Cleared" ? "✅" : "🧾"}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {dirtyFinanceCount > 0 && (
+                    <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#ea580c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Unsaved</div>
+                        <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#ea580c", fontFamily: "var(--font-display)" }}>{dirtyFinanceCount}</div>
+                      </div>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: "#fed7aa55", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: "1.1rem" }}>✏️</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flex: 1 }}>
@@ -938,15 +1086,16 @@ export default function DashboardPage() {
                     className="glass-input"
                     style={{ width: 250, padding: "8px 10px", fontSize: "0.8rem" }}
                   />
-                  <select value={financeStatusFilter} onChange={(e) => setFinanceStatusFilter(e.target.value)} className="glass-input" style={{ width: 145, padding: "8px 10px", fontSize: "0.8rem" }}>
+                  <select value={financeStatusFilter} onChange={(e) => setFinanceStatusFilter(e.target.value)} className="glass-input" style={{ width: 155, padding: "8px 10px", fontSize: "0.8rem" }}>
+                    <option value="ACTIVE">Active batches</option>
                     <option value="ALL">All workflow status</option>
-                    <option value="Requested">Requested</option>
-                    <option value="Approval 1 Pending">Approval 1 Pending</option>
-                    <option value="Approval 2 Pending">Approval 2 Pending</option>
                     <option value="Approved">Approved</option>
                     <option value="Upcoming">Upcoming</option>
                     <option value="Ongoing">Ongoing</option>
                     <option value="Completed">Completed</option>
+                    <option value="Requested">Requested (Draft)</option>
+                    <option value="Approval 1 Pending">Approval 1 Pending</option>
+                    <option value="Approval 2 Pending">Approval 2 Pending</option>
                   </select>
                   <select value={financeCheckStatusFilter} onChange={(e) => setFinanceCheckStatusFilter(e.target.value)} className="glass-input" style={{ width: 140, padding: "8px 10px", fontSize: "0.8rem" }}>
                     <option value="ALL">All finance status</option>
@@ -966,6 +1115,18 @@ export default function DashboardPage() {
                   <input type="date" value={financeEndDate} onChange={(e) => setFinanceEndDate(e.target.value)} className="glass-input" title="Start date to" style={{ width: 135, padding: "8px 10px", fontSize: "0.8rem" }} />
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
+                  {dirtyFinanceCount > 0 && (
+                    <button
+                      onClick={saveAllDirtyFinanceBatches}
+                      disabled={isSavingAllFinance}
+                      className="btn btn-primary"
+                      style={{ padding: "8px 11px", fontSize: "0.8rem", background: "linear-gradient(135deg, #ea580c 0%, #f97316 100%)", border: "1px solid #ea580c", opacity: isSavingAllFinance ? 0.7 : 1 }}
+                      title={`Save all ${dirtyFinanceCount} unsaved row(s)`}
+                    >
+                      <Check size={15} />
+                      <span>{isSavingAllFinance ? "Saving..." : `Save All (${dirtyFinanceCount})`}</span>
+                    </button>
+                  )}
                   <button onClick={exportFinanceSheet} className="btn btn-secondary" style={{ padding: "8px 11px", fontSize: "0.8rem" }} title="Export filtered finance rows to Excel">
                     <FileSpreadsheet size={16} />
                     <span>Export Excel</span>
@@ -991,7 +1152,7 @@ export default function DashboardPage() {
                       <th style={{ padding: "12px 14px" }}>SOW Ref</th>
                       <th style={{ padding: "12px 14px" }}>Finance Status</th>
                       <th style={{ padding: "12px 14px" }}>Check Date</th>
-                      <th style={{ padding: "12px 14px" }}>Finance Check</th>
+                      <th style={{ padding: "12px 14px" }}>Invoice / PO Ref.</th>
                       <th style={{ padding: "12px 14px" }}>Status</th>
                       <th style={{ padding: "12px 14px" }}>Action</th>
                     </tr>
@@ -1012,7 +1173,11 @@ export default function DashboardPage() {
                         };
 
                         return (
-                          <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.82rem" }}>
+                          <tr key={b.id} style={{
+                            borderBottom: "1px solid var(--border-subtle)",
+                            fontSize: "0.82rem",
+                            background: dirtyFinanceIds.has(b.id) ? "rgba(251, 191, 36, 0.07)" : undefined,
+                          }}>
                             <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</td>
                             <td style={{ padding: "12px 14px" }}>{b.client_name || "—"}</td>
                             <td style={{ padding: "12px 14px" }}>{b.program_name}</td>

@@ -8,7 +8,8 @@ import {
 import {
   X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
   Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
-  PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check
+  PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check,
+  Edit3, Send
 } from "lucide-react";
 
 interface BatchDetailDrawerProps {
@@ -28,7 +29,86 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   canApprove = false,
   onBatchUpdated,
 }) => {
+  const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
+
+  useEffect(() => {
+    setCurrentBatch(batch);
+  }, [batch]);
+
   const [activeTab, setActiveTab] = useState<"overview" | "sessions" | "quality_gates">("overview");
+
+  // Edit Batch state
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState<Partial<Batch>>({});
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const openEditModal = () => {
+    const target = currentBatch || batch;
+    if (!target) return;
+    setEditForm({
+      program_name: target.program_name,
+      client_name: target.client_name,
+      sow_number: target.sow_number,
+      domain: target.domain,
+      technology: target.technology,
+      delivery_mode: target.delivery_mode,
+      location_city: target.location_city,
+      start_date: target.start_date ? target.start_date.split("T")[0] : "",
+      end_date: target.end_date ? target.end_date.split("T")[0] : "",
+      training_days: target.training_days,
+      total_hours: target.total_hours,
+      total_enrollments: target.total_enrollments,
+      faculty_assigned_text: target.faculty_assigned_text,
+      remarks: target.remarks,
+    });
+    setEditError(null);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = currentBatch || batch;
+    if (!target) return;
+    setIsSavingEdit(true);
+    setEditError(null);
+    try {
+      const payload: any = {
+        ...editForm,
+        start_date: editForm.start_date ? new Date(editForm.start_date).toISOString() : undefined,
+        end_date: editForm.end_date ? new Date(editForm.end_date).toISOString() : undefined,
+        training_days: Number(editForm.training_days) || 0,
+        total_hours: Number(editForm.total_hours) || 0,
+        total_enrollments: Number(editForm.total_enrollments) || 0,
+        non_residential_enrollments: Number(editForm.total_enrollments) || 0,
+      };
+      const updated = await api.updateBatch(target.id, payload);
+      setCurrentBatch(updated);
+      setIsEditModalOpen(false);
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      setEditError(err.message || "Failed to update batch details");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  // Submit / Resubmit for Approval
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+  const handleSubmitApproval = async () => {
+    const target = currentBatch || batch;
+    if (!target) return;
+    setIsSubmittingApproval(true);
+    try {
+      const updated = await api.submitBatch(target.id);
+      setCurrentBatch(updated);
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      alert(err.message || "Failed to submit batch for approval");
+    } finally {
+      setIsSubmittingApproval(false);
+    }
+  };
 
   // Sessions state
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
@@ -95,6 +175,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   }, [isOpen, batch]);
 
   if (!isOpen || !batch) return null;
+
+  const activeBatch: Batch = currentBatch || batch;
+  if (!activeBatch) return null;
 
   const formatDate = (dStr?: string | null) => {
     if (!dStr) return "Not set";
@@ -414,72 +497,129 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           {/* TAB 1: OVERVIEW */}
           {activeTab === "overview" && (
             <>
+              {/* Rejection / Revision Notice */}
+              {activeBatch.comments && activeBatch.status === "Requested" && (
+                <div
+                  style={{
+                    background: "rgba(244, 63, 94, 0.1)",
+                    border: "1px solid rgba(244, 63, 94, 0.3)",
+                    borderRadius: 14,
+                    padding: "16px 18px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, color: "#e11d48" }}>
+                      <AlertCircle size={18} />
+                      <span>Approval Rejection Feedback</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openEditModal}
+                      className="btn btn-secondary"
+                      style={{ padding: "4px 10px", fontSize: "0.75rem", display: "flex", alignItems: "center", gap: 4 }}
+                    >
+                      <Edit3 size={13} /> Edit Batch
+                    </button>
+                  </div>
+                  <div style={{ fontSize: "0.875rem", color: "var(--text-main)", marginTop: 8, fontWeight: 500 }}>
+                    {activeBatch.comments}
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
+                    Make the requested adjustments via &ldquo;Edit Batch&rdquo; and click &ldquo;Resubmit for Approval&rdquo; in the footer.
+                  </div>
+                </div>
+              )}
+
               {/* Program Title & Client */}
               <div className="glass-panel" style={{ padding: "16px 20px" }}>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                  Curriculum Title
-                </div>
-                <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
-                  {batch.program_name}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                  <Building2 size={16} color="#0b5cab" />
-                  <span>{batch.client_name || "Enterprise Client"}</span>
-                  <span>•</span>
-                  <span style={{ color: "#7c3aed", fontWeight: 600 }}>{batch.domain || "IT/ITES"}</span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                      Curriculum / Program Title
+                    </div>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                      {activeBatch.program_name}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                      <Building2 size={16} color="#0b5cab" />
+                      <span style={{ fontWeight: 600 }}>{activeBatch.client_name || "Enterprise Client"}</span>
+                      <span>•</span>
+                      <span style={{ color: "#7c3aed", fontWeight: 600 }}>{activeBatch.domain || "Technology"}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openEditModal}
+                    className="btn btn-secondary"
+                    style={{ padding: "6px 12px", fontSize: "0.78rem", display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Edit3 size={13} /> Edit Batch
+                  </button>
                 </div>
               </div>
 
-              {/* Governance & Approval ID */}
+              {/* Commercial References & Governance */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div className="glass-panel" style={{ padding: "14px 16px" }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                    SOW Approval ID
+                    Client SOW Number
                   </div>
-                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: batch.approval_id ? "#0b5cab" : "#d97706", marginTop: 4 }}>
-                    {batch.approval_id || "Pending Approval"}
+                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                    {activeBatch.sow_number || "Not specified"}
                   </div>
                 </div>
                 <div className="glass-panel" style={{ padding: "14px 16px" }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                    Schema Lock
+                    Finance Approval Reference
                   </div>
-                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: batch.is_schema_locked ? "#16a34a" : "#d97706", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                    {batch.is_schema_locked ? <Lock size={15} /> : null}
-                    <span>{batch.is_schema_locked ? "Locked" : "Unlocked"}</span>
+                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: activeBatch.approval_id ? "#0b5cab" : "#d97706", marginTop: 4 }}>
+                    {activeBatch.approval_id || "Pending Level 1/2 Approval"}
                   </div>
                 </div>
               </div>
 
-              {/* Delivery Logistics */}
+              {/* Delivery Logistics & Faculty Accommodation */}
               <div className="glass-panel" style={{ padding: "18px 20px" }}>
                 <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 12 }}>
-                  Delivery Logistics & Timeline
+                  Delivery Logistics & Faculty Accommodation
                 </h4>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, fontSize: "0.875rem" }}>
                   <div>
                     <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Delivery Mode:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{batch.delivery_mode}</div>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.delivery_mode}</div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Location / City:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{batch.location_city || "Remote"}</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Training Venue / City:</span>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.location_city || "Remote (Online)"}</div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Start Date:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{formatDate(batch.start_date)}</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Faculty Accommodation:</span>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>
+                      {activeBatch.residential_type === "R" ? "Residential / Hotel Provided" : "Non-Residential / Local Trainer"}
+                    </div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>End Date:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{formatDate(batch.end_date)}</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Training Category:</span>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.category}</div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Training Days:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{batch.training_days} days ({batch.total_hours} hrs)</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Commencement Date:</span>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{formatDate(activeBatch.start_date)}</div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Category:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{batch.category}</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Conclusion Date:</span>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{formatDate(activeBatch.end_date)}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Active Training Days:</span>
+                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.training_days} days ({activeBatch.total_hours} hrs)</div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Governance Lock:</span>
+                    <div style={{ fontWeight: 600, color: activeBatch.is_schema_locked ? "#16a34a" : "#d97706", marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                      {activeBatch.is_schema_locked ? <Lock size={14} /> : null}
+                      <span>{activeBatch.is_schema_locked ? "Schema Locked" : "Unlocked (Editable)"}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -487,34 +627,26 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               {/* Headcount Breakdown */}
               <div className="glass-panel" style={{ padding: "18px 20px" }}>
                 <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 12 }}>
-                  Enrollment Headcount
+                  Candidate Headcount
                 </h4>
                 <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <div style={{ flex: 1, background: "#f8fafc", padding: "12px", borderRadius: 8, textAlign: "center", border: "1px solid var(--border-subtle)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Total</div>
-                    <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0b5cab" }}>{batch.total_enrollments}</div>
-                  </div>
-                  <div style={{ flex: 1, background: "#f8fafc", padding: "12px", borderRadius: 8, textAlign: "center", border: "1px solid var(--border-subtle)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Residential</div>
-                    <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#7c3aed" }}>{batch.residential_enrollments}</div>
-                  </div>
-                  <div style={{ flex: 1, background: "#f8fafc", padding: "12px", borderRadius: 8, textAlign: "center", border: "1px solid var(--border-subtle)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Non-Residential</div>
-                    <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#16a34a" }}>{batch.non_residential_enrollments}</div>
+                  <div style={{ flex: 1, background: "#f8fafc", padding: "14px", borderRadius: 10, textAlign: "center", border: "1px solid var(--border-subtle)" }}>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Total Enrolled Candidates</div>
+                    <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#0b5cab", marginTop: 2 }}>{activeBatch.total_enrollments}</div>
                   </div>
                 </div>
               </div>
 
-              {/* Tech Stack & Faculty */}
+              {/* Tech Stack & Proposed Faculty */}
               <div className="glass-panel" style={{ padding: "18px 20px" }}>
                 <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 8 }}>
-                  Technical Stack & Faculty
+                  Technical Stack & Proposed Faculty
                 </h4>
                 <div style={{ fontSize: "0.875rem", color: "var(--text-main)", marginBottom: 8 }}>
-                  <strong>Technology:</strong> {batch.technology || "Not specified"}
+                  <strong>Technology Stack & Modules:</strong> {activeBatch.technology || "Not specified"}
                 </div>
                 <div style={{ fontSize: "0.875rem", color: "var(--text-main)" }}>
-                  <strong>Assigned Faculty:</strong> {batch.faculty_assigned_text || "Unassigned"}
+                  <strong>Proposed / Assigned Faculty:</strong> {activeBatch.faculty_assigned_text || "Unassigned (Timetable assignment available)"}
                 </div>
               </div>
             </>
@@ -795,25 +927,58 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          background: "#f8fafc"
+          background: "#f8fafc",
+          gap: 12,
+          flexWrap: "wrap",
         }}>
           <button onClick={onClose} className="btn btn-secondary">
             Close Drawer
           </button>
 
-          {canApprove && ["Requested", "Approval 1 Pending", "Approval 2 Pending"].includes(batch.status) && onOpenApprove && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Edit Batch (Always available for active editing and post-approval adjustments) */}
             <button
-              onClick={() => {
-                onClose();
-                onOpenApprove(batch);
-              }}
-              className="btn btn-primary"
+              onClick={openEditModal}
+              className="btn btn-secondary"
               style={{ display: "flex", alignItems: "center", gap: 6 }}
             >
-              <CheckCircle2 size={16} />
-              <span>Approve Batch</span>
+              <Edit3 size={15} />
+              <span>Edit Batch</span>
             </button>
-          )}
+
+            {/* Submit or Resubmit for Approval (When in Requested state) */}
+            {activeBatch.status === "Requested" && (
+              <button
+                onClick={handleSubmitApproval}
+                disabled={isSubmittingApproval}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+              >
+                <Send size={15} />
+                <span>
+                  {isSubmittingApproval
+                    ? "Submitting..."
+                    : activeBatch.comments
+                    ? "Resubmit for Approval"
+                    : "Submit for Approval"}
+                </span>
+              </button>
+            )}
+
+            {canApprove && ["Requested", "Approval 1 Pending", "Approval 2 Pending"].includes(activeBatch.status) && onOpenApprove && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenApprove(activeBatch);
+                }}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: 6, background: "linear-gradient(135deg, #0f7a5a 0%, #169570 100%)" }}
+              >
+                <CheckCircle2 size={16} />
+                <span>Approve Batch</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1347,6 +1512,261 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Batch */}
+      {isEditModalOpen && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 90,
+          padding: 16
+        }}>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 660, maxHeight: "90vh", overflowY: "auto", padding: 24, background: "#ffffff", borderRadius: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div>
+                <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                  Edit Batch Details
+                </h3>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
+                  Modifying <strong>{activeBatch.batch_id}</strong>
+                </p>
+              </div>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {editError && (
+              <div style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                color: "#f43f5e",
+                padding: "8px 12px",
+                borderRadius: 8,
+                fontSize: "0.825rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 14
+              }}>
+                <AlertCircle size={15} />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEdit} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Curriculum / Program Title *
+                </label>
+                <input
+                  type="text"
+                  value={editForm.program_name || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, program_name: e.target.value }))}
+                  className="glass-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Client Account Name *
+                </label>
+                <input
+                  type="text"
+                  value={editForm.client_name || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, client_name: e.target.value }))}
+                  className="glass-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Client SOW Number *
+                </label>
+                <input
+                  type="text"
+                  value={editForm.sow_number || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, sow_number: e.target.value }))}
+                  className="glass-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Technology Domain
+                </label>
+                <input
+                  type="text"
+                  value={editForm.domain || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, domain: e.target.value }))}
+                  className="glass-input"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Technology Stack
+                </label>
+                <input
+                  type="text"
+                  value={editForm.technology || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, technology: e.target.value }))}
+                  className="glass-input"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Delivery Mode
+                </label>
+                <select
+                  value={editForm.delivery_mode || "Online"}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, delivery_mode: e.target.value }))}
+                  className="glass-input"
+                >
+                  <option value="Online">Online</option>
+                  <option value="F2F">F2F</option>
+                  <option value="Blended">Blended</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Training Venue / City
+                </label>
+                <input
+                  type="text"
+                  value={editForm.location_city || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, location_city: e.target.value }))}
+                  className="glass-input"
+                  placeholder="e.g. Bengaluru"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Commencement Date
+                </label>
+                <input
+                  type="date"
+                  value={editForm.start_date || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                  className="glass-input"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Conclusion Date
+                </label>
+                <input
+                  type="date"
+                  value={editForm.end_date || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, end_date: e.target.value }))}
+                  className="glass-input"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Active Training Days
+                </label>
+                <input
+                  type="number"
+                  value={editForm.training_days || 0}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, training_days: Number(e.target.value) }))}
+                  className="glass-input"
+                  min={0}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Total Training Hours
+                </label>
+                <input
+                  type="number"
+                  value={editForm.total_hours || 0}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, total_hours: Number(e.target.value) }))}
+                  className="glass-input"
+                  min={0}
+                  step={0.5}
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Total Candidate Headcount
+                </label>
+                <input
+                  type="number"
+                  value={editForm.total_enrollments || 0}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, total_enrollments: Number(e.target.value) }))}
+                  className="glass-input"
+                  min={1}
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Proposed Faculty Member(s)
+                </label>
+                <input
+                  type="text"
+                  value={editForm.faculty_assigned_text || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, faculty_assigned_text: e.target.value }))}
+                  placeholder="e.g. Dr. Srinivas Rao, Ananya Sharma"
+                  className="glass-input"
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Operational Remarks
+                </label>
+                <textarea
+                  value={editForm.remarks || ""}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, remarks: e.target.value }))}
+                  rows={2}
+                  className="glass-input"
+                  style={{ resize: "vertical" }}
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="btn btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="btn btn-primary"
+                >
+                  {isSavingEdit ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

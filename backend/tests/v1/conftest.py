@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.core.security import get_password_hash, create_access_token
-from app.models.user import User, UserManagerMapping
+from app.models.user import User, UserManagerMapping, Team
 from app.models.batch import Batch
 from app.main import app
 
@@ -30,6 +30,10 @@ def db_session():
     db = TestingSessionLocal()
     try:
         # Seed test entities
+        delivery_team = Team(name="Delivery", department="Delivery")
+        db.add(delivery_team)
+        db.flush()
+
         admin = User(
             email="test_admin@ops.com",
             hashed_password=get_password_hash("password123"),
@@ -49,6 +53,7 @@ def db_session():
             hashed_password=get_password_hash("password123"),
             full_name="Test Coordinator",
             role="Coordinator",
+            team_id=delivery_team.id,
             is_active=True
         )
         db.add_all([admin, manager, coord])
@@ -67,6 +72,7 @@ def db_session():
             delivery_mode="Online",
             location_city="Bengaluru",
             status="Approved",
+            batch_avg_feedback=Decimal("4.50"),
             primary_manager_id=manager.id,
             coordinator_id=coord.id,
             is_schema_locked=True

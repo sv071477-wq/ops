@@ -4,13 +4,13 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
-  api, Role, Team, User, UserHierarchyNode, BatchOption, FmsSyncLog
+  api, Role, Team, User, UserHierarchyNode, BatchOption, FmsSyncLog, CoordinatorMappingRecord
 } from "@/lib/api";
 import { Navbar } from "@/components/Navbar";
 import {
   Shield, Users, Tag, UserPlus, Plus, Trash2, CheckCircle2,
   AlertCircle, RefreshCw, GitFork, Briefcase, Layers, Building2,
-  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2
+  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2, Link2
 } from "lucide-react";
 
 // Recursive Org Tree Node Component
@@ -137,7 +137,7 @@ export default function AdminPortalPage() {
   const { user, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<"teams" | "roles" | "options" | "users" | "fms" | "hierarchy">("teams");
+  const [activeTab, setActiveTab] = useState<"teams" | "roles" | "options" | "users" | "fms" | "hierarchy" | "mappings">("teams");
   const [teams, setTeams] = useState<Team[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -210,6 +210,14 @@ export default function AdminPortalPage() {
   const [editUserIsActive, setEditUserIsActive] = useState(true);
   const [editUserFormError, setEditUserFormError] = useState<string | null>(null);
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
+
+  // Coordinator Mappings state
+  const [mappings, setMappings] = useState<CoordinatorMappingRecord[]>([]);
+  const [isLoadingMappings, setIsLoadingMappings] = useState(false);
+  const [mappingCoordinatorId, setMappingCoordinatorId] = useState("");
+  const [mappingManagerId, setMappingManagerId] = useState("");
+  const [mappingFormError, setMappingFormError] = useState<string | null>(null);
+  const [isSubmittingMapping, setIsSubmittingMapping] = useState(false);
 
   // Security Check
   useEffect(() => {
@@ -295,6 +303,8 @@ export default function AdminPortalPage() {
       fetchBatchOptions();
     } else if (activeTab === "fms") {
       fetchFmsLogs();
+    } else if (activeTab === "mappings") {
+      fetchMappings();
     }
   }, [activeTab, selectedOptionType]);
 
@@ -307,6 +317,48 @@ export default function AdminPortalPage() {
       alert(err.message || "Failed to save approvers");
     } finally {
       setIsSavingApprovers(false);
+    }
+  };
+
+  const fetchMappings = async () => {
+    setIsLoadingMappings(true);
+    try {
+      const data = await api.listCoordinatorMappings();
+      setMappings(data);
+    } catch (err) {
+      console.error("Failed to load mappings:", err);
+    } finally {
+      setIsLoadingMappings(false);
+    }
+  };
+
+  const handleCreateMapping = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mappingCoordinatorId || !mappingManagerId) {
+      setMappingFormError("Please select both a coordinator and a manager.");
+      return;
+    }
+    setMappingFormError(null);
+    setIsSubmittingMapping(true);
+    try {
+      await api.assignCoordinator({ coordinator_id: mappingCoordinatorId, manager_id: mappingManagerId });
+      setMappingCoordinatorId("");
+      setMappingManagerId("");
+      await fetchMappings();
+    } catch (err: any) {
+      setMappingFormError(err.message || "Failed to create mapping");
+    } finally {
+      setIsSubmittingMapping(false);
+    }
+  };
+
+  const handleDeleteMapping = async (mappingId: string, name: string) => {
+    if (!confirm(`Remove mapping for "${name}"?`)) return;
+    try {
+      await api.deleteCoordinatorMapping(mappingId);
+      await fetchMappings();
+    } catch (err: any) {
+      alert(err.message || "Failed to remove mapping");
     }
   };
 
@@ -834,6 +886,38 @@ export default function AdminPortalPage() {
           >
             <GitFork size={18} />
             <span>Hierarchy Tree</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("mappings")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 18px",
+              borderBottom: activeTab === "mappings" ? "2px solid #7c3aed" : "2px solid transparent",
+              color: activeTab === "mappings" ? "#7c3aed" : "var(--text-muted)",
+              fontWeight: 600,
+              fontSize: "0.9rem",
+              background: "transparent",
+              borderTop: "none",
+              borderLeft: "none",
+              borderRight: "none",
+              cursor: "pointer",
+              whiteSpace: "nowrap"
+            }}
+          >
+            <Link2 size={18} />
+            <span>Coordinator Mappings</span>
+            <span style={{
+              background: activeTab === "mappings" ? "#ede9fe" : "#f1f5f9",
+              color: activeTab === "mappings" ? "#7c3aed" : "var(--text-dim)",
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: "0.75rem"
+            }}>
+              {mappings.length}
+            </span>
           </button>
         </div>
 
@@ -1417,6 +1501,130 @@ export default function AdminPortalPage() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* TAB: COORDINATOR MAPPINGS */}
+        {activeTab === "mappings" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Add Mapping Form */}
+            <div className="glass-panel" style={{ padding: "24px" }}>
+              <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                Assign Coordinator to Manager
+              </h2>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 20px 0" }}>
+                A coordinator can be mapped to multiple managers. This allows each manager to see that coordinator's batches in their scope.
+              </p>
+
+              {mappingFormError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#f43f5e", padding: "10px 14px", borderRadius: 6, fontSize: "0.85rem", marginBottom: 16 }}>
+                  <AlertCircle size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
+                  {mappingFormError}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateMapping} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <label className="form-label">Coordinator *</label>
+                  <select
+                    value={mappingCoordinatorId}
+                    onChange={(e) => setMappingCoordinatorId(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  >
+                    <option value="">— Select Coordinator —</option>
+                    {users.filter(u => u.role === "Coordinator" && u.is_active).map(u => (
+                      <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <label className="form-label">Manager *</label>
+                  <select
+                    value={mappingManagerId}
+                    onChange={(e) => setMappingManagerId(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  >
+                    <option value="">— Select Manager —</option>
+                    {users.filter(u => (u.role === "Manager" || u.role === "Admin") && u.is_active).map(u => (
+                      <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <button type="submit" disabled={isSubmittingMapping} className="btn btn-primary" style={{ height: 40, whiteSpace: "nowrap" }}>
+                  <Link2 size={15} />
+                  <span>{isSubmittingMapping ? "Assigning..." : "Assign"}</span>
+                </button>
+              </form>
+            </div>
+
+            {/* Existing Mappings Table */}
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                  Active Mappings ({mappings.length})
+                </h3>
+                <button onClick={fetchMappings} className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: "0.8rem" }}>
+                  <RefreshCw size={14} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+              {isLoadingMappings ? (
+                <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
+                  <RefreshCw className="animate-spin" size={22} color="#7c3aed" style={{ margin: "0 auto 8px auto" }} />
+                  <div style={{ fontSize: "0.85rem" }}>Loading mappings...</div>
+                </div>
+              ) : mappings.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                  <Link2 size={28} style={{ margin: "0 auto 10px auto", color: "var(--text-dim)" }} />
+                  <div style={{ fontWeight: 600 }}>No coordinator-manager mappings configured yet.</div>
+                  <div style={{ fontSize: "0.8rem", marginTop: 4 }}>Use the form above to add the first mapping.</div>
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                        <th style={{ padding: "12px 16px" }}>Coordinator</th>
+                        <th style={{ padding: "12px 16px" }}>Mapped Manager</th>
+                        <th style={{ padding: "12px 16px" }}>Assigned On</th>
+                        <th style={{ padding: "12px 16px", textAlign: "right" }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mappings.map((m) => (
+                        <tr key={m.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                          <td style={{ padding: "14px 16px" }}>
+                            <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{m.coordinator_name || "—"}</div>
+                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{m.coordinator_email || ""}</div>
+                          </td>
+                          <td style={{ padding: "14px 16px" }}>
+                            <div style={{ fontWeight: 600, color: "#0b5cab" }}>{m.manager_name || "—"}</div>
+                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{m.manager_email || ""}</div>
+                          </td>
+                          <td style={{ padding: "14px 16px", color: "var(--text-dim)", fontSize: "0.82rem" }}>
+                            {new Date(m.assigned_at).toLocaleDateString()}
+                          </td>
+                          <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                            <button
+                              onClick={() => handleDeleteMapping(m.id, m.coordinator_name || m.coordinator_id)}
+                              className="btn"
+                              style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", padding: "5px 10px", fontSize: "0.775rem", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}
+                            >
+                              <Trash2 size={13} />
+                              <span>Remove</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

@@ -244,3 +244,30 @@ class AuthService:
         self.db.commit()
         self.db.refresh(mapping)
         return mapping
+
+    def list_mappings(self):
+        """List all coordinator-manager mappings with names enriched (Admin only)."""
+        from app.schemas.user import CoordinatorMappingListResponse
+        mappings = self.db.query(UserManagerMapping).order_by(UserManagerMapping.assigned_at.desc()).all()
+        results = []
+        for m in mappings:
+            results.append(CoordinatorMappingListResponse(
+                id=m.id,
+                coordinator_id=m.coordinator_id,
+                coordinator_name=m.coordinator.full_name if m.coordinator else None,
+                coordinator_email=m.coordinator.email if m.coordinator else None,
+                manager_id=m.manager_id,
+                manager_name=m.manager.full_name if m.manager else None,
+                manager_email=m.manager.email if m.manager else None,
+                assigned_at=m.assigned_at,
+            ))
+        return results
+
+    def delete_mapping(self, mapping_id: UUID) -> dict:
+        """Remove a coordinator-manager mapping by its ID (Admin only)."""
+        mapping = self.db.query(UserManagerMapping).filter(UserManagerMapping.id == mapping_id).first()
+        if not mapping:
+            raise HTTPException(status_code=404, detail="Mapping not found")
+        self.db.delete(mapping)
+        self.db.commit()
+        return {"detail": "Coordinator-manager mapping removed successfully"}

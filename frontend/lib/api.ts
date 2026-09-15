@@ -93,6 +93,17 @@ export interface CoordinatorMappingPayload {
   manager_id: string;
 }
 
+export interface CoordinatorMappingRecord {
+  id: string;
+  coordinator_id: string;
+  coordinator_name: string | null;
+  coordinator_email: string | null;
+  manager_id: string;
+  manager_name: string | null;
+  manager_email: string | null;
+  assigned_at: string;
+}
+
 export interface Batch {
   id: string;
   batch_id: string;
@@ -440,6 +451,16 @@ class ApiService {
     return this.request<any>("/auth/users/coordinator-mapping", {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  }
+
+  async listCoordinatorMappings(): Promise<CoordinatorMappingRecord[]> {
+    return this.request<CoordinatorMappingRecord[]>("/auth/coordinator-mappings");
+  }
+
+  async deleteCoordinatorMapping(mappingId: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/auth/coordinator-mappings/${mappingId}`, {
+      method: "DELETE",
     });
   }
 

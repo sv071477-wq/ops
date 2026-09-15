@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token,
-    CoordinatorMappingCreate, CoordinatorMappingResponse, UserHierarchyNode
+    CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
@@ -92,10 +92,28 @@ def get_coordinators(
     return service.list_coordinators(current_user)
 
 
-@router.post("/users/coordinator-mapping", response_model=CoordinatorMappingResponse, dependencies=[Depends(require_manager_or_admin)])
+@router.post("/users/coordinator-mapping", response_model=CoordinatorMappingResponse, dependencies=[Depends(require_admin)])
 def assign_coordinator_to_manager(
     mapping_in: CoordinatorMappingCreate,
     service: AuthService = Depends(get_auth_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:
+    """Admin Only: Assign a coordinator to a manager (shared coordinator mapping)."""
     return service.assign_coordinator(mapping_in)
+
+
+@router.get("/coordinator-mappings", response_model=List[CoordinatorMappingListResponse], dependencies=[Depends(require_admin)])
+def list_coordinator_mappings(
+    service: AuthService = Depends(get_auth_service),
+) -> Any:
+    """Admin Only: List all existing coordinator-manager assignments."""
+    return service.list_mappings()
+
+
+@router.delete("/coordinator-mappings/{mapping_id}", dependencies=[Depends(require_admin)])
+def delete_coordinator_mapping(
+    mapping_id: UUID,
+    service: AuthService = Depends(get_auth_service),
+) -> Any:
+    """Admin Only: Remove a coordinator-manager assignment by its mapping ID."""
+    return service.delete_mapping(mapping_id)
