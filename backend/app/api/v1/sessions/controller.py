@@ -65,7 +65,7 @@ async def complete_session_gate1(
     result = service.complete_gate1(id, feedback_in, current_user.id)
 
     await NotificationService.notify_gate_completion(
-        batch_id=str(id),
+        batch_id=str(result.get("batch_id") or id),
         gate_name="Gate 1 (Session Feedback)",
         score=f"{feedback_in.rating}/5.0"
     )

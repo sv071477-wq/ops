@@ -75,6 +75,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     try {
       const payload: any = {
         ...editForm,
+        sow_number: editForm.sow_number ? String(editForm.sow_number).trim() : undefined,
         start_date: editForm.start_date ? new Date(editForm.start_date).toISOString() : undefined,
         end_date: editForm.end_date ? new Date(editForm.end_date).toISOString() : undefined,
         training_days: Number(editForm.training_days) || 0,
@@ -287,7 +288,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
     try {
       const res = await api.ingestScheduleFile(ingestFile, batch.batch_id);
-      setExtractedRows(res.extracted_schedule || []);
+      const rows = res.extracted_schedule || (res as any).items || [];
+      setExtractedRows(rows);
     } catch (err: any) {
       setIngestError(err.message || "Failed to parse timetable file");
     } finally {
@@ -303,9 +305,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
     try {
       const validationPayload = extractedRows.map((r) => ({
+        batch_id: batch.batch_id,
         date_of_training: r.date_of_training,
         no_of_hours: r.no_of_hours,
-        faculty_name: r.faculty_name,
+        faculty_name: r.faculty_name || batch.faculty_assigned_text || undefined,
         topic: r.topic,
         mode_of_delivery: r.mode_of_delivery,
       }));

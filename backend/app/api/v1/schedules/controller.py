@@ -25,17 +25,29 @@ def validate_schedule_slots(
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Dry-run validation of schedule slots against faculty availability and capacity limits."""
+    from decimal import Decimal
     conflicts: List[ConflictDetail] = []
     valid_count = 0
+    running_hours: dict = {}
 
     for item in payload.items:
         fac_name = item.faculty_name or "Assigned Faculty"
+        date_key = item.date_of_training.strftime("%Y-%m-%d") if item.date_of_training else ""
+        key = (fac_name.strip().lower(), date_key)
+        prior_hours = running_hours.get(key, Decimal("0.0"))
+
         item_conflicts = ConflictEngine.check_session_conflict(
             db=db,
             faculty_name=fac_name,
             date_of_training=item.date_of_training,
-            requested_hours=item.no_of_hours
+            requested_hours=item.no_of_hours,
+            existing_hours=prior_hours,
+            start_time=item.start_time,
+            end_time=item.end_time,
+            faculty_id=item.faculty_id,
         )
+
+        running_hours[key] = prior_hours + item.no_of_hours
 
         if item_conflicts:
             conflicts.extend(item_conflicts)

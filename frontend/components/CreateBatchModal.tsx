@@ -296,7 +296,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     }
 
     if (step === 4) {
-      if (!formData.sow_number?.trim()) {
+      if (!formData.sow_number || !String(formData.sow_number).trim()) {
         setError("Client SOW Number is mandatory for commercial tracking");
         return false;
       }
@@ -331,10 +331,17 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
         ...formData,
         batch_id: formData.batch_id.trim().toUpperCase(),
         program_name: formData.program_name.trim(),
-        client_name: formData.client_name?.trim(),
-        domain: formData.domain?.trim(),
-        technology: formData.technology?.trim(),
-        sow_number: formData.sow_number?.trim(),
+        client_name: formData.client_name?.trim() || undefined,
+        domain: formData.domain?.trim() || undefined,
+        technology: formData.technology?.trim() || undefined,
+        sow_number: formData.sow_number ? String(formData.sow_number).trim() : undefined,
+        entity_id: formData.entity_id?.trim() || undefined,
+        category_id: formData.category_id?.trim() || undefined,
+        delivery_mode_id: formData.delivery_mode_id?.trim() || undefined,
+        accommodation_id: formData.accommodation_id?.trim() || undefined,
+        sales_spoc_id: formData.sales_spoc_id?.trim() || undefined,
+        coordinator_id: formData.coordinator_id?.trim() || undefined,
+        primary_manager_id: formData.primary_manager_id?.trim() || undefined,
         delivery_mode: selectedDeliveryMode,
         location_city: requiresLocation ? formData.location_city?.trim() || undefined : undefined,
         total_enrollments: Number(formData.total_enrollments) || 0,

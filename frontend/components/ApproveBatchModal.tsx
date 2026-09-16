@@ -37,10 +37,10 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
         await api.decideBatch(batch.id, currentLevel, "reject", rejectReason.trim() || undefined);
       } else {
         // Two-level approval decision
-        await api.decideBatch(batch.id, currentLevel, "approve");
+        await api.decideBatch(batch.id, currentLevel, "approve", approvalId.trim() || undefined);
 
-        // Optional direct SOW approval id assignment
-        if (approvalId.trim()) {
+        // Only assign final SOW approval id upon completing Level 2 approval
+        if (currentLevel === 2 && approvalId.trim()) {
           await api.approveBatch(batch.id, approvalId.trim());
         }
       }

@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Any
 from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
@@ -42,6 +42,22 @@ class BatchBase(BaseModel):
     remarks: Optional[str] = None
     comments: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def sanitize_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            cleaned = {}
+            for k, v in data.items():
+                if isinstance(v, str):
+                    s = v.strip()
+                    cleaned[k] = s if s else None
+                else:
+                    cleaned[k] = v
+            if "sow_number" in cleaned and cleaned["sow_number"] is not None:
+                cleaned["sow_number"] = str(cleaned["sow_number"]).strip()
+            return cleaned
+        return data
+
     @model_validator(mode="after")
     def validate_dates(self):
         if self.start_date and self.end_date and self.end_date < self.start_date:
@@ -72,6 +88,16 @@ class ApprovalDecision(BaseModel):
 class ApprovalConfigurationBase(BaseModel):
     approver_1_id: Optional[UUID] = None
     approver_2_id: Optional[UUID] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sanitize_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {
+                k: (v.strip() if isinstance(v, str) and v.strip() else None if isinstance(v, str) else v)
+                for k, v in data.items()
+            }
+        return data
 
 
 class ApprovalConfigurationResponse(ApprovalConfigurationBase):
@@ -115,6 +141,22 @@ class BatchUpdate(BaseModel):
     finance_check: Optional[int] = None
     remarks: Optional[str] = None
     comments: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def sanitize_inputs(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            cleaned = {}
+            for k, v in data.items():
+                if isinstance(v, str):
+                    s = v.strip()
+                    cleaned[k] = s if s else None
+                else:
+                    cleaned[k] = v
+            if "sow_number" in cleaned and cleaned["sow_number"] is not None:
+                cleaned["sow_number"] = str(cleaned["sow_number"]).strip()
+            return cleaned
+        return data
 
     @model_validator(mode="after")
     def validate_dates(self):

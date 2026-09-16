@@ -14,7 +14,7 @@ def get_manager_dashboard(
     service: AnalyticsService = Depends(get_analytics_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:
-    return service.manager_dashboard()
+    return service.manager_dashboard(current_user=current_user)
 
 
 @router.get("/mbr-export", dependencies=[Depends(require_manager_or_admin)])

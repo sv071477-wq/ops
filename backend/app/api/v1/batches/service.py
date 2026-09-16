@@ -135,6 +135,8 @@ class BatchService:
             batch.approver_2_approved_at = datetime.now(timezone.utc)
             batch.status = "Approved"
             batch.is_schema_locked = True
+            if decision.reason and not batch.approval_id and len(decision.reason.strip()) <= 100:
+                batch.approval_id = decision.reason.strip()
         batch.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(batch)
@@ -142,6 +144,11 @@ class BatchService:
 
     def approve(self, batch_id: UUID, approval: BatchApprove, current_user: User) -> Batch:
         batch = self.get(batch_id)
+        if batch.approver_1_id and batch.approver_1_status != "Approved" and (current_user.role or "").lower() != "admin":
+            raise HTTPException(
+                status_code=409,
+                detail="Approver 1 signoff is pending. Direct approval requires Admin authorization or Level 1 completion."
+            )
         batch.approval_id = approval.approval_id
         batch.status = "Approved"
         batch.is_schema_locked = True

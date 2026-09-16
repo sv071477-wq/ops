@@ -1,13 +1,13 @@
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 
 class FacultyBase(BaseModel):
     full_name: str
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     faculty_type: str = "Internal Full-time"  # Internal Full-time, External Consultant, HOP
     domain: Optional[str] = None  # IT/ITES, Cloud, DS/ML, CyberSecurity, FullStack
@@ -23,7 +23,7 @@ class FacultyCreate(FacultyBase):
 
 class FacultyUpdate(BaseModel):
     full_name: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     phone: Optional[str] = None
     faculty_type: Optional[str] = None
     domain: Optional[str] = None
@@ -35,9 +35,23 @@ class FacultyUpdate(BaseModel):
 
 class FacultyResponse(FacultyBase):
     id: UUID
-    created_at: datetime
+    role: str = "Faculty"
+    created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DomainUtilization(BaseModel):
+    domain: str
+    faculty_count: int
+    hours_scheduled: Decimal
+
+
+class FacultyUtilizationOverview(BaseModel):
+    total_faculty_count: int
+    active_deployed_faculty: int
+    overall_utilization_percentage: Decimal
+    domain_breakdown: List[DomainUtilization] = []
 
 
 class FacultyUtilizationSummary(BaseModel):
@@ -49,3 +63,4 @@ class FacultyUtilizationSummary(BaseModel):
     average_feedback_rating: Optional[Decimal] = None
     active_batches_count: int
     fms_status: str
+

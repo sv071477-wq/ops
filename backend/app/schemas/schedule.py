@@ -1,12 +1,12 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 from datetime import datetime, time
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ScheduleValidationItem(BaseModel):
-    batch_id: str  # Batch identifier string or UUID string
+    batch_id: Optional[str] = None  # Batch identifier string or UUID string
     date_of_training: datetime
     start_time: Optional[time] = None
     end_time: Optional[time] = None
@@ -24,15 +24,31 @@ class ScheduleValidationRequest(BaseModel):
 
 
 class ConflictDetail(BaseModel):
-    faculty_id: UUID
+    faculty_id: Optional[UUID] = None
     faculty_name: str
     date_of_training: str
+    date: Optional[str] = None
     conflict_type: str  # "DOUBLE_BOOKING", "DAILY_HOURS_EXCEEDED", "FACULTY_BLOCKED"
     message: str
+    reason: Optional[str] = None
     existing_batch_id: Optional[str] = None
     existing_session_id: Optional[UUID] = None
     requested_hours: Decimal
     existing_hours: Decimal
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "date_of_training" in data and not data.get("date"):
+                data["date"] = str(data["date_of_training"])
+            elif "date" in data and not data.get("date_of_training"):
+                data["date_of_training"] = str(data["date"])
+            if "message" in data and not data.get("reason"):
+                data["reason"] = str(data["message"])
+            elif "reason" in data and not data.get("message"):
+                data["message"] = str(data["reason"])
+        return data
 
 
 class ScheduleValidationResponse(BaseModel):
@@ -65,12 +81,33 @@ class ScheduleExtractionError(BaseModel):
 
 
 class ScheduleIngestResponse(BaseModel):
-    success: bool
-    message: str
-    filename: str
-    sheets_processed: List[str]
-    total_rows: int
-    extracted_rows: int
-    failed_rows: int
+    success: bool = True
+    message: str = "Ingestion successful"
+    filename: str = ""
+    source_filename: Optional[str] = None
+    sheets_processed: List[str] = []
+    total_rows: int = 0
+    total_rows_parsed: Optional[int] = None
+    extracted_rows: int = 0
+    failed_rows: int = 0
     items: List[ExtractedScheduleItem] = []
+    extracted_schedule: List[ExtractedScheduleItem] = []
     errors: List[ScheduleExtractionError] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("source_filename") and data.get("filename"):
+                data["source_filename"] = data["filename"]
+            elif not data.get("filename") and data.get("source_filename"):
+                data["filename"] = data["source_filename"]
+            if data.get("total_rows_parsed") is None and data.get("total_rows") is not None:
+                data["total_rows_parsed"] = data["total_rows"]
+            elif data.get("total_rows") == 0 and data.get("total_rows_parsed") is not None:
+                data["total_rows"] = data["total_rows_parsed"]
+            if not data.get("extracted_schedule") and data.get("items"):
+                data["extracted_schedule"] = data["items"]
+            elif not data.get("items") and data.get("extracted_schedule"):
+                data["items"] = data["extracted_schedule"]
+        return data

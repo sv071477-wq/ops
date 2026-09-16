@@ -56,3 +56,29 @@ def test_approve_batch_locks_schema(client, manager_token_headers, db_session):
     assert data["status"] == "Approved"
     assert data["approval_id"] == "SOW-APPROVED-999"
     assert data["is_schema_locked"] is True
+
+
+def test_create_batch_with_sow_string_and_empty_uuid_fields(client, coord_token_headers):
+    batch_payload = {
+        "batch_id": "BATCH_SAMPLE_2026",
+        "client_name": "Delloite",
+        "category": "PJP",
+        "domain": "IT/ITES",
+        "program_name": "Cloud and Ops",
+        "sow_number": "SOW everthing",
+        "sales_spoc_id": "",
+        "coordinator_id": "",
+        "primary_manager_id": "",
+        "delivery_mode": "Online",
+        "total_enrollments": 55,
+        "training_days": 5,
+        "total_hours": 63,
+    }
+
+    response = client.post("/api/v1/batches", json=batch_payload, headers=coord_token_headers)
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data["batch_id"] == "BATCH_SAMPLE_2026"
+    assert data["sow_number"] == "SOW everthing"
+    assert data["sales_spoc_id"] is None
+    assert data["status"] == "Requested"

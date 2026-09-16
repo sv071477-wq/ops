@@ -160,10 +160,13 @@ class ExcelIngestionService:
             success=len(errors) == 0,
             message=f"Extracted {len(items)} schedule rows ({len(errors)} skipped).",
             filename=filename,
+            source_filename=filename,
             sheets_processed=[str(name) for name in sheets],
             total_rows=total_rows,
+            total_rows_parsed=total_rows,
             extracted_rows=len(items),
             failed_rows=len(errors),
             items=items,
+            extracted_schedule=items,
             errors=errors,
         )

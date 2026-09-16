@@ -10,11 +10,13 @@ import { Navbar } from "@/components/Navbar";
 import { CreateBatchModal } from "@/components/CreateBatchModal";
 import { ApproveBatchModal } from "@/components/ApproveBatchModal";
 import { BatchDetailDrawer } from "@/components/BatchDetailDrawer";
+import { ManagerBoard } from "@/components/ManagerBoard";
 import {
   Layers, Search, Filter, Plus, CheckCircle2, Clock, PlayCircle,
   Archive, Eye, Lock, Building2, MapPin, Sparkles, RefreshCw,
   AlertTriangle, BarChart3, Download, Users, Briefcase, TrendingUp, Check,
-  PlusCircle, Calendar, ShieldCheck, Maximize2, Minimize2, FileSpreadsheet
+  PlusCircle, Calendar, ShieldCheck, Maximize2, Minimize2, FileSpreadsheet,
+  Kanban
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -22,7 +24,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   // Top-level Navigation View
-  const [activeView, setActiveView] = useState<"batches" | "approvals" | "finance" | "analytics" | "faculty">("batches");
+  const [activeView, setActiveView] = useState<"batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty">("batches");
 
   // Direct reports state for managerial dashboard
   const [myReports, setMyReports] = useState<User[]>([]);
@@ -210,6 +212,9 @@ export default function DashboardPage() {
     if (user) {
       if (activeView === "batches") {
         fetchBatches();
+      } else if (activeView === "manager_board") {
+        fetchBatches();
+        fetchAnalytics();
       } else if (activeView === "approvals") {
         fetchBatches(true);
       } else if (activeView === "finance") {
@@ -222,6 +227,13 @@ export default function DashboardPage() {
     }
   }, [user, activeView, statusFilter, domainFilter, categoryFilter, facultyDomainFilter]);
 
+  // Auto-switch to manager_board on initial login for managers
+  useEffect(() => {
+    if (user && user.role?.toLowerCase() === "manager" && activeView === "batches") {
+      setActiveView("manager_board");
+    }
+  }, [user]);
+
   // Fetch direct reports for logged-in user
   useEffect(() => {
     if (user) {
@@ -232,7 +244,7 @@ export default function DashboardPage() {
   const hasReportingStaff = (user?.direct_reports_count ?? 0) > 0 || user?.is_manager || user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin" || myReports.length > 0;
 
   useEffect(() => {
-    if (!hasReportingStaff && activeView === "analytics") {
+    if (!hasReportingStaff && (activeView === "analytics" || activeView === "manager_board")) {
       setActiveView("batches");
     }
   }, [hasReportingStaff, activeView]);
@@ -479,6 +491,58 @@ export default function DashboardPage() {
                 </button>
               )}
 
+              {/* Manager Control Board */}
+              {(user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin" || hasReportingStaff) && (
+                <button
+                  onClick={() => setActiveView("manager_board")}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                    width: "100%",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: activeView === "manager_board" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
+                    background: activeView === "manager_board" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
+                    color: activeView === "manager_board" ? "#ffffff" : "#0b5cab",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    boxShadow: activeView === "manager_board" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
+                    opacity: 1,
+                    transition: "all 0.15s",
+                    minHeight: 52,
+                    position: "relative",
+                  }}
+                >
+                  <Kanban size={18} color={activeView === "manager_board" ? "#ffffff" : "#0b5cab"} />
+                  <span style={{ lineHeight: 1.2 }}>Manager Board</span>
+                  {approvalQueue.length > 0 && (
+                    <span style={{
+                      position: "absolute",
+                      top: 8,
+                      right: 10,
+                      background: activeView === "manager_board" ? "#ffffff" : "#7c3aed",
+                      color: activeView === "manager_board" ? "#7c3aed" : "#ffffff",
+                      borderRadius: 999,
+                      fontSize: "0.7rem",
+                      fontWeight: 800,
+                      minWidth: 18,
+                      height: 18,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0 5px",
+                      lineHeight: 1,
+                    }}>
+                      {approvalQueue.length}
+                    </span>
+                  )}
+                </button>
+              )}
+
               {/* Active Batches & Sessions */}
               <button
                 onClick={() => setActiveView("batches")}
@@ -688,6 +752,24 @@ export default function DashboardPage() {
 
         {/* Main Content Area */}
         <main style={{ flex: 1, minWidth: 0 }}>
+
+        {/* VIEW 0: MANAGER LEVEL CONTROL BOARD */}
+        {activeView === "manager_board" && (
+          <ManagerBoard
+            batches={batches}
+            summary={dashboardSummary}
+            reports={myReports}
+            isLoading={isLoading || isLoadingAnalytics}
+            onRefresh={() => {
+              fetchBatches();
+              fetchAnalytics();
+            }}
+            onOpenBatchDetail={(batch) => setSelectedBatchForDetail(batch)}
+            onOpenApproval={(batch) => setSelectedBatchForApproval(batch)}
+            onExportMbr={handleExportMbr}
+            isExportingMbr={isExportingMbr}
+          />
+        )}
 
         {/* VIEW 1: BATCH OPERATIONS HUB */}
         {activeView === "batches" && (

@@ -32,6 +32,7 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      - ./project_data:/app/project_data:ro
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-ops_db}
       - SECRET_KEY=${SECRET_KEY:-dev_secret_key_super_secure_enterprise_jwt_2026}
