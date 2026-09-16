@@ -13,7 +13,7 @@ class TrainingSession(Base):
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     batch_id = Column(Uuid(as_uuid=True), ForeignKey("batches.id", ondelete="CASCADE"), nullable=False, index=True)
-    faculty_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    faculty_name = Column(String(255), nullable=False, index=True)
     date_of_training = Column(DateTime(timezone=True), nullable=False, index=True)
     start_time = Column(Time, nullable=True)
     end_time = Column(Time, nullable=True)
@@ -26,8 +26,12 @@ class TrainingSession(Base):
     feedback_submitted = Column(Boolean, nullable=False, default=False)
     feedback_rating = Column(Numeric(3, 2), nullable=True)
     feedback_notes = Column(Text, nullable=True)
+    outcome_reason = Column(Text, nullable=True)
+    outcome_at = Column(DateTime(timezone=True), nullable=True)
+    outcome_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    replacement_session_id = Column(Uuid(as_uuid=True), ForeignKey("training_sessions.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     batch = relationship("Batch", back_populates="sessions")
-    faculty = relationship("User", foreign_keys=[faculty_id], back_populates="training_sessions")
+    replacement_session = relationship("TrainingSession", remote_side=[id], foreign_keys=[replacement_session_id])

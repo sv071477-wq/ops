@@ -138,7 +138,7 @@ class AnalyticsService:
             User.is_active == True
         ).count()
 
-        deployed_fac_count = self.db.query(TrainingSession.faculty_id).filter(
+        deployed_fac_count = self.db.query(TrainingSession.faculty_name).filter(
             TrainingSession.status.in_(["Scheduled", "InProgress", "Completed"])
         ).distinct().count()
 

@@ -141,6 +141,9 @@ export interface Batch {
   primary_manager_id?: string | null;
   coordinator_id?: string | null;
   sales_spoc_id?: string | null;
+  primary_manager?: User | null;
+  coordinator?: User | null;
+  sales_spoc?: User | null;
   faculty_assigned_text?: string | null;
   finance_status?: string | null;
   finance_status_check_date?: string | null;
@@ -148,6 +151,12 @@ export interface Batch {
   batch_avg_feedback?: number | null;
   total_feedback_score?: number | null;
   batch_nps?: number | null;
+  nps_total_responses?: number | null;
+  nps_promoters?: number | null;
+  nps_passives?: number | null;
+  nps_detractors?: number | null;
+  nps_imported_at?: string | null;
+  nps_source_filename?: string | null;
   retrospective_notes?: string | null;
   remarks?: string | null;
   comments?: string | null;
@@ -212,12 +221,7 @@ export interface TrainingSession {
   id: string;
   batch_id: string;
   faculty_id?: string | null;
-  faculty?: {
-    id: string;
-    full_name: string;
-    email: string;
-    domain?: string;
-  } | null;
+  faculty_name: string;
   date_of_training: string;
   start_time?: string | null;
   end_time?: string | null;
@@ -226,8 +230,12 @@ export interface TrainingSession {
   venue?: string | null;
   location_city?: string | null;
   mode_of_delivery: string;
-  status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Rescheduled";
+  status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Rescheduled" | "Not Conducted";
   feedback_submitted: boolean;
+  outcome_reason?: string | null;
+  outcome_at?: string | null;
+  outcome_by?: string | null;
+  replacement_session_id?: string | null;
   rating?: number | null;
   topic_feedback?: string | null;
   created_at: string;
@@ -249,14 +257,25 @@ export interface CreateSessionPayload {
 
 export interface SessionFeedbackPayload {
   rating: number; // 1.0 - 5.0
-  topic_feedback?: string;
+  topic_feedback: string;
   total_students_present?: number;
 }
 
 export interface BatchNpsClosurePayload {
-  nps_score: number; // 0 - 10
+  nps_score?: number; // Calculated percentage NPS, imported from final feedback
   average_feedback_score?: number; // 1.0 - 5.0
   retrospective_notes?: string;
+}
+
+export interface BatchFeedbackImportResponse {
+  batch_id: string;
+  source_filename: string;
+  total_responses: number;
+  promoters_count: number;
+  passive_count: number;
+  detractors_count: number;
+  nps_score: number;
+  average_feedback_score?: number | null;
 }
 
 // Analytics Types
@@ -322,6 +341,14 @@ export interface ScheduleIngestResponse {
   source_filename: string;
   total_rows_parsed: number;
   extracted_schedule: ExtractedScheduleRow[];
+}
+
+export interface ScheduleApplyResponse {
+  success: boolean;
+  target_batch_id: string;
+  source_filename?: string | null;
+  applied_rows: number;
+  session_ids: string[];
 }
 
 // Faculty Types
@@ -579,6 +606,24 @@ class ApiService {
     });
   }
 
+  async importBatchFeedback(id: string, file: File): Promise<BatchFeedbackImportResponse> {
+    const token = this.getToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(`${API_BASE}/batches/${id}/feedback-import`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Feedback import failed: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
   // Batch Options & Taxonomy APIs
   async getBatchOptions(type: "categories" | "delivery-modes" | "accommodations" | "entities" | string): Promise<BatchOption[]> {
     return this.request<BatchOption[]>(`/batch-options/${type}`);
@@ -632,9 +677,30 @@ class ApiService {
     });
   }
 
-  async updateSession(id: string, payload: Partial<CreateSessionPayload> & { status?: string }): Promise<TrainingSession> {
+  async updateSession(id: string, payload: Partial<CreateSessionPayload>): Promise<TrainingSession> {
     return this.request<TrainingSession>(`/sessions/${id}`, {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async cancelSession(id: string, reason: string): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async markSessionNotConducted(id: string, reason: string): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}/not-conducted`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async rescheduleSession(id: string, payload: { date_of_training: string; start_time?: string; end_time?: string; reason: string }): Promise<TrainingSession> {
+    return this.request<TrainingSession>(`/sessions/${id}/reschedule`, {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   }
@@ -681,6 +747,17 @@ class ApiService {
     return this.request<ScheduleValidationResponse>("/schedules/validate", {
       method: "POST",
       body: JSON.stringify({ items }),
+    });
+  }
+
+  async applySchedule(items: ExtractedScheduleRow[], targetBatchId: string, sourceFilename?: string): Promise<ScheduleApplyResponse> {
+    return this.request<ScheduleApplyResponse>("/schedules/apply", {
+      method: "POST",
+      body: JSON.stringify({
+        target_batch_id: targetBatchId,
+        source_filename: sourceFilename,
+        items,
+      }),
     });
   }
 

@@ -1,13 +1,22 @@
 import io
 from typing import Any, Dict, List, Optional
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 import pandas as pd
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+from uuid import UUID
 from app.schemas.schedule import (
     ExtractedScheduleItem,
     ScheduleExtractionError,
     ScheduleIngestResponse,
+    ScheduleApplyResponse,
 )
+from app.models.batch import Batch
+from app.models.session import TrainingSession
+from app.models.user import User
+from app.api.v1.schedules.conflict_engine import ConflictEngine
+from app.api.deps import get_manager_scope_user_ids
 
 
 class ExcelIngestionService:
@@ -169,4 +178,171 @@ class ExcelIngestionService:
             items=items,
             extracted_schedule=items,
             errors=errors,
+        )
+
+    @classmethod
+    def apply_schedule_items(
+        cls,
+        db: Session,
+        target_batch_id: str,
+        items: List[ExtractedScheduleItem],
+        source_filename: Optional[str] = None,
+        user_id: Optional[UUID] = None,
+    ) -> ScheduleApplyResponse:
+        """Validate and persist a complete schedule upload as one transaction."""
+        batch = db.query(Batch).filter(Batch.batch_id == target_batch_id).first()
+        if not batch:
+            try:
+                batch = db.query(Batch).filter(Batch.id == UUID(target_batch_id)).first()
+            except ValueError:
+                batch = None
+        if not batch:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target batch not found")
+        if user_id:
+            user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+            if not user:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Active user not found")
+            role = (user.role or "").lower()
+            team = (user.team_detail.name if user.team_detail else "").strip().lower()
+            if role != "admin" and team != "finance":
+                scope_ids = set(get_manager_scope_user_ids(user, db))
+                batch_user_ids = {batch.primary_manager_id, batch.coordinator_id, batch.sales_spoc_id}
+                if not scope_ids.intersection({value for value in batch_user_ids if value is not None}):
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only apply schedules within your manager scope.")
+        if batch.status in {"Completed", "Cancelled"}:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Schedule cannot be applied to a completed or cancelled batch")
+        if not items:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Schedule upload contains no valid rows")
+
+        errors: List[dict] = []
+        prepared = []
+        seen_keys = set()
+        running_hours = {}
+        running_slots = {}
+        for item in items:
+            row_key = (item.date_of_training.date(), item.start_time, item.end_time, item.topic.strip().lower())
+            if row_key in seen_keys:
+                errors.append({"source_row": item.source_row, "message": "Duplicate schedule row in upload"})
+                continue
+            seen_keys.add(row_key)
+
+            if item.batch_id and item.batch_id not in {batch.batch_id, str(batch.id)}:
+                errors.append({"source_row": item.source_row, "message": "Row belongs to a different batch"})
+                continue
+            if batch.start_date and item.date_of_training.date() < batch.start_date.date():
+                errors.append({"source_row": item.source_row, "message": "Training date is before the batch start date"})
+                continue
+            if batch.end_date and item.date_of_training.date() > batch.end_date.date():
+                errors.append({"source_row": item.source_row, "message": "Training date is after the batch end date"})
+                continue
+
+            faculty_name = (item.faculty_name or batch.faculty_assigned_text or "").strip()
+            if not faculty_name:
+                errors.append({"source_row": item.source_row, "message": "Faculty name is required"})
+                continue
+
+            existing = db.query(TrainingSession).filter(
+                TrainingSession.batch_id == batch.id,
+                TrainingSession.date_of_training == item.date_of_training,
+                TrainingSession.topic.ilike(item.topic.strip()),
+            ).first()
+            if existing:
+                errors.append({"source_row": item.source_row, "message": "Matching session already exists for this batch"})
+                continue
+
+            day_key = (faculty_name.lower(), item.date_of_training.date())
+            prior_hours = running_hours.get(day_key, Decimal("0"))
+            conflicts = ConflictEngine.check_session_conflict(
+                db=db,
+                faculty_name=faculty_name,
+                date_of_training=item.date_of_training,
+                requested_hours=item.no_of_hours,
+                existing_hours=prior_hours,
+                start_time=item.start_time,
+                end_time=item.end_time,
+                faculty_id=None,
+            )
+            slot_key = (faculty_name.lower(), item.date_of_training.date())
+            for previous_start, previous_end, previous_row in running_slots.get(slot_key, []):
+                if item.start_time and item.end_time and previous_start and previous_end and previous_start < item.end_time and previous_end > item.start_time:
+                    errors.append({"source_row": item.source_row, "message": f"Overlaps another uploaded session from row {previous_row}"})
+            if conflicts:
+                errors.extend({"source_row": item.source_row, "message": conflict.message} for conflict in conflicts)
+                continue
+
+            running_hours[day_key] = prior_hours + item.no_of_hours
+            running_slots.setdefault(slot_key, []).append((item.start_time, item.end_time, item.source_row))
+            prepared.append((item, faculty_name))
+
+        generated = []
+        if not errors and batch.training_days and batch.start_date and batch.end_date:
+            scheduled_dates = {item.date_of_training.date() for item, _ in prepared}
+            missing_count = max(0, batch.training_days - len(scheduled_dates))
+            if missing_count:
+                faculty_name = (batch.faculty_assigned_text or "").strip()
+                if not faculty_name:
+                    errors.append({"source_row": 0, "message": "A faculty assignment is required to generate missing training days"})
+                else:
+                    candidate = batch.start_date.date()
+                    while candidate <= batch.end_date.date() and len(generated) < missing_count:
+                        if candidate.weekday() < 5 and candidate not in scheduled_dates:
+                            generated.append((
+                                datetime.combine(candidate, time(9, 0)),
+                                faculty_name,
+                            ))
+                            scheduled_dates.add(candidate)
+                        candidate += timedelta(days=1)
+                    if len(generated) < missing_count:
+                        errors.append({"source_row": 0, "message": "The batch date range does not contain enough missing weekdays to satisfy training_days"})
+
+        if errors:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"message": "Schedule was not applied", "errors": errors})
+
+        try:
+            sessions = []
+            for item, faculty_name in prepared:
+                session = TrainingSession(
+                    batch_id=batch.id,
+                    faculty_name=faculty_name,
+                    date_of_training=item.date_of_training,
+                    start_time=item.start_time,
+                    end_time=item.end_time,
+                    topic=item.topic,
+                    no_of_hours=item.no_of_hours,
+                    venue=item.venue,
+                    location_city=item.location_city or batch.location_city,
+                    mode_of_delivery=item.mode_of_delivery or batch.delivery_mode,
+                    status="Scheduled",
+                )
+                db.add(session)
+                sessions.append(session)
+            for generated_date, faculty_name in generated:
+                session = TrainingSession(
+                    batch_id=batch.id,
+                    faculty_name=faculty_name,
+                    date_of_training=generated_date,
+                    start_time=time(9, 0),
+                    end_time=time(17, 0),
+                    topic="Generated training day - details required",
+                    no_of_hours=Decimal("8.0"),
+                    location_city=batch.location_city,
+                    mode_of_delivery=batch.delivery_mode,
+                    status="Scheduled",
+                )
+                db.add(session)
+                sessions.append(session)
+            db.commit()
+            for session in sessions:
+                db.refresh(session)
+        except Exception:
+            db.rollback()
+            raise
+
+        return ScheduleApplyResponse(
+            success=True,
+            target_batch_id=batch.batch_id,
+            source_filename=source_filename,
+            applied_rows=len(sessions),
+            session_ids=[session.id for session in sessions],
         )

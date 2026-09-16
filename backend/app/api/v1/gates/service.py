@@ -40,8 +40,9 @@ class GatekeeperService:
             pass
 
         if not session_obj:
-            # Fallback check for test mocks or string ids
-            session_obj = db.query(TrainingSession).first()
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        if session_obj.status in {"Cancelled", "Not Conducted", "Completed"}:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not available for Gate 1 completion")
 
         if session_obj:
             session_obj.status = "Completed"
@@ -57,6 +58,7 @@ class GatekeeperService:
             completed = db.query(TrainingSession).filter(
                 TrainingSession.batch_id == session_obj.batch_id,
                 TrainingSession.feedback_rating.isnot(None),
+                TrainingSession.status == "Completed",
             ).all()
 
             if completed:
@@ -118,10 +120,21 @@ class GatekeeperService:
                 detail="Batch has already completed Gate 2 and is Closed."
             )
 
-        # Update batch metrics directly on Batch table
-        batch.batch_nps = closure_data.nps_score
-        if closure_data.average_feedback_score is not None:
-            batch.batch_avg_feedback = closure_data.average_feedback_score
+        sessions = db.query(TrainingSession).filter(TrainingSession.batch_id == batch.id).all()
+        if not sessions:
+            raise HTTPException(status_code=409, detail="Batch cannot close before sessions are created")
+        terminal_statuses = {"Completed", "Cancelled", "Not Conducted"}
+        if any(session.status not in terminal_statuses for session in sessions):
+            raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
+        if batch.nps_imported_at is None or batch.batch_nps is None:
+            raise HTTPException(status_code=409, detail="Final feedback workbook must be imported before batch closure")
+        if batch.nps_total_responses is None or batch.nps_total_responses <= 0:
+            raise HTTPException(status_code=409, detail="Final feedback import must contain responses")
+        if batch.batch_avg_feedback is None:
+            raise HTTPException(status_code=409, detail="Average session feedback is required before batch closure")
+        if closure_data.average_feedback_score is not None and closure_data.average_feedback_score != batch.batch_avg_feedback:
+            raise HTTPException(status_code=409, detail="Submitted average feedback does not match the stored aggregate")
+
         batch.retrospective_notes = closure_data.retrospective_notes
         batch.status = "Completed"
         batch.is_schema_locked = True

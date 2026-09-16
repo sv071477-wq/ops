@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
-from app.schemas.session import SessionCreate, SessionUpdate, SessionDetailResponse
+from app.schemas.session import SessionCreate, SessionUpdate, SessionDetailResponse, SessionOutcomeRequest, SessionRescheduleRequest
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.deps_services import get_session_service
 from app.api.v1.sessions.service import SessionService
@@ -24,7 +24,7 @@ def list_sessions(
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """Master session endpoint (Placeholder active for schema expansion)."""
-    return service.list(batch_id, faculty_name, status_filter)
+    return service.list(batch_id, faculty_name, status_filter, current_user.id)
 
 
 @router.post("", response_model=SessionDetailResponse, status_code=status.HTTP_201_CREATED)
@@ -34,10 +34,10 @@ async def create_session(
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Schedule single session endpoint."""
-    result = service.create(session_in)
+    result = service.create(session_in, current_user.id)
     await NotificationService.notify_session_scheduled(
-        faculty_name=result.faculty.full_name,
-        faculty_email=result.faculty.email,
+        faculty_name=result.faculty_name,
+        faculty_email=None,
         date_str=result.date_of_training.isoformat(),
         topic=result.topic,
     )
@@ -51,7 +51,37 @@ def update_session(
     service: SessionService = Depends(get_session_service),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
-    return service.update(id, session_in)
+    return service.update(id, session_in, current_user.id)
+
+
+@router.post("/{id}/cancel", response_model=SessionDetailResponse)
+def cancel_session(
+    id: UUID,
+    request: SessionOutcomeRequest,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.cancel(id, request, current_user.id)
+
+
+@router.post("/{id}/not-conducted", response_model=SessionDetailResponse)
+def mark_session_not_conducted(
+    id: UUID,
+    request: SessionOutcomeRequest,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.mark_not_conducted(id, request, current_user.id)
+
+
+@router.post("/{id}/reschedule", response_model=SessionDetailResponse)
+def reschedule_session(
+    id: UUID,
+    request: SessionRescheduleRequest,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.reschedule(id, request, current_user.id)
 
 
 @router.patch("/{id}/complete")

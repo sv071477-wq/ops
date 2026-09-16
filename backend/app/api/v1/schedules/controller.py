@@ -8,7 +8,7 @@ from app.models.user import User
 from app.models.batch import Batch
 from app.schemas.schedule import (
     ScheduleValidationRequest, ScheduleValidationResponse,
-    ScheduleIngestResponse, ConflictDetail
+    ScheduleIngestResponse, ConflictDetail, ScheduleApplyRequest, ScheduleApplyResponse
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.v1.schedules.conflict_engine import ConflictEngine
@@ -86,3 +86,19 @@ async def ingest_timetable_file(
     )
 
     return result
+
+
+@router.post("/apply", response_model=ScheduleApplyResponse)
+def apply_schedule(
+    payload: ScheduleApplyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> ScheduleApplyResponse:
+    """Validate and persist the complete extracted schedule atomically."""
+    return ExcelIngestionService.apply_schedule_items(
+        db=db,
+        target_batch_id=payload.target_batch_id,
+        items=payload.items,
+        source_filename=payload.source_filename,
+        user_id=current_user.id,
+    )

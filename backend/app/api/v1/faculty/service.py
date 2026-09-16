@@ -45,11 +45,11 @@ class FacultyService:
         ).all()
         total_faculty = len(faculty_users)
 
-        deployed_rows = self.db.query(TrainingSession.faculty_id).filter(
+        deployed_rows = self.db.query(TrainingSession.faculty_name).filter(
             TrainingSession.status.notin_(["Cancelled"])
         ).distinct().all()
-        deployed_ids = {row[0] for row in deployed_rows if row[0]}
-        active_deployed = len(deployed_ids.intersection({f.id for f in faculty_users}))
+        deployed_names = {row[0].strip().lower() for row in deployed_rows if row[0]}
+        active_deployed = len(deployed_names.intersection({f.full_name.strip().lower() for f in faculty_users}))
 
         if total_faculty > 0:
             utilization_pct = Decimal(str(round((active_deployed / total_faculty) * 100, 1)))
@@ -67,7 +67,7 @@ class FacultyService:
                 TrainingSession.status.notin_(["Cancelled"])
             ).all()
 
-            fac_in_domain = len({s.faculty_id for s in domain_sessions if s.faculty_id})
+            fac_in_domain = len({s.faculty_name.strip().lower() for s in domain_sessions if s.faculty_name})
             hours = sum((s.no_of_hours for s in domain_sessions), Decimal("0.0"))
             breakdown.append(DomainUtilization(
                 domain=d,

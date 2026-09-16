@@ -31,7 +31,7 @@ class ConflictEngine:
         conflicts: List[ConflictDetail] = []
         target_date_str = date_of_training.strftime("%Y-%m-%d") if isinstance(date_of_training, datetime) else str(date_of_training)
 
-        resolved_faculty_id = faculty_id or UUID("00000000-0000-0000-0000-000000000000")
+        resolved_faculty_id = faculty_id
         sessions_on_date = []
 
         if db is not None:
@@ -43,17 +43,11 @@ class ConflictEngine:
                     TrainingSession.date_of_training < end_of_day,
                     TrainingSession.status.notin_(["Cancelled"])
                 )
-                if faculty_id:
-                    query = query.filter(TrainingSession.faculty_id == faculty_id)
-                elif faculty_name and faculty_name.strip():
-                    query = query.join(User, TrainingSession.faculty_id == User.id).filter(
-                        User.full_name.ilike(faculty_name.strip())
-                    )
+                if faculty_name and faculty_name.strip():
+                    query = query.filter(TrainingSession.faculty_name.ilike(faculty_name.strip()))
                 sessions_on_date = query.all()
                 db_hours = sum((s.no_of_hours for s in sessions_on_date), Decimal("0"))
                 existing_hours = max(existing_hours, db_hours)
-                if sessions_on_date and not faculty_id:
-                    resolved_faculty_id = sessions_on_date[0].faculty_id
             except Exception:
                 pass
 

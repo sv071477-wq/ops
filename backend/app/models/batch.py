@@ -73,7 +73,14 @@ class Batch(Base):
     # Quality Checkpoint Metrics (Gate 1 & Gate 2)
     batch_avg_feedback = Column(Numeric(3, 2), nullable=True)  # Average feedback score (1.0 - 5.0)
     total_feedback_score = Column(Numeric(10, 2), nullable=True)  # Cumulative rating score
-    batch_nps = Column(Numeric(4, 2), nullable=True)  # NPS score (0 - 10)
+    batch_nps = Column(Numeric(6, 2), nullable=True)  # Calculated NPS (-100 to 100)
+    nps_total_responses = Column(Integer, nullable=True)
+    nps_promoters = Column(Integer, nullable=True)
+    nps_passives = Column(Integer, nullable=True)
+    nps_detractors = Column(Integer, nullable=True)
+    nps_imported_at = Column(DateTime(timezone=True), nullable=True)
+    nps_imported_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    nps_source_filename = Column(String(255), nullable=True)
     retrospective_notes = Column(Text, nullable=True)
 
     # Remarks & Notes

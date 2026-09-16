@@ -184,7 +184,16 @@ class BatchResponse(BatchBase):
     batch_avg_feedback: Optional[Decimal] = None
     total_feedback_score: Optional[Decimal] = None
     batch_nps: Optional[Decimal] = None
+    nps_total_responses: Optional[int] = None
+    nps_promoters: Optional[int] = None
+    nps_passives: Optional[int] = None
+    nps_detractors: Optional[int] = None
+    nps_imported_at: Optional[datetime] = None
+    nps_source_filename: Optional[str] = None
     retrospective_notes: Optional[str] = None
+    primary_manager: Optional[UserResponse] = None
+    coordinator: Optional[UserResponse] = None
+    sales_spoc: Optional[UserResponse] = None
     created_at: datetime
     updated_at: datetime
 

@@ -36,6 +36,7 @@ interface ManagerBoardProps {
   onRefresh: () => void;
   onOpenBatchDetail: (batch: Batch) => void;
   onOpenApproval: (batch: Batch) => void;
+  currentUser: User | null;
   onExportMbr: () => void;
   isExportingMbr: boolean;
 }
@@ -61,6 +62,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
   onRefresh,
   onOpenBatchDetail,
   onOpenApproval,
+  currentUser,
   onExportMbr,
   isExportingMbr,
 }) => {
@@ -88,7 +90,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       badgeColor: "#475569",
       borderColor: "#cbd5e1",
       icon: Clock,
-      filterFn: (b) => b.status === "Requested" || b.status === "Draft",
+      filterFn: (b) => b.status === "Requested",
     },
     {
       id: "l1_pending",
@@ -625,7 +627,8 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                               {batch.start_date ? new Date(batch.start_date).toLocaleDateString() : "No date"}
                             </span>
 
-                            {batch.status === "Approval 2 Pending" ? (
+                            {batch.status === "Approval 2 Pending"
+                              && currentUser?.id?.toLowerCase() === batch.approver_2_id?.toLowerCase() ? (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -733,13 +736,13 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
             )}
           </div>
 
-          {/* Supervised Personnel & Reporting Squad */}
+          {/* Supervised Personnel & Reporting Team */}
           <div className="glass-panel" style={{ padding: 22, background: "#ffffff" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <h3 style={{ fontSize: "1.15rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-                    Supervised Personnel & Reporting Squad
+                    Supervised Personnel & Reporting Team
                   </h3>
                   <span style={{
                     fontSize: "0.75rem",
@@ -775,7 +778,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                       <th style={{ padding: "10px 14px" }}>Employee Name</th>
                       <th style={{ padding: "10px 14px" }}>Corporate Email</th>
                       <th style={{ padding: "10px 14px" }}>Assigned Role</th>
-                      <th style={{ padding: "10px 14px" }}>Ops Squad</th>
+                      <th style={{ padding: "10px 14px" }}>Ops Team</th>
                       <th style={{ padding: "10px 14px" }}>Batches Handled</th>
                       <th style={{ padding: "10px 14px" }}>Account Status</th>
                     </tr>

@@ -9,7 +9,7 @@ import {
   X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
   Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
   PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check,
-  Edit3, Send
+  Edit3
 } from "lucide-react";
 
 interface BatchDetailDrawerProps {
@@ -94,23 +94,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     }
   };
 
-  // Submit / Resubmit for Approval
-  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
-  const handleSubmitApproval = async () => {
-    const target = currentBatch || batch;
-    if (!target) return;
-    setIsSubmittingApproval(true);
-    try {
-      const updated = await api.submitBatch(target.id);
-      setCurrentBatch(updated);
-      if (onBatchUpdated) onBatchUpdated();
-    } catch (err: any) {
-      alert(err.message || "Failed to submit batch for approval");
-    } finally {
-      setIsSubmittingApproval(false);
-    }
-  };
-
   // Sessions state
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
@@ -143,6 +126,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [gate2RetroNotes, setGate2RetroNotes] = useState("");
   const [isSubmittingGate2, setIsSubmittingGate2] = useState(false);
   const [gate2Error, setGate2Error] = useState<string | null>(null);
+  const [feedbackFile, setFeedbackFile] = useState<File | null>(null);
+  const [isImportingFeedback, setIsImportingFeedback] = useState(false);
+  const [feedbackImportMessage, setFeedbackImportMessage] = useState<string | null>(null);
 
   // Timetable Ingestion Modal
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
@@ -233,13 +219,18 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const handleCompleteGate1 = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!completingSession) return;
+    const topicFeedback = gate1Feedback.trim();
+    if (topicFeedback.length < 3) {
+      setGate1Error("Topic feedback is required and must contain at least 3 characters.");
+      return;
+    }
     setGate1Error(null);
     setIsSubmittingGate1(true);
 
     try {
       await api.completeSessionGate1(completingSession.id, {
         rating: Number(gate1Rating),
-        topic_feedback: gate1Feedback.trim() || undefined,
+        topic_feedback: topicFeedback,
         total_students_present: Number(gate1StudentsPresent),
       });
 
@@ -248,9 +239,58 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       await loadSessions();
       if (onBatchUpdated) onBatchUpdated();
     } catch (err: any) {
-      setGate1Error(err.message || "Failed to submit Gate 1 feedback");
+      let message = err.message || "Failed to submit Gate 1 feedback";
+      try {
+        const details = JSON.parse(message);
+        const firstError = Array.isArray(details) ? details[0] : details?.errors?.[0];
+        if (firstError?.msg) message = firstError.msg;
+      } catch {
+        // Keep the server message when it is not JSON.
+      }
+      setGate1Error(message);
     } finally {
       setIsSubmittingGate1(false);
+    }
+  };
+
+  const handleEditSession = async (session: TrainingSession) => {
+    const topic = window.prompt("Session topic", session.topic);
+    if (!topic || topic.trim() === session.topic) return;
+    try {
+      await api.updateSession(session.id, { topic: topic.trim() });
+      await loadSessions();
+    } catch (err: any) {
+      alert(err.message || "Failed to edit session");
+    }
+  };
+
+  const handleSessionOutcome = async (session: TrainingSession, action: "cancel" | "not-conducted") => {
+    const reason = window.prompt("Reason is required");
+    if (!reason || reason.trim().length < 3) return;
+    try {
+      if (action === "cancel") {
+        await api.cancelSession(session.id, reason.trim());
+      } else {
+        await api.markSessionNotConducted(session.id, reason.trim());
+      }
+      await loadSessions();
+    } catch (err: any) {
+      alert(err.message || "Failed to update session outcome");
+    }
+  };
+
+  const handleImportFeedback = async () => {
+    if (!feedbackFile) return;
+    setIsImportingFeedback(true);
+    setFeedbackImportMessage(null);
+    try {
+      const result = await api.importBatchFeedback(activeBatch.id, feedbackFile);
+      setFeedbackImportMessage(`Imported ${result.total_responses} responses. Calculated NPS: ${result.nps_score}.`);
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      setFeedbackImportMessage(err.message || "Failed to import final feedback");
+    } finally {
+      setIsImportingFeedback(false);
     }
   };
 
@@ -330,20 +370,20 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setIngestError(null);
 
     try {
-      for (const row of extractedRows) {
-        await api.createSession({
-          batch_id: batch.id,
-          date_of_training: row.date_of_training,
+      await api.applySchedule(
+        extractedRows.map((row) => ({
+          ...row,
           start_time: row.start_time || "09:00",
           end_time: row.end_time || "17:00",
-          topic: row.topic,
           faculty_name: row.faculty_name || batch.faculty_assigned_text || undefined,
-          no_of_hours: row.no_of_hours,
           venue: row.venue || batch.location_city || undefined,
           location_city: row.location_city || batch.location_city || undefined,
           mode_of_delivery: row.mode_of_delivery || batch.delivery_mode,
-        });
-      }
+          batch_id: batch.batch_id,
+        })),
+        batch.batch_id,
+        ingestFile?.name,
+      );
 
       setIsIngestModalOpen(false);
       setExtractedRows([]);
@@ -528,7 +568,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     {activeBatch.comments}
                   </div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
-                    Make the requested adjustments via &ldquo;Edit Batch&rdquo; and click &ldquo;Resubmit for Approval&rdquo; in the footer.
+                    Make the requested adjustments via &ldquo;Edit Batch&rdquo;. New batches are sent to approval automatically after creation.
                   </div>
                 </div>
               )}
@@ -748,12 +788,25 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                             <span>•</span>
                             <span>⏱️ {s.start_time || "09:00"} - {s.end_time || "17:00"} ({s.no_of_hours} hrs)</span>
                             <span>•</span>
-                            <span>👨‍🏫 {s.faculty?.full_name || "Assigned Faculty"}</span>
+                            <span>👨‍🏫 {s.faculty_name || "Assigned Faculty"}</span>
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {!(["Completed", "Cancelled", "Not Conducted"].includes(s.status)) && (
+                          <>
+                            <button onClick={() => handleEditSession(s)} className="btn btn-secondary" style={{ padding: "5px 8px", fontSize: "0.72rem" }}>
+                              Edit
+                            </button>
+                            <button onClick={() => handleSessionOutcome(s, "not-conducted")} className="btn btn-secondary" style={{ padding: "5px 8px", fontSize: "0.72rem" }}>
+                              Not conducted
+                            </button>
+                            <button onClick={() => handleSessionOutcome(s, "cancel")} className="btn btn-secondary" style={{ padding: "5px 8px", fontSize: "0.72rem" }}>
+                              Cancel
+                            </button>
+                          </>
+                        )}
                         {s.status === "Completed" ? (
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{
@@ -874,8 +927,18 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </h4>
                 </div>
                 <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "0 0 14px 0" }}>
-                  Mandatory closure governance. Batches cannot be marked Completed without an official Net Promoter Score (0-10) and retrospective delivery notes.
+                  Import the final feedback workbook first. The system calculates NPS from promoters, passive responses, and detractors before closure.
                 </p>
+
+                {batch.status !== "Completed" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                    <input type="file" accept=".xlsx,.xls,.csv" onChange={(event) => setFeedbackFile(event.target.files?.[0] || null)} />
+                    <button onClick={handleImportFeedback} disabled={!feedbackFile || isImportingFeedback} className="btn btn-secondary">
+                      {isImportingFeedback ? "Importing..." : "Import final feedback"}
+                    </button>
+                    {feedbackImportMessage && <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{feedbackImportMessage}</span>}
+                  </div>
+                )}
 
                 {batch.status === "Completed" ? (
                   <div style={{
@@ -892,7 +955,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       <div>
                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Final Batch NPS</div>
                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#16a34a" }}>
-                          {batch.batch_nps} / 10
+                          {batch.batch_nps}
                         </div>
                       </div>
                       {batch.retrospective_notes && (
@@ -948,25 +1011,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               <Edit3 size={15} />
               <span>Edit Batch</span>
             </button>
-
-            {/* Submit or Resubmit for Approval (When in Requested state) */}
-            {activeBatch.status === "Requested" && (
-              <button
-                onClick={handleSubmitApproval}
-                disabled={isSubmittingApproval}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <Send size={15} />
-                <span>
-                  {isSubmittingApproval
-                    ? "Submitting..."
-                    : activeBatch.comments
-                    ? "Resubmit for Approval"
-                    : "Submit for Approval"}
-                </span>
-              </button>
-            )}
 
             {canApprove && ["Requested", "Approval 1 Pending", "Approval 2 Pending"].includes(activeBatch.status) && onOpenApprove && (
               <button
@@ -1204,7 +1248,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Topic Feedback / Notes
+                  Topic Feedback / Notes *
                 </label>
                 <textarea
                   value={gate1Feedback}
@@ -1212,14 +1256,18 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   placeholder="Student comprehension, lab completion notes..."
                   className="glass-input"
                   style={{ width: "100%", minHeight: 70, resize: "vertical" }}
+                  required
                 />
+                <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
+                  Add at least 3 characters before completing the session.
+                </span>
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
                 <button type="button" onClick={() => setCompletingSession(null)} className="btn btn-secondary" style={{ padding: "8px 14px" }}>
                   Cancel
                 </button>
-                <button type="submit" disabled={isSubmittingGate1} className="btn btn-primary" style={{ padding: "8px 14px" }}>
+                <button type="submit" disabled={isSubmittingGate1 || gate1Feedback.trim().length < 3} className="btn btn-primary" style={{ padding: "8px 14px" }}>
                   {isSubmittingGate1 ? "Completing..." : "Submit Gate 1 & Complete"}
                 </button>
               </div>

@@ -1081,7 +1081,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 <Info size={18} color="var(--primary)" style={{ flexShrink: 0, marginTop: 2 }} />
                 <div style={{ fontSize: "0.825rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
                   <strong style={{ color: "var(--primary)" }}>Two-Level Approval & Schedule Readiness:</strong>
-                  {" "}Submitting places this batch into <strong style={{ color: "var(--amber)" }}>Requested</strong> status and assigns configured Approver 1 & Approver 2. Once submitted, timetable schedules can be ingested and faculty utilization tracked. If rejected, the batch remains editable and can be resubmitted.
+                  {" "}Creating this batch immediately sends it to <strong style={{ color: "var(--amber)" }}>Approval 1 Pending</strong> and assigns the configured Approver 1 and Approver 2. If rejected, the batch remains editable for correction.
                 </div>
               </div>
             </div>

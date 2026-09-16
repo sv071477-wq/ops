@@ -9,6 +9,7 @@ interface ApproveBatchModalProps {
   isOpen: boolean;
   onClose: () => void;
   onBatchApproved: () => void;
+  canApprove: boolean;
 }
 
 export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
@@ -16,14 +17,14 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
   isOpen,
   onClose,
   onBatchApproved,
+  canApprove,
 }) => {
   const [decision, setDecision] = useState<"approve" | "reject">("approve");
   const [rejectReason, setRejectReason] = useState("");
-  const [approvalId, setApprovalId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!isOpen || !batch) return null;
+  if (!isOpen || !batch || !canApprove) return null;
 
   const currentLevel = batch.approver_1_status === "Approved" ? 2 : 1;
 
@@ -36,13 +37,7 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
       if (decision === "reject") {
         await api.decideBatch(batch.id, currentLevel, "reject", rejectReason.trim() || undefined);
       } else {
-        // Two-level approval decision
-        await api.decideBatch(batch.id, currentLevel, "approve", approvalId.trim() || undefined);
-
-        // Only assign final SOW approval id upon completing Level 2 approval
-        if (currentLevel === 2 && approvalId.trim()) {
-          await api.approveBatch(batch.id, approvalId.trim());
-        }
+        await api.decideBatch(batch.id, currentLevel, "approve");
       }
 
       onBatchApproved();
@@ -134,6 +129,41 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
 
           <div style={{
             display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 10,
+            marginBottom: 16,
+            padding: "14px 16px",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: 8,
+            fontSize: "0.8rem",
+          }}>
+            {[
+              ["Program", batch.program_name],
+              ["Client", batch.client_name || "Enterprise Client"],
+              ["Technology", batch.technology || "Not specified"],
+              ["Category", batch.category || "Not specified"],
+              ["Delivery mode", batch.delivery_mode || "Not specified"],
+              ["Location", batch.location_city || "Remote"],
+              ["Start date", batch.start_date ? new Date(batch.start_date).toLocaleDateString() : "Not set"],
+              ["End date", batch.end_date ? new Date(batch.end_date).toLocaleDateString() : "Not set"],
+              ["Training days", String(batch.training_days ?? 0)],
+              ["Total hours", String(batch.total_hours ?? 0)],
+              ["Enrollments", String(batch.total_enrollments ?? 0)],
+              ["Faculty", batch.faculty_assigned_text || "Not assigned"],
+              ["Sales SPOC", batch.sales_spoc?.full_name || "Not assigned"],
+              ["Manager SPOC", batch.primary_manager?.full_name || "Not assigned"],
+              ["Coordinator", batch.coordinator?.full_name || "Not assigned"],
+              ["Batch status", batch.status],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <div style={{ color: "var(--text-dim)", fontSize: "0.7rem", textTransform: "uppercase", fontWeight: 700 }}>{label}</div>
+                <div style={{ color: "var(--text-main)", fontWeight: 600, marginTop: 2 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{
+            display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: 12,
             marginBottom: 18,
@@ -216,24 +246,7 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
                 required
               />
             </div>
-          ) : (
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                SOW Financial Approval ID (Optional)
-              </label>
-              <input
-                type="text"
-                value={approvalId}
-                onChange={(e) => setApprovalId(e.target.value)}
-                placeholder="e.g. SOW-2026-FIN-009"
-                className="glass-input"
-                style={{ width: "100%" }}
-              />
-              <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
-                Leaves SOW locked and ready for Workflow 2 (Schedule Addition).
-              </span>
-            </div>
-          )}
+          ) : null}
 
           {/* Actions */}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 20 }}>

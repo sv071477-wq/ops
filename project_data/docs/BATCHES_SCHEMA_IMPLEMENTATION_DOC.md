@@ -71,7 +71,7 @@ Below is the exhaustive mapping of all active columns from the operational Excel
 | **20** | `Status` / `Program Status`| `status` | `VARCHAR(50)` | `String(50)` | `str` | No | `'Requested'` | Lifecycle state machine status. | `Requested`, `Approved`, `Ongoing`, `Completed` |
 | **21** | `Batch Avg Feedback*` | `batch_avg_feedback`| `NUMERIC(3, 2)`| `Numeric(3, 2)` | `Optional[Decimal]` | Yes | `None` | Aggregated student feedback score (1.00 - 5.00). | `4.46`, `4.82` |
 | **22** | `Total Feedback` | `total_feedback_score`| `NUMERIC(10, 2)`| `Numeric(10, 2)` | `Optional[Decimal]` | Yes | `None` | Cumulative feedback rating points across all responses. | `7092.80`, `1320.10` |
-| **23** | `Batch NPS*` | `batch_nps` | `NUMERIC(4, 2)`| `Numeric(4, 2)` | `Optional[Decimal]` | Yes | `None` | Net Promoter Score (Scale: 0.00 to 10.00 or -100 to 100). | `8.50`, `9.20` |
+| **23** | `Batch NPS*` | `batch_nps` | `NUMERIC(5, 2)`| `Numeric(5, 2)` | `Optional[Decimal]` | Yes | `None` | Net Promoter Score (Scale: 0.00 to 10.00 or -100 to 100). | `8.50`, `9.20` |
 | **24** | `Program Manager` | `primary_manager_id`| `UUID` | `UUID(as_uuid=True)` | `Optional[UUID]` | Yes | `None` | FK referencing `users.id` (Delivery Manager). | `uuid4` |
 | **25** | `Coordinator` | `coordinator_id` | `UUID` | `UUID(as_uuid=True)` | `Optional[UUID]` | Yes | `None` | FK referencing `users.id` (Operations Coordinator). | `uuid4` |
 | **26** | `Sales SPOC` | `sales_spoc_id` | `UUID` | `UUID(as_uuid=True)` | `Optional[UUID]` | Yes | `None` | FK referencing `users.id` (Enterprise Sales SPOC). | `uuid4` |
@@ -193,7 +193,7 @@ class Batch(Base):
     # Quality Checkpoint Metrics (Gate 1 & Gate 2)
     batch_avg_feedback = Column(Numeric(3, 2), nullable=True)  # 1.00 - 5.00
     total_feedback_score = Column(Numeric(10, 2), nullable=True)  # Cumulative rating score
-    batch_nps = Column(Numeric(4, 2), nullable=True)  # NPS Score (0-10 or -100 to 100)
+    batch_nps = Column(Numeric(5, 2), nullable=True)  # NPS Score (0-10 or -100 to 100)
     retrospective_notes = Column(Text, nullable=True)
 
     # Remarks & Notes
@@ -398,7 +398,7 @@ def upgrade():
         sa.Column('finance_status', sa.String(length=50), nullable=False, server_default='Pending'),
         sa.Column('batch_avg_feedback', sa.Numeric(precision=3, scale=2), nullable=True),
         sa.Column('total_feedback_score', sa.Numeric(precision=10, scale=2), nullable=True),
-        sa.Column('batch_nps', sa.Numeric(precision=4, scale=2), nullable=True),
+        sa.Column('batch_nps', sa.Numeric(precision=5, scale=2), nullable=True),
         sa.Column('retrospective_notes', sa.Text(), nullable=True),
         sa.Column('remarks', sa.Text(), nullable=True),
         sa.Column('comments', sa.Text(), nullable=True),

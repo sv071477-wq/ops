@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
@@ -15,7 +15,7 @@ from app.schemas.batch import (
     BatchResponse,
     BatchDetailResponse,
 )
-from app.schemas.feedback import BatchNpsClosureCreate
+from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
 from app.api.deps import (
     get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 )
@@ -45,7 +45,7 @@ def update_approval_config(
 
 
 @router.post("", response_model=BatchResponse, status_code=status.HTTP_201_CREATED)
-def create_batch(
+async def create_batch(
     batch_in: BatchCreate,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
@@ -62,7 +62,9 @@ def create_batch(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Delivery team members can create batches."
         )
-    return service.create(batch_in, current_user)
+    batch = service.create(batch_in, current_user)
+    await NotificationService.notify_approval_requested(batch)
+    return batch
 
 
 @router.post("/{id}/submit", response_model=BatchResponse)
@@ -71,7 +73,7 @@ async def submit_batch(
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
-    batch = service.submit_for_approval(id)
+    batch = service.submit_for_approval(id, current_user)
     await NotificationService.notify_approval_requested(batch)
     return batch
 
@@ -173,7 +175,7 @@ async def close_batch_gate2(
     Quality Gate 2 Checkpoint:
     Mandatory Batch NPS Score (0-10) and retrospective submission to close batch.
     """
-    closed_batch = service.close_gate2(id, closure_in, current_user.id)
+    closed_batch = service.close_gate2(id, closure_in, current_user.id, current_user)
 
     try:
         await NotificationService.notify_gate_completion(
@@ -185,3 +187,23 @@ async def close_batch_gate2(
         pass
 
     return closed_batch
+
+
+@router.post("/{id}/feedback-import", response_model=BatchFeedbackImportResponse)
+async def import_batch_feedback(
+    id: UUID,
+    file: UploadFile = File(...),
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> BatchFeedbackImportResponse:
+    """Import and calculate the authoritative final NPS breakdown for a batch."""
+    filename = file.filename or "feedback.xlsx"
+    if not filename.lower().endswith((".xlsx", ".xls", ".csv")):
+        raise HTTPException(status_code=400, detail="File must be an Excel (.xlsx, .xls) or CSV spreadsheet")
+    return service.import_feedback_workbook(
+        batch_id=id,
+        file_contents=await file.read(),
+        filename=filename,
+        user_id=current_user.id,
+        current_user=current_user,
+    )

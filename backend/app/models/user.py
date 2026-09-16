@@ -69,7 +69,6 @@ class User(Base):
     primary_managed_batches = relationship("Batch", foreign_keys="Batch.primary_manager_id", back_populates="primary_manager")
     coordinated_batches = relationship("Batch", foreign_keys="Batch.coordinator_id", back_populates="coordinator")
     sales_batches = relationship("Batch", foreign_keys="Batch.sales_spoc_id", back_populates="sales_spoc")
-    training_sessions = relationship("TrainingSession", foreign_keys="TrainingSession.faculty_id", back_populates="faculty")
 
 
 class UserManagerMapping(Base):

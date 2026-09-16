@@ -13,8 +13,7 @@ class SessionBase(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     topic: str
-    faculty_id: Optional[UUID] = None
-    faculty_name: Optional[str] = None
+    faculty_name: str
     no_of_hours: Decimal = Field(default=Decimal("8.0"), gt=Decimal("0.0"), le=Decimal("24.0"))
     venue: Optional[str] = None
     location_city: Optional[str] = None
@@ -47,13 +46,11 @@ class SessionUpdate(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     topic: Optional[str] = None
-    faculty_id: Optional[UUID] = None
     faculty_name: Optional[str] = None
     no_of_hours: Optional[Decimal] = None
     venue: Optional[str] = None
     location_city: Optional[str] = None
     mode_of_delivery: Optional[str] = None
-    status: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -70,16 +67,29 @@ class SessionUpdate(BaseModel):
         return data
 
 
+class SessionOutcomeRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=2000)
+
+
+class SessionRescheduleRequest(SessionOutcomeRequest):
+    date_of_training: datetime
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+
+
 class SessionResponse(SessionBase):
     id: UUID
     feedback_submitted: bool
+    outcome_reason: Optional[str] = None
+    outcome_at: Optional[datetime] = None
+    outcome_by: Optional[UUID] = None
+    replacement_session_id: Optional[UUID] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class SessionDetailResponse(SessionResponse):
-    faculty: Optional[UserResponse] = None
     feedback: Optional[SessionFeedbackResponse] = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -279,8 +279,10 @@ export default function DashboardPage() {
 
   const approvalQueue = useMemo(
     () => batches.filter((b) => (
-      (b.status === "Approval 1 Pending" && b.approver_1_id === user?.id)
-      || (b.status === "Approval 2 Pending" && b.approver_2_id === user?.id)
+      user?.id && (
+        (b.status === "Approval 1 Pending" && b.approver_1_id?.toLowerCase() === user.id.toLowerCase())
+        || (b.status === "Approval 2 Pending" && b.approver_2_id?.toLowerCase() === user.id.toLowerCase())
+      )
     )),
     [batches, user?.id]
   );
@@ -393,7 +395,6 @@ export default function DashboardPage() {
   const isApprover = user?.is_configured_approver === true;
   const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance";
   const canCreateBatch = user?.role?.toLowerCase() !== "admin" && user?.team_name?.trim().toLowerCase() === "delivery";
-  const canApprove = user?.is_configured_approver === true;
 
   useEffect(() => {
     if (!isFinanceViewAvailable && activeView === "finance") {
@@ -733,7 +734,7 @@ export default function DashboardPage() {
                 Department Assignment
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <span style={{ color: "#3c5474", fontWeight: 600 }}>Squad:</span>
+                <span style={{ color: "#3c5474", fontWeight: 600 }}>Team:</span>
                 <strong style={{ color: "#1f2f45", fontSize: "0.82rem" }}>{user.team_name || "Delivery"}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -766,6 +767,7 @@ export default function DashboardPage() {
             }}
             onOpenBatchDetail={(batch) => setSelectedBatchForDetail(batch)}
             onOpenApproval={(batch) => setSelectedBatchForApproval(batch)}
+            currentUser={user}
             onExportMbr={handleExportMbr}
             isExportingMbr={isExportingMbr}
           />
@@ -1458,7 +1460,7 @@ export default function DashboardPage() {
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                          Supervised Personnel & Reporting Squad
+                          Supervised Personnel & Reporting Team
                         </h3>
                         <span style={{
                           fontSize: "0.75rem",
@@ -1494,7 +1496,7 @@ export default function DashboardPage() {
                             <th style={{ padding: "10px 14px" }}>Employee Name</th>
                             <th style={{ padding: "10px 14px" }}>Corporate Email</th>
                             <th style={{ padding: "10px 14px" }}>Assigned Role</th>
-                            <th style={{ padding: "10px 14px" }}>Ops Squad</th>
+                            <th style={{ padding: "10px 14px" }}>Ops Team</th>
                             <th style={{ padding: "10px 14px" }}>Account Status</th>
                           </tr>
                         </thead>
@@ -1697,6 +1699,7 @@ export default function DashboardPage() {
         isOpen={!!selectedBatchForApproval}
         onClose={() => setSelectedBatchForApproval(null)}
         onBatchApproved={() => fetchBatches()}
+        canApprove={!!selectedBatchForApproval && approvalQueue.some((batch) => batch.id === selectedBatchForApproval.id)}
       />
 
       <BatchDetailDrawer
@@ -1704,7 +1707,7 @@ export default function DashboardPage() {
         isOpen={!!selectedBatchForDetail}
         onClose={() => setSelectedBatchForDetail(null)}
         onOpenApprove={(b) => setSelectedBatchForApproval(b)}
-        canApprove={canApprove}
+        canApprove={!!selectedBatchForDetail && approvalQueue.some((batch) => batch.id === selectedBatchForDetail.id)}
         onBatchUpdated={() => fetchBatches()}
       />
     </div>

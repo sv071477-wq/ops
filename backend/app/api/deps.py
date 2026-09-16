@@ -110,25 +110,12 @@ def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:
 
 
 def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
-    """Return the user's manager scope, including siblings and multiple manager assignments."""
+    """Return operational ownership scope: managers see their reports; coordinators see only themselves."""
+    if (user.role or "").lower() != "manager":
+        return [user.id]
+
     scope_ids: Set[UUID] = {user.id}
-    manager_ids: Set[UUID] = set()
-
-    if user.manager_id:
-        manager_ids.add(user.manager_id)
-
-    mapped_manager_ids = db.query(UserManagerMapping.manager_id).filter(
-        UserManagerMapping.coordinator_id == user.id
-    ).all()
-    manager_ids.update(manager_id for (manager_id,) in mapped_manager_ids)
-
-    if (user.role or "").lower() == "manager":
-        manager_ids.add(user.id)
-
-    for manager_id in manager_ids:
-        scope_ids.add(manager_id)
-        scope_ids.update(get_all_subordinate_ids(manager_id, db))
-
+    scope_ids.update(get_all_subordinate_ids(user.id, db))
     return list(scope_ids)
 
 

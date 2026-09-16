@@ -111,3 +111,17 @@ class ScheduleIngestResponse(BaseModel):
             elif not data.get("items") and data.get("extracted_schedule"):
                 data["items"] = data["extracted_schedule"]
         return data
+
+
+class ScheduleApplyRequest(BaseModel):
+    target_batch_id: str
+    source_filename: Optional[str] = None
+    items: List[ExtractedScheduleItem]
+
+
+class ScheduleApplyResponse(BaseModel):
+    success: bool
+    target_batch_id: str
+    source_filename: Optional[str] = None
+    applied_rows: int = 0
+    session_ids: List[UUID] = []

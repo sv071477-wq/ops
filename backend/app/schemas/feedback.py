@@ -28,7 +28,7 @@ class SessionFeedbackResponse(BaseModel):
 
 class BatchNpsClosureCreate(BaseModel):
     """Payload required for Quality Gate 2"""
-    nps_score: Decimal = Field(..., ge=Decimal("0.0"), le=Decimal("10.0"), description="NPS Score from 0 to 10")
+    nps_score: Optional[Decimal] = Field(None, ge=Decimal("-100.0"), le=Decimal("100.0"), description="Calculated NPS, supplied only for display")
     total_responses: int = Field(default=0, ge=0)
     promoters_count: int = Field(default=0, ge=0)
     passive_count: int = Field(default=0, ge=0)
@@ -36,6 +36,17 @@ class BatchNpsClosureCreate(BaseModel):
     average_feedback_score: Optional[Decimal] = Field(None, ge=Decimal("1.0"), le=Decimal("5.0"))
     retrospective_notes: str = Field(..., min_length=5, description="Mandatory batch retrospective summary")
     client_feedback: Optional[str] = None
+
+
+class BatchFeedbackImportResponse(BaseModel):
+    batch_id: UUID
+    source_filename: str
+    total_responses: int
+    promoters_count: int
+    passive_count: int
+    detractors_count: int
+    nps_score: Decimal
+    average_feedback_score: Optional[Decimal] = None
 
 
 class BatchNpsClosureResponse(BaseModel):

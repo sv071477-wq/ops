@@ -187,6 +187,8 @@ def parse_and_normalize_2026_batches(excel_path: str) -> list[dict]:
             "non_residential_enrollments": non_resi_enr,
             "status": status,
             "is_schema_locked": status in ("Approved", "Ongoing", "Completed"),
+            "approver_1_status": "Pending",
+            "approver_2_status": "Pending",
             "faculty_assigned_text": clean_str(row.get("Faculty assigned")),
             "finance_status": clean_str(row.get("Finance Status Check")) or "Pending",
             "batch_avg_feedback": avg_feedback,
@@ -217,6 +219,21 @@ def upgrade() -> None:
 
     all_2026_records = parse_and_normalize_2026_batches(excel_path)
     print(f"[ALEMBIC] Found {len(all_2026_records)} records with year 2026 in sheet 'Enrollment'.")
+
+    # Existing databases may have narrower legacy precision for these metrics.
+    # Widen them before importing cumulative feedback and percentage NPS values.
+    op.alter_column(
+        "batches",
+        "total_feedback_score",
+        existing_type=sa.Numeric(4, 2),
+        type_=sa.Numeric(10, 2),
+    )
+    op.alter_column(
+        "batches",
+        "batch_nps",
+        existing_type=sa.Numeric(4, 2),
+        type_=sa.Numeric(5, 2),
+    )
 
     # Fetch existing batch IDs to ensure idempotency
     existing_result = connection.execute(sa.text("SELECT batch_id FROM batches")).fetchall()
@@ -250,6 +267,8 @@ def upgrade() -> None:
             sa.column("non_residential_enrollments", sa.Integer),
             sa.column("status", sa.String),
             sa.column("is_schema_locked", sa.Boolean),
+            sa.column("approver_1_status", sa.String),
+            sa.column("approver_2_status", sa.String),
             sa.column("faculty_assigned_text", sa.String),
             sa.column("finance_status", sa.String),
             sa.column("batch_avg_feedback", sa.Numeric),
