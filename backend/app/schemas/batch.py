@@ -11,7 +11,6 @@ class BatchBase(BaseModel):
     sow_number: Optional[str] = Field(None, max_length=100, description="Client-side SOW number")
     approval_id: Optional[str] = Field(None, max_length=100, description="Financial SOW Approval ID")
     category: str = Field("Bootcamp", description="Bootcamp, RBT, PJP, Workshop")
-    residential_type: str = Field("NR", description="R, NR")
     entity_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     delivery_mode_id: Optional[UUID] = None
@@ -20,7 +19,6 @@ class BatchBase(BaseModel):
     technology: Optional[str] = Field(None, max_length=255)
     domain: Optional[str] = Field(None, max_length=100)
     client_name: Optional[str] = Field(None, max_length=255)
-    delivery_mode: str = Field("Online", description="Online, F2F, Blended")
     location_city: Optional[str] = Field(None, max_length=100)
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -29,8 +27,6 @@ class BatchBase(BaseModel):
     calendar_days: Optional[int] = Field(0, ge=0)
     total_hours: Decimal = Field(Decimal("0.00"), ge=Decimal("0.00"))
     total_enrollments: int = Field(0, ge=0)
-    residential_enrollments: int = Field(0, ge=0)
-    non_residential_enrollments: int = Field(0, ge=0)
     status: str = Field("Requested", description="Requested, Approved, Upcoming, Ongoing, Completed, Cancelled, OnHold")
     primary_manager_id: Optional[UUID] = None
     coordinator_id: Optional[UUID] = None
@@ -40,7 +36,6 @@ class BatchBase(BaseModel):
     finance_status_check_date: Optional[date] = None
     finance_check: Optional[int] = None
     remarks: Optional[str] = None
-    comments: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -62,12 +57,6 @@ class BatchBase(BaseModel):
     def validate_dates(self):
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
-
-        mode = (self.delivery_mode or "").strip().lower()
-        if mode == "online":
-            self.location_city = None
-        elif mode in {"f2f", "blended"} and not self.location_city:
-            raise ValueError("location_city is required when delivery_mode is F2F or Blended")
 
         return self
 
@@ -111,7 +100,6 @@ class BatchUpdate(BaseModel):
     sow_number: Optional[str] = None
     approval_id: Optional[str] = None
     category: Optional[str] = None
-    residential_type: Optional[str] = None
     entity_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     delivery_mode_id: Optional[UUID] = None
@@ -120,7 +108,6 @@ class BatchUpdate(BaseModel):
     technology: Optional[str] = None
     domain: Optional[str] = None
     client_name: Optional[str] = None
-    delivery_mode: Optional[str] = None
     location_city: Optional[str] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -129,8 +116,6 @@ class BatchUpdate(BaseModel):
     calendar_days: Optional[int] = None
     total_hours: Optional[Decimal] = None
     total_enrollments: Optional[int] = None
-    residential_enrollments: Optional[int] = None
-    non_residential_enrollments: Optional[int] = None
     status: Optional[str] = None
     primary_manager_id: Optional[UUID] = None
     coordinator_id: Optional[UUID] = None
@@ -140,7 +125,6 @@ class BatchUpdate(BaseModel):
     finance_status_check_date: Optional[date] = None
     finance_check: Optional[int] = None
     remarks: Optional[str] = None
-    comments: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -163,12 +147,6 @@ class BatchUpdate(BaseModel):
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
 
-        mode = (self.delivery_mode or "").strip().lower()
-        if mode == "online":
-            self.location_city = None
-        elif mode in {"f2f", "blended"} and not self.location_city:
-            raise ValueError("location_city is required when delivery_mode is F2F or Blended")
-
         return self
 
 
@@ -182,15 +160,11 @@ class BatchResponse(BatchBase):
     approver_1_approved_at: Optional[datetime] = None
     approver_2_approved_at: Optional[datetime] = None
     batch_avg_feedback: Optional[Decimal] = None
-    total_feedback_score: Optional[Decimal] = None
     batch_nps: Optional[Decimal] = None
     nps_total_responses: Optional[int] = None
     nps_promoters: Optional[int] = None
     nps_passives: Optional[int] = None
     nps_detractors: Optional[int] = None
-    nps_imported_at: Optional[datetime] = None
-    nps_source_filename: Optional[str] = None
-    retrospective_notes: Optional[str] = None
     primary_manager: Optional[UserResponse] = None
     coordinator: Optional[UserResponse] = None
     sales_spoc: Optional[UserResponse] = None

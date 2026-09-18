@@ -36,7 +36,8 @@ class BatchService:
         batch_data["calendar_days"] = self._calendar_days(batch_data.get("start_date"), batch_data.get("end_date"))
         batch_data["category_id"] = self._option_id(BatchCategory, batch_data.get("category_id"), batch_data.get("category", "Bootcamp"))
         batch_data["delivery_mode_id"] = self._option_id(DeliveryMode, batch_data.get("delivery_mode_id"), batch_data.get("delivery_mode", "Online"))
-        batch_data["accommodation_id"] = self._option_id(Accommodation, batch_data.get("accommodation_id"), batch_data.get("residential_type", "NR"))
+        if batch_data.get("accommodation_id"):
+            batch_data["accommodation_id"] = self._option_id(Accommodation, batch_data["accommodation_id"], "")
         batch_data["entity_id"] = self._option_id(Entity, batch_data.get("entity_id"), "Default")
         batch_data["batch_request_date"] = datetime.now(timezone.utc)
         config = self.db.query(ApprovalConfiguration).first()
@@ -135,7 +136,7 @@ class BatchService:
                 batch.approver_2_status = "Rejected"
             batch.status = "Requested"
             if decision.reason:
-                batch.comments = f"Approval {level} rejected: {decision.reason}"
+                batch.remarks = f"Approval {level} rejected: {decision.reason}"
         elif level == 1:
             batch.approver_1_status = "Approved"
             batch.approver_1_approved_at = datetime.now(timezone.utc)
@@ -377,9 +378,6 @@ class BatchService:
         batch.batch_nps = nps_score
         if average_feedback is not None:
             batch.batch_avg_feedback = average_feedback
-        batch.nps_imported_at = datetime.now(timezone.utc)
-        batch.nps_imported_by = user_id
-        batch.nps_source_filename = filename
         batch.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         return BatchFeedbackImportResponse(

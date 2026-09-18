@@ -337,10 +337,19 @@ export interface ExtractedScheduleRow {
 }
 
 export interface ScheduleIngestResponse {
+  success?: boolean;
+  message?: string;
+  filename?: string;
   batch_id?: string | null;
-  source_filename: string;
-  total_rows_parsed: number;
-  extracted_schedule: ExtractedScheduleRow[];
+  source_filename?: string | null;
+  sheets_processed?: string[];
+  total_rows?: number;
+  total_rows_parsed?: number;
+  extracted_rows?: number;
+  failed_rows?: number;
+  items?: ExtractedScheduleRow[];
+  extracted_schedule?: ExtractedScheduleRow[];
+  errors?: Array<{ source_sheet: string; source_row: number; message: string }>;
 }
 
 export interface ScheduleApplyResponse {

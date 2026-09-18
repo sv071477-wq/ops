@@ -22,7 +22,6 @@ class Batch(Base):
 
     # Program & Category Classification
     category = Column(String(100), nullable=False, default="Bootcamp")  # Bootcamp, RBT, PJP, Workshop
-    residential_type = Column(String(20), nullable=False, default="NR")  # R, NR
     entity_id = Column(Uuid(as_uuid=True), ForeignKey("entities.id", ondelete="RESTRICT"), nullable=True, index=True)
     category_id = Column(Uuid(as_uuid=True), ForeignKey("batch_categories.id", ondelete="RESTRICT"), nullable=True, index=True)
     delivery_mode_id = Column(Uuid(as_uuid=True), ForeignKey("delivery_modes.id", ondelete="RESTRICT"), nullable=True, index=True)
@@ -35,7 +34,6 @@ class Batch(Base):
     client_name = Column(String(255), nullable=True, index=True)
 
     # Delivery Logistics & Timeline
-    delivery_mode = Column(String(50), nullable=False, default="Online")  # Online, F2F, Blended
     location_city = Column(String(100), nullable=True)  # Bengaluru, Hyderabad, Mumbai, Remote
     start_date = Column(DateTime(timezone=True), nullable=True, index=True)
     end_date = Column(DateTime(timezone=True), nullable=True, index=True)
@@ -46,8 +44,6 @@ class Batch(Base):
 
     # Student Headcount Breakdown
     total_enrollments = Column(Integer, default=0, nullable=False)
-    residential_enrollments = Column(Integer, default=0, nullable=False)
-    non_residential_enrollments = Column(Integer, default=0, nullable=False)
 
     # Lifecycle State & Governance Lock
     status = Column(String(50), default="Requested", nullable=False, index=True)
@@ -72,20 +68,14 @@ class Batch(Base):
 
     # Quality Checkpoint Metrics (Gate 1 & Gate 2)
     batch_avg_feedback = Column(Numeric(3, 2), nullable=True)  # Average feedback score (1.0 - 5.0)
-    total_feedback_score = Column(Numeric(10, 2), nullable=True)  # Cumulative rating score
     batch_nps = Column(Numeric(6, 2), nullable=True)  # Calculated NPS (-100 to 100)
     nps_total_responses = Column(Integer, nullable=True)
     nps_promoters = Column(Integer, nullable=True)
     nps_passives = Column(Integer, nullable=True)
     nps_detractors = Column(Integer, nullable=True)
-    nps_imported_at = Column(DateTime(timezone=True), nullable=True)
-    nps_imported_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    nps_source_filename = Column(String(255), nullable=True)
-    retrospective_notes = Column(Text, nullable=True)
 
     # Remarks & Notes
     remarks = Column(Text, nullable=True)
-    comments = Column(Text, nullable=True)
 
     # Audit Timestamps (UTC)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -100,6 +90,7 @@ class Batch(Base):
     primary_manager = relationship("User", foreign_keys=[primary_manager_id], back_populates="primary_managed_batches")
     coordinator = relationship("User", foreign_keys=[coordinator_id], back_populates="coordinated_batches")
     sales_spoc = relationship("User", foreign_keys=[sales_spoc_id], back_populates="sales_batches")
+    delivery_mode_detail = relationship("DeliveryMode", foreign_keys=[delivery_mode_id])
     sessions = relationship("TrainingSession", back_populates="batch", cascade="all, delete-orphan")
 
 

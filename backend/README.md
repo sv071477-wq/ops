@@ -85,12 +85,28 @@ Remove-Item Env:ADMIN_PASSWORD
 
 The script also accepts `ADMIN_EMAIL` and `ADMIN_FULL_NAME` environment variables.
 
+## Populate default users
+
+The default-user seed creates the Ravish manager hierarchy, assigns the Delivery
+and Finance teams, and is safe to run again. Existing users keep their current
+passwords. Set a temporary password for newly created users through the
+environment:
+
+```powershell
+$env:DEFAULT_USER_PASSWORD = "use-a-secure-temporary-password"
+docker compose exec -e DEFAULT_USER_PASSWORD=$env:DEFAULT_USER_PASSWORD backend python scripts/seed_default_users.py
+Remove-Item Env:DEFAULT_USER_PASSWORD
+```
+
 ## Recommended initialization order
 
 ```powershell
 docker compose up -d db backend
 docker compose exec backend alembic upgrade head
 docker compose exec backend python scripts/seed_teams.py
+$env:DEFAULT_USER_PASSWORD = "use-a-secure-temporary-password"
+docker compose exec -e DEFAULT_USER_PASSWORD=$env:DEFAULT_USER_PASSWORD backend python scripts/seed_default_users.py
+Remove-Item Env:DEFAULT_USER_PASSWORD
 docker compose exec backend python scripts/create_admin.py --email admin@enterprise-ops.com
 ```
 

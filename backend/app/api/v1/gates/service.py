@@ -67,7 +67,6 @@ class GatekeeperService:
                 batch = db.query(Batch).filter(Batch.id == session_obj.batch_id).first()
                 if batch:
                     batch.batch_avg_feedback = Decimal(str(avg))
-                    batch.total_feedback_score = Decimal(str(total))
                     batch.updated_at = datetime.now(timezone.utc)
 
             db.commit()
@@ -126,7 +125,7 @@ class GatekeeperService:
         terminal_statuses = {"Completed", "Cancelled", "Not Conducted"}
         if any(session.status not in terminal_statuses for session in sessions):
             raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
-        if batch.nps_imported_at is None or batch.batch_nps is None:
+        if batch.batch_nps is None:
             raise HTTPException(status_code=409, detail="Final feedback workbook must be imported before batch closure")
         if batch.nps_total_responses is None or batch.nps_total_responses <= 0:
             raise HTTPException(status_code=409, detail="Final feedback import must contain responses")
@@ -135,7 +134,6 @@ class GatekeeperService:
         if closure_data.average_feedback_score is not None and closure_data.average_feedback_score != batch.batch_avg_feedback:
             raise HTTPException(status_code=409, detail="Submitted average feedback does not match the stored aggregate")
 
-        batch.retrospective_notes = closure_data.retrospective_notes
         batch.status = "Completed"
         batch.is_schema_locked = True
         batch.updated_at = datetime.now(timezone.utc)

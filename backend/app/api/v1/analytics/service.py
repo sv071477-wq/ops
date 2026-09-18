@@ -194,7 +194,7 @@ class AnalyticsService:
             "Category": batch.category,
             "Program Name": batch.program_name,
             "Technology": batch.technology,
-            "Delivery Mode": batch.delivery_mode,
+            "Delivery Mode": batch.delivery_mode_detail.name if batch.delivery_mode_detail else None,
             "Location / City": batch.location_city,
             "Status": batch.status,
             "Total Enrollments": batch.total_enrollments,

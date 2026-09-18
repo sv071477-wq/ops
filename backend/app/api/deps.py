@@ -110,12 +110,33 @@ def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:
 
 
 def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
-    """Return operational ownership scope: managers see their reports; coordinators see only themselves."""
-    if (user.role or "").lower() != "manager":
+    """Return the operational ownership scope for a user."""
+    role = (user.role or "").lower()
+    if role == "manager":
+        scope_ids: Set[UUID] = {user.id}
+        scope_ids.update(get_all_subordinate_ids(user.id, db))
+        return list(scope_ids)
+
+    if role != "coordinator":
         return [user.id]
 
-    scope_ids: Set[UUID] = {user.id}
-    scope_ids.update(get_all_subordinate_ids(user.id, db))
+    manager_ids: Set[UUID] = set()
+    if user.manager_id:
+        manager_ids.add(user.manager_id)
+    manager_ids.update(
+        manager_id
+        for manager_id, in db.query(UserManagerMapping.manager_id)
+        .filter(UserManagerMapping.coordinator_id == user.id)
+        .all()
+    )
+    if not manager_ids:
+        return [user.id]
+
+    # Coordinators under the same manager share operational batch visibility.
+    scope_ids = {user.id}
+    for manager_id in manager_ids:
+        scope_ids.add(manager_id)
+        scope_ids.update(get_all_subordinate_ids(manager_id, db))
     return list(scope_ids)
 
 

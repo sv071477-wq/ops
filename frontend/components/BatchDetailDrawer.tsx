@@ -164,6 +164,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [hasValidated, setHasValidated] = useState(false);
   const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
   const [ingestError, setIngestError] = useState<string | null>(null);
+  const [ingestSummary, setIngestSummary] = useState<{ message: string; extractedRows: number; failedRows: number; errors: string[] } | null>(null);
 
   // Load sessions when drawer opens or tab switches
   const loadSessions = async () => {
@@ -383,14 +384,26 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     e.preventDefault();
     if (!ingestFile) return;
     setIngestError(null);
+    setIngestSummary(null);
     setIsIngesting(true);
     setHasValidated(false);
     setValidationConflicts([]);
 
     try {
       const res = await api.ingestScheduleFile(ingestFile, batch.batch_id);
-      const rows = res.extracted_schedule || (res as any).items || [];
+      const rows = Array.isArray(res.extracted_schedule) && res.extracted_schedule.length > 0
+        ? res.extracted_schedule
+        : Array.isArray(res.items) ? res.items : [];
       setExtractedRows(rows);
+      setIngestSummary({
+        message: res.message || "Timetable processed.",
+        extractedRows: res.extracted_rows ?? rows.length,
+        failedRows: res.failed_rows ?? 0,
+        errors: (res.errors || []).map((error) => `Row ${error.source_row}: ${error.message}`),
+      });
+      if (rows.length === 0 && (res.errors || []).length === 0) {
+        setIngestError("The file was accepted, but no schedule rows were extracted. Check the column names and date values.");
+      }
     } catch (err: any) {
       setIngestError(err.message || "Failed to parse timetable file");
     } finally {
@@ -788,28 +801,16 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
               {/* Headcount Breakdown & Assigned Faculty */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                {/* Headcount Breakdown */}
+                {/* Headcount */}
                 <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
                   <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 12, letterSpacing: "0.04em" }}>
-                    Candidate Headcount Distribution
+                    Candidate Headcount
                   </h4>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, textAlign: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, textAlign: "center" }}>
                     <div style={{ background: "#f8fafc", padding: "12px 8px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
                       <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>Total Headcount</div>
                       <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0b5cab", marginTop: 2 }}>
                         {activeBatch.total_enrollments}
-                      </div>
-                    </div>
-                    <div style={{ background: "#f8fafc", padding: "12px 8px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
-                      <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>Non-Residential</div>
-                      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--text-main)", marginTop: 2 }}>
-                        {activeBatch.non_residential_enrollments || (activeBatch.total_enrollments - (activeBatch.residential_enrollments || 0))}
-                      </div>
-                    </div>
-                    <div style={{ background: "#f8fafc", padding: "12px 8px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
-                      <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>Residential</div>
-                      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--text-main)", marginTop: 2 }}>
-                        {activeBatch.residential_enrollments || 0}
                       </div>
                     </div>
                   </div>
@@ -1204,12 +1205,54 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </p>
 
                 {batch.status !== "Completed" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-                    <input type="file" accept=".xlsx,.xls,.csv" onChange={(event) => setFeedbackFile(event.target.files?.[0] || null)} />
-                    <button onClick={handleImportFeedback} disabled={!feedbackFile || isImportingFeedback} className="btn btn-secondary">
-                      {isImportingFeedback ? "Importing..." : "Import final feedback"}
-                    </button>
-                    {feedbackImportMessage && <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{feedbackImportMessage}</span>}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+                    <label style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "12px 14px",
+                      border: "1px dashed #9bb9d8",
+                      borderRadius: 8,
+                      background: "#f8fbff",
+                      cursor: "pointer",
+                    }}>
+                      <Upload size={18} color="#0b5cab" />
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ display: "block", fontSize: "0.82rem", fontWeight: 700, color: "var(--text-main)" }}>
+                          {feedbackFile ? feedbackFile.name : "Choose feedback workbook"}
+                        </span>
+                        <span style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
+                          {feedbackFile ? `${(feedbackFile.size / 1024 / 1024).toFixed(2)} MB selected` : "Excel or CSV, up to 10 MB"}
+                        </span>
+                      </span>
+                      <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "#0b5cab" }}>Browse</span>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        onChange={(event) => {
+                          const selected = event.target.files?.[0] || null;
+                          if (selected && selected.size > 10 * 1024 * 1024) {
+                            setFeedbackFile(null);
+                            setFeedbackImportMessage("File is too large. Choose a file smaller than 10 MB.");
+                            return;
+                          }
+                          setFeedbackFile(selected);
+                          setFeedbackImportMessage(null);
+                        }}
+                        style={{ display: "none" }}
+                      />
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={handleImportFeedback} disabled={!feedbackFile || isImportingFeedback} className="btn btn-secondary" style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                        {isImportingFeedback && <RefreshCw size={14} className="animate-spin" />}
+                        {isImportingFeedback ? "Importing workbook..." : "Import final feedback"}
+                      </button>
+                      {feedbackImportMessage && (
+                        <span style={{ fontSize: "0.78rem", color: feedbackImportMessage.startsWith("Imported") ? "#15803d" : "#b91c1c", fontWeight: 600 }}>
+                          {feedbackImportMessage}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -1666,7 +1709,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
-        }}>
+        }} onClick={(event) => event.stopPropagation()}>
           <div className="glass-panel" style={{ width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div>
@@ -1702,25 +1745,66 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
             {/* File Upload Section */}
             {extractedRows.length === 0 ? (
-              <form onSubmit={handleIngestFileSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {ingestSummary && (
+                  <div style={{
+                    background: ingestSummary.extractedRows > 0 ? "#f0fdf4" : "#fff7ed",
+                    border: `1px solid ${ingestSummary.extractedRows > 0 ? "#bbf7d0" : "#fed7aa"}`,
+                    color: ingestSummary.extractedRows > 0 ? "#166534" : "#9a3412",
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                    fontSize: "0.8rem",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700 }}>
+                      {ingestSummary.extractedRows > 0 ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                      <span>{ingestSummary.message}</span>
+                    </div>
+                    <div style={{ marginTop: 5 }}>
+                      Parsed {ingestSummary.extractedRows} row(s); skipped {ingestSummary.failedRows}.
+                    </div>
+                    {ingestSummary.errors.length > 0 && (
+                      <ul style={{ margin: "6px 0 0 18px", padding: 0, maxHeight: 120, overflowY: "auto" }}>
+                        {ingestSummary.errors.slice(0, 20).map((error, index) => <li key={index}>{error}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
+                <form onSubmit={handleIngestFileSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div style={{
                   border: "2px dashed var(--border-subtle)",
                   borderRadius: 8,
                   padding: "32px 20px",
                   textAlign: "center",
-                  background: "#f8fafc"
+                  background: "#f8fafc",
+                  cursor: "pointer"
                 }}>
                   <Upload size={32} style={{ margin: "0 auto 10px", color: "#0b5cab" }} />
                   <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--text-main)" }}>
-                    Select Timetable Spreadsheet (.xlsx, .xls, .csv)
+                    {ingestFile ? ingestFile.name : "Select Timetable Spreadsheet"}
                   </div>
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={(e) => setIngestFile(e.target.files ? e.target.files[0] : null)}
-                    style={{ marginTop: 12 }}
-                    required
-                  />
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6 }}>
+                    {ingestFile ? `${(ingestFile.size / 1024 / 1024).toFixed(2)} MB selected` : "Excel or CSV, up to 10 MB"}
+                  </div>
+                  <label className="btn btn-secondary" style={{ display: "inline-flex", alignItems: "center", gap: 7, marginTop: 14, cursor: "pointer" }}>
+                    <FileSpreadsheet size={15} />
+                    <span>{ingestFile ? "Choose another file" : "Browse files"}</span>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(e) => {
+                        const selected = e.target.files?.[0] || null;
+                        if (selected && selected.size > 10 * 1024 * 1024) {
+                          setIngestFile(null);
+                          setIngestError("File is too large. Choose a timetable smaller than 10 MB.");
+                          return;
+                        }
+                        setIngestFile(selected);
+                        setIngestError(null);
+                      }}
+                      style={{ display: "none" }}
+                      required
+                    />
+                  </label>
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -1728,10 +1812,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     Cancel
                   </button>
                   <button type="submit" disabled={!ingestFile || isIngesting} className="btn btn-primary">
-                    {isIngesting ? "Extracting..." : "Parse Timetable"}
+                    {isIngesting ? "Extracting timetable..." : "Parse Timetable"}
                   </button>
                 </div>
-              </form>
+                </form>
+              </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", gap: 12 }}>
                 {/* Extracted preview */}

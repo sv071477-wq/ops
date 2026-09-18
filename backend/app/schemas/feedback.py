@@ -34,7 +34,6 @@ class BatchNpsClosureCreate(BaseModel):
     passive_count: int = Field(default=0, ge=0)
     detractors_count: int = Field(default=0, ge=0)
     average_feedback_score: Optional[Decimal] = Field(None, ge=Decimal("1.0"), le=Decimal("5.0"))
-    retrospective_notes: str = Field(..., min_length=5, description="Mandatory batch retrospective summary")
     client_feedback: Optional[str] = None
 
 
@@ -59,7 +58,6 @@ class BatchNpsClosureResponse(BaseModel):
     passive_count: int
     detractors_count: int
     average_feedback_score: Optional[Decimal] = None
-    retrospective_notes: str
     client_feedback: Optional[str] = None
     closed_at: datetime
     closed_by: Optional[UUID] = None

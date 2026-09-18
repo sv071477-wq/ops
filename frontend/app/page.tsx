@@ -229,7 +229,10 @@ export default function DashboardPage() {
 
   // Auto-switch to manager_board on initial login for managers
   useEffect(() => {
-    if (user && user.role?.toLowerCase() === "manager" && activeView === "batches") {
+    const teamName = user?.team_name?.trim().toLowerCase();
+    if (user && teamName === "finance" && activeView === "batches") {
+      setActiveView("finance");
+    } else if (user && user.role?.toLowerCase() === "manager" && activeView === "batches") {
       setActiveView("manager_board");
     }
   }, [user]);
@@ -244,10 +247,13 @@ export default function DashboardPage() {
   const hasReportingStaff = (user?.direct_reports_count ?? 0) > 0 || user?.is_manager || user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin" || myReports.length > 0;
 
   useEffect(() => {
-    if (!hasReportingStaff && (activeView === "analytics" || activeView === "manager_board")) {
+    const isFinanceTeam = user?.team_name?.trim().toLowerCase() === "finance";
+    if (isFinanceTeam && (activeView === "analytics" || activeView === "manager_board")) {
+      setActiveView("finance");
+    } else if (!hasReportingStaff && (activeView === "analytics" || activeView === "manager_board")) {
       setActiveView("batches");
     }
-  }, [hasReportingStaff, activeView]);
+  }, [hasReportingStaff, activeView, user?.team_name]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -493,7 +499,8 @@ export default function DashboardPage() {
               )}
 
               {/* Manager Control Board */}
-              {(user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin" || hasReportingStaff) && (
+              {user?.team_name?.trim().toLowerCase() !== "finance"
+                && (user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin" || hasReportingStaff) && (
                 <button
                   onClick={() => setActiveView("manager_board")}
                   style={{
@@ -683,7 +690,7 @@ export default function DashboardPage() {
               </button>
 
               {/* Leadership Oversight - Visible if there are people reporting under this person */}
-              {hasReportingStaff && (
+              {user?.team_name?.trim().toLowerCase() !== "finance" && hasReportingStaff && (
                 <button
                   onClick={() => setActiveView("analytics")}
                   style={{

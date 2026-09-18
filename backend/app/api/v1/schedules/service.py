@@ -1,4 +1,5 @@
 import io
+import re
 from typing import Any, Dict, List, Optional
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -58,7 +59,20 @@ class ExcelIngestionService:
             return val
         if isinstance(val, date):
             return datetime.combine(val, time.min)
-        parsed = pd.to_datetime(val, errors="coerce")
+
+        # Excel may expose dates as serial day numbers rather than date objects.
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            if 1 <= float(val) <= 100000:
+                parsed = pd.Timestamp("1899-12-30") + pd.to_timedelta(float(val), unit="D")
+            else:
+                parsed = pd.NaT
+        else:
+            value = str(val).strip()
+            if not value:
+                return None
+            parsed = pd.to_datetime(value, errors="coerce")
+            if pd.isna(parsed):
+                parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
         if pd.isna(parsed):
             return None
         return parsed.to_pydatetime() if hasattr(parsed, "to_pydatetime") else parsed
@@ -78,14 +92,34 @@ class ExcelIngestionService:
 
     @classmethod
     def _column_map(cls, columns: List[Any]) -> Dict[str, str]:
-        normalized = {str(column).strip().lower().replace("_", " "): str(column) for column in columns}
+        def normalize(value: Any) -> str:
+            return re.sub(r"[^a-z0-9]+", " ", str(value).strip().lower()).strip()
+
+        normalized = {normalize(column): str(column) for column in columns}
         result: Dict[str, str] = {}
         for field, aliases in cls.COLUMN_ALIASES.items():
             for alias in aliases:
-                if alias in normalized:
-                    result[field] = normalized[alias]
+                alias_normalized = normalize(alias)
+                exact = normalized.get(alias_normalized)
+                if exact:
+                    result[field] = exact
+                    break
+                for header, original in normalized.items():
+                    if alias_normalized in header or header in alias_normalized:
+                        result[field] = original
+                        break
+                if field in result:
                     break
         return result
+
+    @classmethod
+    def _find_header_row(cls, raw_sheet: pd.DataFrame) -> Optional[int]:
+        """Find a schedule header when a worksheet has title rows above it."""
+        for row_index in range(min(len(raw_sheet), 10)):
+            columns = cls._column_map(raw_sheet.iloc[row_index].tolist())
+            if "date_of_training" in columns and "topic" in columns:
+                return row_index
+        return None
 
     @classmethod
     def ingest_schedule_file(
@@ -123,19 +157,35 @@ class ExcelIngestionService:
 
         for sheet_name, df in sheets.items():
             columns = cls._column_map(list(df.columns))
-            total_rows += len(df)
-            if "date_of_training" not in columns:
-                for index in range(len(df)):
+            if "date_of_training" not in columns or "topic" not in columns:
+                try:
+                    raw_sheet = pd.read_excel(io.BytesIO(file_contents), sheet_name=sheet_name, header=None)
+                    header_row = cls._find_header_row(raw_sheet)
+                    if header_row is not None:
+                        df = raw_sheet.iloc[header_row + 1:].copy()
+                        df.columns = raw_sheet.iloc[header_row].tolist()
+                        df = df.reset_index(drop=True)
+                        columns = cls._column_map(list(df.columns))
+                except Exception as exc:
                     errors.append(ScheduleExtractionError(
                         source_sheet=str(sheet_name),
-                        source_row=index + 2,
-                        message="Missing a training date column. Expected Date, Training Date, or Date of Training."
+                        source_row=1,
+                        message=f"Could not inspect worksheet headers: {exc}",
                     ))
+            total_rows += len(df)
+            if "date_of_training" not in columns or "topic" not in columns:
+                errors.append(ScheduleExtractionError(
+                    source_sheet=str(sheet_name),
+                    source_row=1,
+                    message="Missing schedule headers. Expected a training date and topic/module column."
+                ))
                 continue
 
             for index, row in df.iterrows():
                 source_row = int(index) + 2
                 try:
+                    if row.isna().all():
+                        continue
                     training_date = cls._parse_datetime(row.get(columns["date_of_training"]))
                     topic = cls._clean_str(row.get(columns.get("topic"))) if columns.get("topic") else None
                     if not training_date:
@@ -312,7 +362,7 @@ class ExcelIngestionService:
                     no_of_hours=item.no_of_hours,
                     venue=item.venue,
                     location_city=item.location_city or batch.location_city,
-                    mode_of_delivery=item.mode_of_delivery or batch.delivery_mode,
+                    mode_of_delivery=item.mode_of_delivery or (batch.delivery_mode_detail.name if batch.delivery_mode_detail else "Online"),
                     status="Scheduled",
                 )
                 db.add(session)
@@ -327,7 +377,7 @@ class ExcelIngestionService:
                     topic="Generated training day - details required",
                     no_of_hours=Decimal("8.0"),
                     location_city=batch.location_city,
-                    mode_of_delivery=batch.delivery_mode,
+                    mode_of_delivery=batch.delivery_mode_detail.name if batch.delivery_mode_detail else "Online",
                     status="Scheduled",
                 )
                 db.add(session)

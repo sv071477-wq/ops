@@ -221,19 +221,22 @@ def upgrade() -> None:
     print(f"[ALEMBIC] Found {len(all_2026_records)} records with year 2026 in sheet 'Enrollment'.")
 
     # Existing databases may have narrower legacy precision for these metrics.
-    # Widen them before importing cumulative feedback and percentage NPS values.
-    op.alter_column(
-        "batches",
-        "total_feedback_score",
-        existing_type=sa.Numeric(4, 2),
-        type_=sa.Numeric(10, 2),
-    )
-    op.alter_column(
-        "batches",
-        "batch_nps",
-        existing_type=sa.Numeric(4, 2),
-        type_=sa.Numeric(5, 2),
-    )
+    # Only alter columns that exist in the active schema.
+    batch_columns = {column["name"] for column in sa.inspect(connection).get_columns("batches")}
+    if "total_feedback_score" in batch_columns:
+        op.alter_column(
+            "batches",
+            "total_feedback_score",
+            existing_type=sa.Numeric(4, 2),
+            type_=sa.Numeric(10, 2),
+        )
+    if "batch_nps" in batch_columns:
+        op.alter_column(
+            "batches",
+            "batch_nps",
+            existing_type=sa.Numeric(4, 2),
+            type_=sa.Numeric(5, 2),
+        )
 
     # Fetch existing batch IDs to ensure idempotency
     existing_result = connection.execute(sa.text("SELECT batch_id FROM batches")).fetchall()
@@ -242,43 +245,51 @@ def upgrade() -> None:
     batches_to_insert = [b for b in all_2026_records if b["batch_id"] not in existing_batch_ids]
 
     if batches_to_insert:
+        column_types = {
+            "id": sa.Uuid,
+            "batch_id": sa.String,
+            "approval_id": sa.String,
+            "sow_number": sa.String,
+            "category": sa.String,
+            "residential_type": sa.String,
+            "program_name": sa.String,
+            "technology": sa.String,
+            "domain": sa.String,
+            "client_name": sa.String,
+            "delivery_mode": sa.String,
+            "location_city": sa.String,
+            "start_date": sa.DateTime(timezone=True),
+            "end_date": sa.DateTime(timezone=True),
+            "batch_request_date": sa.DateTime(timezone=True),
+            "training_days": sa.Integer,
+            "calendar_days": sa.Integer,
+            "total_hours": sa.Numeric,
+            "total_enrollments": sa.Integer,
+            "residential_enrollments": sa.Integer,
+            "non_residential_enrollments": sa.Integer,
+            "status": sa.String,
+            "is_schema_locked": sa.Boolean,
+            "approver_1_status": sa.String,
+            "approver_2_status": sa.String,
+            "faculty_assigned_text": sa.String,
+            "finance_status": sa.String,
+            "batch_avg_feedback": sa.Numeric,
+            "total_feedback_score": sa.Numeric,
+            "batch_nps": sa.Numeric,
+            "remarks": sa.Text,
+            "comments": sa.Text,
+            "created_at": sa.DateTime(timezone=True),
+            "updated_at": sa.DateTime(timezone=True),
+        }
+        insert_columns = [name for name in column_types if name in batch_columns]
         batches_table = sa.table(
             "batches",
-            sa.column("id", sa.Uuid),
-            sa.column("batch_id", sa.String),
-            sa.column("approval_id", sa.String),
-            sa.column("sow_number", sa.String),
-            sa.column("category", sa.String),
-            sa.column("residential_type", sa.String),
-            sa.column("program_name", sa.String),
-            sa.column("technology", sa.String),
-            sa.column("domain", sa.String),
-            sa.column("client_name", sa.String),
-            sa.column("delivery_mode", sa.String),
-            sa.column("location_city", sa.String),
-            sa.column("start_date", sa.DateTime(timezone=True)),
-            sa.column("end_date", sa.DateTime(timezone=True)),
-            sa.column("batch_request_date", sa.DateTime(timezone=True)),
-            sa.column("training_days", sa.Integer),
-            sa.column("calendar_days", sa.Integer),
-            sa.column("total_hours", sa.Numeric),
-            sa.column("total_enrollments", sa.Integer),
-            sa.column("residential_enrollments", sa.Integer),
-            sa.column("non_residential_enrollments", sa.Integer),
-            sa.column("status", sa.String),
-            sa.column("is_schema_locked", sa.Boolean),
-            sa.column("approver_1_status", sa.String),
-            sa.column("approver_2_status", sa.String),
-            sa.column("faculty_assigned_text", sa.String),
-            sa.column("finance_status", sa.String),
-            sa.column("batch_avg_feedback", sa.Numeric),
-            sa.column("total_feedback_score", sa.Numeric),
-            sa.column("batch_nps", sa.Numeric),
-            sa.column("remarks", sa.Text),
-            sa.column("comments", sa.Text),
-            sa.column("created_at", sa.DateTime(timezone=True)),
-            sa.column("updated_at", sa.DateTime(timezone=True)),
+            *(sa.column(name, column_types[name]) for name in insert_columns),
         )
+        batches_to_insert = [
+            {name: record.get(name) for name in insert_columns}
+            for record in batches_to_insert
+        ]
 
         # Batch insert in chunks of 100
         chunk_size = 100
