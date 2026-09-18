@@ -3,13 +3,13 @@
 import React, { useState, useEffect } from "react";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail,
-  api
+  api, BatchOption
 } from "@/lib/api";
 import {
   X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
   Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
   PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check,
-  Edit3
+  Edit3, GraduationCap, ShieldCheck, Mail, Briefcase, Info, Hash
 } from "lucide-react";
 
 interface BatchDetailDrawerProps {
@@ -30,10 +30,34 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   onBatchUpdated,
 }) => {
   const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
+  const [options, setOptions] = useState<{
+    entities: BatchOption[];
+    categories: BatchOption[];
+    accommodations: BatchOption[];
+  }>({ entities: [], categories: [], accommodations: [] });
 
   useEffect(() => {
     setCurrentBatch(batch);
+    if (batch?.id) {
+      api.getBatch(batch.id)
+        .then((fresh) => {
+          if (fresh) setCurrentBatch(fresh);
+        })
+        .catch((err) => console.error("Failed to load fresh batch details:", err));
+    }
   }, [batch]);
+
+  useEffect(() => {
+    if (isOpen) {
+      Promise.all([
+        api.getBatchOptions("entities").catch(() => []),
+        api.getBatchOptions("categories").catch(() => []),
+        api.getBatchOptions("accommodations").catch(() => []),
+      ]).then(([entities, categories, accommodations]) => {
+        setOptions({ entities, categories, accommodations });
+      });
+    }
+  }, [isOpen]);
 
   const [activeTab, setActiveTab] = useState<"overview" | "sessions" | "quality_gates">("overview");
 
@@ -175,10 +199,47 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     });
   };
 
+  const getEntityName = (id?: string | null) => {
+    if (!id) return null;
+    const found = options.entities.find((e) => e.id === id);
+    return found ? found.name : null;
+  };
+
+  const getAccommodationName = (id?: string | null, resType?: string | null) => {
+    if (id) {
+      const found = options.accommodations.find((a) => a.id === id);
+      if (found?.name) return found.name;
+    }
+    if (resType === "R") return "Residential / Hotel Provided";
+    if (resType === "NR") return "Non-Residential / Local Trainer";
+    return resType || "Non-Residential";
+  };
+
+  const calculatedCalendarDays =
+    activeBatch.calendar_days ??
+    (activeBatch.start_date && activeBatch.end_date
+      ? Math.max(
+          0,
+          Math.round(
+            (new Date(activeBatch.end_date).getTime() - new Date(activeBatch.start_date).getTime()) / 86400000
+          )
+        )
+      : null);
+
+  const facultyChips = activeBatch.faculty_assigned_text
+    ? activeBatch.faculty_assigned_text
+        .split(",")
+        .map((f) => f.trim())
+        .filter(Boolean)
+    : [];
+
   const getStatusBadge = (status: string) => {
-    const s = status.toLowerCase();
+    const s = (status || "").toLowerCase();
     if (s === "requested") return <span className="badge badge-requested">Requested</span>;
+    if (s === "approval 1 pending") return <span className="badge badge-requested">Approval 1 Pending</span>;
+    if (s === "approval 2 pending") return <span className="badge badge-requested">Approval 2 Pending</span>;
     if (s === "approved") return <span className="badge badge-approved">Approved</span>;
+    if (s === "upcoming") return <span className="badge badge-approved">Upcoming</span>;
     if (s === "ongoing") return <span className="badge badge-ongoing">Ongoing</span>;
     if (s === "completed") return <span className="badge badge-completed">Completed</span>;
     return <span className="badge badge-cancelled">{status}</span>;
@@ -398,56 +459,71 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   };
 
   return (
-    <div className="modal-overlay" style={{ justifyContent: "flex-end", padding: 0 }}>
+    <div
+      className="modal-overlay"
+      onClick={onClose}
+      style={{
+        zIndex: 990,
+        padding: "16px",
+      }}
+    >
       <div
+        className="modal-content glass-panel"
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: 680,
-          height: "100vh",
+          maxWidth: 960,
+          maxHeight: "92vh",
           background: "#ffffff",
-          borderLeft: "1px solid var(--border-subtle)",
-          boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
+          borderRadius: 20,
+          border: "1px solid rgba(160, 190, 223, 0.8)",
+          boxShadow: "0 24px 48px rgba(15, 23, 42, 0.2), 0 8px 16px rgba(0, 0, 0, 0.08)",
           display: "flex",
           flexDirection: "column",
-          animation: "slideLeft 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-          zIndex: 60
+          overflow: "hidden",
+          animation: "scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
       >
-        {/* Drawer Header */}
+        {/* Modal Header */}
         <div style={{
-          padding: "20px 24px",
+          padding: "20px 26px 16px 26px",
           borderBottom: "1px solid var(--border-subtle)",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          background: "#f8fafc"
+          background: "linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.94) 100%)",
         }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                Batch Lifecycle Hub
+              <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
+                Full Batch Details & Governance Hub
               </span>
-              {getStatusBadge(batch.status)}
+              {getStatusBadge(activeBatch.status)}
             </div>
             <h2 style={{
-              fontSize: "1.25rem",
+              fontSize: "1.35rem",
               fontWeight: 800,
               fontFamily: "var(--font-display)",
               color: "#0b5cab",
               marginTop: 4
             }}>
-              {batch.batch_id}
+              {activeBatch.batch_id}
             </h2>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close details"
             style={{
-              background: "transparent",
+              background: "rgba(226, 232, 240, 0.6)",
               border: "none",
-              color: "var(--text-dim)",
+              color: "var(--text-muted)",
               cursor: "pointer",
-              padding: 6,
-              borderRadius: 6
+              padding: 8,
+              borderRadius: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.15s ease",
             }}
           >
             <X size={20} />
@@ -534,7 +610,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           </button>
         </div>
 
-        {/* Drawer Body */}
+        {/* Modal Body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 18 }}>
 
           {/* TAB 1: OVERVIEW */}
@@ -573,123 +649,320 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </div>
               )}
 
-              {/* Program Title & Client */}
-              <div className="glass-panel" style={{ padding: "16px 20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              {/* Program & Client Context */}
+              <div className="glass-panel" style={{ padding: "18px 22px", background: "#ffffff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>
                       Curriculum / Program Title
                     </div>
-                    <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                    <div style={{ fontSize: "1.2rem", fontWeight: 800, color: "var(--text-main)", marginTop: 4, lineHeight: 1.3 }}>
                       {activeBatch.program_name}
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                      <Building2 size={16} color="#0b5cab" />
-                      <span style={{ fontWeight: 600 }}>{activeBatch.client_name || "Enterprise Client"}</span>
-                      <span>•</span>
-                      <span style={{ color: "#7c3aed", fontWeight: 600 }}>{activeBatch.domain || "Technology"}</span>
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginTop: 10, fontSize: "0.85rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-main)", fontWeight: 700 }}>
+                        <Building2 size={16} color="#0b5cab" />
+                        <span>{activeBatch.client_name || "Enterprise Client"}</span>
+                      </div>
+                      <span style={{ color: "var(--border-subtle)" }}>•</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ color: "var(--text-dim)", fontSize: "0.78rem" }}>Entity:</span>
+                        <span style={{ fontWeight: 600, color: "#0b5cab", background: "rgba(11, 92, 171, 0.08)", padding: "2px 8px", borderRadius: 6, fontSize: "0.8rem" }}>
+                          {getEntityName(activeBatch.entity_id) || "Corporate Enterprise"}
+                        </span>
+                      </div>
+                      <span style={{ color: "var(--border-subtle)" }}>•</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ color: "var(--text-dim)", fontSize: "0.78rem" }}>Domain:</span>
+                        <span style={{ color: "#7c3aed", fontWeight: 700, background: "rgba(124, 58, 237, 0.08)", padding: "2px 8px", borderRadius: 6, fontSize: "0.8rem" }}>
+                          {activeBatch.domain || "Technology"}
+                        </span>
+                      </div>
+                      <span style={{ color: "var(--border-subtle)" }}>•</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ color: "var(--text-dim)", fontSize: "0.78rem" }}>Category:</span>
+                        <span style={{ fontWeight: 600, color: "var(--text-main)", background: "#f1f5f9", padding: "2px 8px", borderRadius: 6, fontSize: "0.8rem" }}>
+                          {activeBatch.category || "Bootcamp"}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={openEditModal}
                     className="btn btn-secondary"
-                    style={{ padding: "6px 12px", fontSize: "0.78rem", display: "flex", alignItems: "center", gap: 6 }}
+                    style={{ padding: "8px 14px", fontSize: "0.8rem", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}
                   >
-                    <Edit3 size={13} /> Edit Batch
+                    <Edit3 size={14} /> Edit Batch
                   </button>
                 </div>
               </div>
 
-              {/* Commercial References & Governance */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div className="glass-panel" style={{ padding: "14px 16px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              {/* Commercial & Contractual Identifiers */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+                <div className="glass-panel" style={{ padding: "14px 16px", background: "#ffffff" }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
                     Client SOW Number
                   </div>
-                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                  <div style={{ fontSize: "0.95rem", fontWeight: 700, color: activeBatch.sow_number ? "var(--text-main)" : "var(--text-muted)", marginTop: 4, fontFamily: "monospace" }}>
                     {activeBatch.sow_number || "Not specified"}
                   </div>
                 </div>
-                <div className="glass-panel" style={{ padding: "14px 16px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                    Finance Approval Reference
+
+                <div className="glass-panel" style={{ padding: "14px 16px", background: "#ffffff" }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                    Financial Approval ID
                   </div>
                   <div style={{ fontSize: "0.95rem", fontWeight: 700, color: activeBatch.approval_id ? "#0b5cab" : "#d97706", marginTop: 4 }}>
                     {activeBatch.approval_id || "Pending Level 1/2 Approval"}
                   </div>
                 </div>
+
+                <div className="glass-panel" style={{ padding: "14px 16px", background: "#ffffff" }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                    Governance Lock
+                  </div>
+                  <div style={{
+                    fontSize: "0.95rem",
+                    fontWeight: 700,
+                    color: activeBatch.is_schema_locked ? "#16a34a" : "#d97706",
+                    marginTop: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6
+                  }}>
+                    {activeBatch.is_schema_locked ? <Lock size={15} /> : <ShieldAlert size={15} />}
+                    <span>{activeBatch.is_schema_locked ? "Schema Locked" : "Unlocked (Editable)"}</span>
+                  </div>
+                </div>
               </div>
 
-              {/* Delivery Logistics & Faculty Accommodation */}
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 12 }}>
-                  Delivery Logistics & Faculty Accommodation
+              {/* Delivery Logistics & Schedule Details */}
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
+                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 14, letterSpacing: "0.04em" }}>
+                  Schedule, Mode & Delivery Logistics
                 </h4>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, fontSize: "0.875rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, fontSize: "0.85rem" }}>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Delivery Mode:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.delivery_mode}</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Delivery Mode</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.delivery_mode}</div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Training Venue / City:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.location_city || "Remote (Online)"}</div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Training Venue / City</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+                      {activeBatch.location_city || (activeBatch.delivery_mode === "Online" ? "Remote (Online)" : "Not specified")}
+                    </div>
                   </div>
                   <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Faculty Accommodation:</span>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Faculty Accommodation</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+                      {getAccommodationName(activeBatch.accommodation_id, activeBatch.residential_type)}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Training Category</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.category || "Bootcamp"}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Commencement Date</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>{formatDate(activeBatch.start_date)}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Conclusion Date</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>{formatDate(activeBatch.end_date)}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Calendar Duration</span>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+                      {calculatedCalendarDays !== null ? `${calculatedCalendarDays} Calendar Days` : "Not set"}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Active Training Hours</span>
+                    <div style={{ fontWeight: 700, color: "#0b5cab", marginTop: 2 }}>
+                      {activeBatch.training_days} Days ({activeBatch.total_hours} Hours)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Headcount Breakdown & Assigned Faculty */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                {/* Headcount Breakdown */}
+                <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
+                  <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 12, letterSpacing: "0.04em" }}>
+                    Candidate Headcount Distribution
+                  </h4>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, textAlign: "center" }}>
+                    <div style={{ background: "#f8fafc", padding: "12px 8px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>Total Headcount</div>
+                      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0b5cab", marginTop: 2 }}>
+                        {activeBatch.total_enrollments}
+                      </div>
+                    </div>
+                    <div style={{ background: "#f8fafc", padding: "12px 8px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>Non-Residential</div>
+                      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--text-main)", marginTop: 2 }}>
+                        {activeBatch.non_residential_enrollments || (activeBatch.total_enrollments - (activeBatch.residential_enrollments || 0))}
+                      </div>
+                    </div>
+                    <div style={{ background: "#f8fafc", padding: "12px 8px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 600 }}>Residential</div>
+                      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--text-main)", marginTop: 2 }}>
+                        {activeBatch.residential_enrollments || 0}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Faculty Assignment */}
+                <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
+                  <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 10, letterSpacing: "0.04em" }}>
+                    Proposed & Assigned Faculty
+                  </h4>
+                  {facultyChips.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                      {facultyChips.map((name) => (
+                        <span
+                          key={name}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            background: "rgba(11, 92, 171, 0.08)",
+                            color: "#0b5cab",
+                            border: "1px solid rgba(11, 92, 171, 0.25)",
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            fontSize: "0.825rem",
+                            fontWeight: 600,
+                          }}
+                        >
+                          <GraduationCap size={14} />
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : activeBatch.faculty_assigned_text ? (
+                    <div style={{ fontSize: "0.875rem", color: "var(--text-main)", fontWeight: 600, marginTop: 6 }}>
+                      {activeBatch.faculty_assigned_text}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "0.825rem", color: "var(--text-dim)", fontStyle: "italic", marginTop: 6 }}>
+                      No faculty members assigned yet. You can assign trainers via Edit Batch or during Timetable ingestion.
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 14, borderTop: "1px solid var(--border-subtle)", paddingTop: 10 }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 600 }}>
+                      Technology Stack & Modules
+                    </div>
+                    <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>
+                      {activeBatch.technology || "Not specified"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stakeholder Role Assignments & Governance Clearance */}
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
+                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 14, letterSpacing: "0.04em" }}>
+                  Stakeholder Role Assignments & Approvals
+                </h4>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, fontSize: "0.85rem" }}>
+                  <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                      Sales Account SPOC
+                    </div>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                      {activeBatch.sales_spoc?.full_name || "Unassigned"}
+                    </div>
+                    {activeBatch.sales_spoc?.email && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Mail size={12} /> {activeBatch.sales_spoc.email}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                      Operations Coordinator
+                    </div>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                      {activeBatch.coordinator?.full_name || "Unassigned"}
+                    </div>
+                    {activeBatch.coordinator?.email && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Mail size={12} /> {activeBatch.coordinator.email}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ background: "#f8fafc", padding: "12px 14px", borderRadius: 10, border: "1px solid var(--border-subtle)" }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                      Delivery Manager
+                    </div>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 4 }}>
+                      {activeBatch.primary_manager?.full_name || "Unassigned"}
+                    </div>
+                    {activeBatch.primary_manager?.email && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                        <Mail size={12} /> {activeBatch.primary_manager.email}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginTop: 12, fontSize: "0.825rem" }}>
+                  <div style={{ padding: "10px 12px", borderRadius: 8, background: "#ffffff", border: "1px solid var(--border-subtle)" }}>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.72rem", textTransform: "uppercase", fontWeight: 700 }}>Requested On:</span>
                     <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>
-                      {activeBatch.residential_type === "R" ? "Residential / Hotel Provided" : "Non-Residential / Local Trainer"}
+                      {formatDate(activeBatch.batch_request_date || activeBatch.created_at)}
                     </div>
                   </div>
-                  <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Training Category:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.category}</div>
+
+                  <div style={{ padding: "10px 12px", borderRadius: 8, background: "#ffffff", border: "1px solid var(--border-subtle)" }}>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.72rem", textTransform: "uppercase", fontWeight: 700 }}>Approver 1 Status:</span>
+                    <div style={{ fontWeight: 700, color: activeBatch.approver_1_status === "Approved" ? "#16a34a" : activeBatch.approver_1_status === "Rejected" ? "#e11d48" : "#d97706", marginTop: 2 }}>
+                      {activeBatch.approver_1_status || "Pending"}
+                      {activeBatch.approver_1_approved_at && (
+                        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400, marginLeft: 6 }}>
+                          ({formatDate(activeBatch.approver_1_approved_at)})
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Commencement Date:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{formatDate(activeBatch.start_date)}</div>
-                  </div>
-                  <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Conclusion Date:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{formatDate(activeBatch.end_date)}</div>
-                  </div>
-                  <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Active Training Days:</span>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.training_days} days ({activeBatch.total_hours} hrs)</div>
-                  </div>
-                  <div>
-                    <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>Governance Lock:</span>
-                    <div style={{ fontWeight: 600, color: activeBatch.is_schema_locked ? "#16a34a" : "#d97706", marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                      {activeBatch.is_schema_locked ? <Lock size={14} /> : null}
-                      <span>{activeBatch.is_schema_locked ? "Schema Locked" : "Unlocked (Editable)"}</span>
+
+                  <div style={{ padding: "10px 12px", borderRadius: 8, background: "#ffffff", border: "1px solid var(--border-subtle)" }}>
+                    <span style={{ color: "var(--text-dim)", fontSize: "0.72rem", textTransform: "uppercase", fontWeight: 700 }}>Approver 2 Status:</span>
+                    <div style={{ fontWeight: 700, color: activeBatch.approver_2_status === "Approved" ? "#16a34a" : activeBatch.approver_2_status === "Rejected" ? "#e11d48" : "#d97706", marginTop: 2 }}>
+                      {activeBatch.approver_2_status || "Pending"}
+                      {activeBatch.approver_2_approved_at && (
+                        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400, marginLeft: 6 }}>
+                          ({formatDate(activeBatch.approver_2_approved_at)})
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Headcount Breakdown */}
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 12 }}>
-                  Candidate Headcount
+              {/* Operational Remarks & Special Instructions */}
+              <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
+                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 8, letterSpacing: "0.04em" }}>
+                  Operational Remarks & Special Instructions
                 </h4>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <div style={{ flex: 1, background: "#f8fafc", padding: "14px", borderRadius: 10, textAlign: "center", border: "1px solid var(--border-subtle)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Total Enrolled Candidates</div>
-                    <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#0b5cab", marginTop: 2 }}>{activeBatch.total_enrollments}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tech Stack & Proposed Faculty */}
-              <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 8 }}>
-                  Technical Stack & Proposed Faculty
-                </h4>
-                <div style={{ fontSize: "0.875rem", color: "var(--text-main)", marginBottom: 8 }}>
-                  <strong>Technology Stack & Modules:</strong> {activeBatch.technology || "Not specified"}
-                </div>
-                <div style={{ fontSize: "0.875rem", color: "var(--text-main)" }}>
-                  <strong>Proposed / Assigned Faculty:</strong> {activeBatch.faculty_assigned_text || "Unassigned (Timetable assignment available)"}
+                <div style={{
+                  fontSize: "0.875rem",
+                  color: activeBatch.remarks ? "var(--text-main)" : "var(--text-dim)",
+                  fontStyle: activeBatch.remarks ? "normal" : "italic",
+                  lineHeight: 1.5,
+                  background: "#f8fafc",
+                  padding: "12px 16px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border-subtle)",
+                }}>
+                  {activeBatch.remarks || "No operational remarks or special instructions provided."}
                 </div>
               </div>
             </>
@@ -998,7 +1271,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           flexWrap: "wrap",
         }}>
           <button onClick={onClose} className="btn btn-secondary">
-            Close Drawer
+            Close Details
           </button>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1042,7 +1315,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 80,
+          zIndex: 1050,
           padding: 16
         }}>
           <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
@@ -1185,7 +1458,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 80,
+          zIndex: 1050,
           padding: 16
         }}>
           <div className="glass-panel" style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
@@ -1289,7 +1562,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 80,
+          zIndex: 1050,
           padding: 16
         }}>
           <div className="glass-panel" style={{ width: "100%", maxWidth: 500, padding: 24, background: "#ffffff" }}>
@@ -1391,7 +1664,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 80,
+          zIndex: 1050,
           padding: 16
         }}>
           <div className="glass-panel" style={{ width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
@@ -1580,7 +1853,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          zIndex: 90,
+          zIndex: 1050,
           padding: 16
         }}>
           <div className="glass-panel" style={{ width: "100%", maxWidth: 660, maxHeight: "90vh", overflowY: "auto", padding: 24, background: "#ffffff", borderRadius: 16 }}>

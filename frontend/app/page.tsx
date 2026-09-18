@@ -967,7 +967,7 @@ export default function DashboardPage() {
                                 className="btn btn-secondary"
                                 style={{ padding: "5px 10px", fontSize: "0.775rem" }}
                               >
-                                View Details & Sessions
+                                View Full Batch Details
                               </button>
                             </div>
                           </td>
@@ -1080,7 +1080,7 @@ export default function DashboardPage() {
                                 className="btn btn-primary"
                                 style={{ padding: "5px 10px", fontSize: "0.775rem" }}
                               >
-                                Review Full Details
+                                View Full Batch Details
                               </button>
                             </td>
                           </tr>
