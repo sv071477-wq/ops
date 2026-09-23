@@ -184,9 +184,8 @@ class BatchService:
         if user_role_lower != "admin" and team_name_lower != "finance":
             team_user_ids = get_manager_scope_user_ids(current_user, self.db)
             query = query.filter(or_(
-                Batch.primary_manager_id.in_(team_user_ids),
+                Batch.primary_manager_id == current_user.id,
                 Batch.coordinator_id.in_(team_user_ids),
-                Batch.sales_spoc_id.in_(team_user_ids),
                 ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
                 ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
             ))
@@ -244,7 +243,6 @@ class BatchService:
             user_id for user_id in {
                 batch.primary_manager_id,
                 batch.coordinator_id,
-                batch.sales_spoc_id,
             } if user_id is not None
         }
 

@@ -1,3 +1,6 @@
+from app.models.user import Team, User
+
+
 def test_admin_can_create_and_list_roles(client, admin_token_headers):
     # 1. Admin creates a new custom role
     create_res = client.post(
@@ -98,3 +101,41 @@ def test_organization_reporting_hierarchy(client, admin_token_headers):
     assert hier_res.status_code == 200
     hierarchy = hier_res.json()
     assert len(hierarchy) > 0
+
+
+def test_manager_scope_excludes_unrelated_managers_and_keeps_only_coordinators(db_session):
+    from app.api.deps import get_manager_scope_user_ids
+
+    team = db_session.query(Team).filter_by(name="Delivery").first()
+    if team is None:
+        team = Team(name="Delivery", department="Ops")
+        db_session.add(team)
+        db_session.flush()
+
+    def create_user(name: str, role: str, manager: User | None = None) -> User:
+        user = User(
+            email=f"{name.lower().replace(' ', '.')}@ops.com",
+            hashed_password="hashed-password",
+            full_name=name,
+            role=role,
+            team_id=team.id,
+            manager_id=manager.id if manager else None,
+            is_active=True,
+        )
+        db_session.add(user)
+        db_session.flush()
+        return user
+
+    ravish = create_user("Ravish", "Manager")
+    manjunath = create_user("Manjunath", "Manager", ravish)
+    krishna = create_user("Krishna", "Manager", ravish)
+    charan = create_user("Charan", "Coordinator", manjunath)
+    pradeep = create_user("Pradeep", "Coordinator", manjunath)
+    ramesh = create_user("Ramesh", "Coordinator", krishna)
+
+    scope_ids = set(get_manager_scope_user_ids(ravish, db_session))
+
+    assert ravish.id in scope_ids
+    assert {charan.id, pradeep.id, ramesh.id}.issubset(scope_ids)
+    assert manjunath.id not in scope_ids
+    assert krishna.id not in scope_ids

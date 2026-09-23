@@ -271,11 +271,19 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<ScheduledSession | null>(null);
   const [utilFacultyName, setUtilFacultyName] = useState("");
+  const [utilDate, setUtilDate] = useState("");
+  const [utilStartTime, setUtilStartTime] = useState("09:30");
+  const [utilEndTime, setUtilEndTime] = useState("17:30");
+  const [utilTopic, setUtilTopic] = useState("");
   const [utilHours, setUtilHours] = useState(8);
   const [utilDeliveryMode, setUtilDeliveryMode] = useState("Online");
   const [utilVenue, setUtilVenue] = useState("");
   const [utilCity, setUtilCity] = useState("");
   const [utilStatus, setUtilStatus] = useState("Completed");
+  const [utilFeedbackRating, setUtilFeedbackRating] = useState(4.5);
+  const [utilFeedbackNotes, setUtilFeedbackNotes] = useState("");
+  const [utilOutcomeReason, setUtilOutcomeReason] = useState("");
+  const [utilReplacementSessionId, setUtilReplacementSessionId] = useState("");
   const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
   const [utilError, setUtilError] = useState<string | null>(null);
 
@@ -283,12 +291,20 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setSelectedScheduleDay(day);
     const target = currentBatch || batch;
     setUtilFacultyName(day.trainer_name || target?.faculty_assigned_text || "");
+    setUtilDate(String(day.session_date).slice(0, 10));
+    setUtilStartTime(day.start_time ? String(day.start_time).slice(0, 5) : "09:30");
+    setUtilEndTime(day.end_time ? String(day.end_time).slice(0, 5) : "17:30");
+    setUtilTopic(day.module || "");
     setUtilHours(Number(day.duration_hours) || 8);
     const defMode = target?.delivery_mode || (target?.delivery_mode_id ? options.delivery_modes.find(m => m.id === target.delivery_mode_id)?.name : null) || "Online";
     setUtilDeliveryMode(defMode);
     setUtilVenue(target?.location_city ? `${target.location_city} Center` : "Virtual MS Teams");
     setUtilCity(target?.location_city || "");
     setUtilStatus("Completed");
+    setUtilFeedbackRating(4.5);
+    setUtilFeedbackNotes("");
+    setUtilOutcomeReason("");
+    setUtilReplacementSessionId("");
     setUtilError(null);
     setIsLogUtilizationOpen(true);
   };
@@ -300,21 +316,26 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setIsSubmittingUtil(true);
     setUtilError(null);
     try {
-      const sDate = selectedScheduleDay.session_date;
-      const dateOfTrainingIso = new Date(`${sDate}T09:00:00`).toISOString();
+      const dateOfTrainingIso = new Date(`${utilDate}T${utilStartTime || "09:00"}:00`).toISOString();
+      const feedbackEntered = utilFeedbackNotes.trim().length > 0 || Number(utilFeedbackRating) > 0;
       await api.createSession({
         batch_id: target.id,
         training_session_id: selectedScheduleDay.id,
         date_of_training: dateOfTrainingIso,
-        start_time: selectedScheduleDay.start_time || "09:30",
-        end_time: selectedScheduleDay.end_time || "17:30",
-        topic: selectedScheduleDay.module,
+        start_time: utilStartTime,
+        end_time: utilEndTime,
+        topic: utilTopic.trim(),
         faculty_name: utilFacultyName.trim() || target.faculty_assigned_text || "Faculty assigned",
         no_of_hours: Number(utilHours) || 8,
         venue: utilVenue.trim() || undefined,
         location_city: utilCity.trim() || target.location_city || undefined,
         mode_of_delivery: utilDeliveryMode,
         status: utilStatus,
+        feedback_submitted: feedbackEntered,
+        feedback_rating: feedbackEntered ? Number(utilFeedbackRating) || undefined : undefined,
+        feedback_notes: feedbackEntered ? utilFeedbackNotes.trim() || undefined : undefined,
+        outcome_reason: utilOutcomeReason.trim() || undefined,
+        replacement_session_id: utilReplacementSessionId.trim() || undefined,
       });
       setIsLogUtilizationOpen(false);
       await loadSessions();
@@ -338,6 +359,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [sessionMode, setSessionMode] = useState("Online");
   const [isSubmittingSession, setIsSubmittingSession] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+
+  // Curriculum row correction state
+  const [editingScheduledSession, setEditingScheduledSession] = useState<ScheduledSession | null>(null);
+  const [scheduledEditForm, setScheduledEditForm] = useState({
+    module: "", session_date: "", start_time: "09:00", end_time: "17:00", duration_hours: 8, trainer_name: ""
+  });
+  const [isSavingScheduledEdit, setIsSavingScheduledEdit] = useState(false);
+  const [scheduledEditError, setScheduledEditError] = useState<string | null>(null);
 
   // Gate 1 Feedback Modal
   const [completingSession, setCompletingSession] = useState<TrainingSession | null>(null);
@@ -369,6 +398,43 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
   const [ingestError, setIngestError] = useState<string | null>(null);
   const [ingestSummary, setIngestSummary] = useState<{ message: string; extractedRows: number; failedRows: number; errors: string[] } | null>(null);
+  const [editingParsedRow, setEditingParsedRow] = useState<number | null>(null);
+
+  const openScheduledSessionEdit = (session: ScheduledSession) => {
+    setEditingScheduledSession(session);
+    setScheduledEditForm({
+      module: session.module || "",
+      session_date: session.session_date ? String(session.session_date).slice(0, 10) : "",
+      start_time: session.start_time ? String(session.start_time).slice(0, 5) : "09:00",
+      end_time: session.end_time ? String(session.end_time).slice(0, 5) : "17:00",
+      duration_hours: Number(session.duration_hours) || 8,
+      trainer_name: session.trainer_name || "",
+    });
+    setScheduledEditError(null);
+  };
+
+  const saveScheduledSessionEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingScheduledSession) return;
+    setIsSavingScheduledEdit(true);
+    setScheduledEditError(null);
+    try {
+      await api.updateScheduledSession(editingScheduledSession.id, {
+        module: scheduledEditForm.module.trim(),
+        session_date: scheduledEditForm.session_date,
+        start_time: scheduledEditForm.start_time,
+        end_time: scheduledEditForm.end_time,
+        duration_hours: scheduledEditForm.duration_hours,
+        trainer_name: scheduledEditForm.trainer_name.trim() || undefined,
+      });
+      setEditingScheduledSession(null);
+      await loadSessions();
+    } catch (err: any) {
+      setScheduledEditError(err.message || "Failed to update scheduled session");
+    } finally {
+      setIsSavingScheduledEdit(false);
+    }
+  };
 
   // Load sessions when drawer opens or tab switches
   const loadSessions = async () => {
@@ -467,16 +533,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setIsSubmittingSession(true);
 
     try {
-      await api.createSession({
+      await api.createScheduledSession({
         batch_id: batch.id,
-        date_of_training: sessionDate,
+        session_date: sessionDate,
         start_time: sessionStartTime,
         end_time: sessionEndTime,
-        topic: sessionTopic.trim(),
-        faculty_name: sessionFacultyName.trim() || undefined,
-        no_of_hours: Number(sessionHours),
-        venue: sessionVenue.trim() || undefined,
-        mode_of_delivery: sessionMode,
+        module: sessionTopic.trim(),
+        trainer_name: sessionFacultyName.trim() || undefined,
+        duration_hours: Number(sessionHours),
       });
 
       setIsAddSessionOpen(false);
@@ -1583,6 +1647,16 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                                 </span>
                                 <button
                                   type="button"
+                                  onClick={() => openScheduledSessionEdit(s)}
+                                  className="btn btn-secondary"
+                                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", fontSize: "0.8rem" }}
+                                  title="Edit parsed timetable row"
+                                >
+                                  <Edit3 size={14} />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => openLogUtilizationModal(s)}
                                   className="btn btn-primary"
                                   style={{
@@ -2162,6 +2236,32 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         </div>
       )}
 
+      {editingScheduledSession && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1060, padding: 16 }} onClick={() => setEditingScheduledSession(null)}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 520, padding: 24, background: "#ffffff" }}>
+            <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 5px" }}>Edit Scheduled Session</h3>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px" }}>Correct any missing or incorrectly parsed timetable details.</p>
+            {scheduledEditError && <div style={{ color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", padding: "8px 10px", borderRadius: 6, fontSize: "0.8rem", marginBottom: 12 }}>{scheduledEditError}</div>}
+            <form onSubmit={saveScheduledSessionEdit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Module / Topic *<input required value={scheduledEditForm.module} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, module: e.target.value })} /></label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Date *<input required type="date" value={scheduledEditForm.session_date} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, session_date: e.target.value })} /></label>
+                <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Hours *<input required type="number" min={1} max={24} value={scheduledEditForm.duration_hours} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, duration_hours: Number(e.target.value) })} /></label>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Start time<input type="time" value={scheduledEditForm.start_time} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, start_time: e.target.value })} /></label>
+                <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>End time<input type="time" value={scheduledEditForm.end_time} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, end_time: e.target.value })} /></label>
+              </div>
+              <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Faculty<input value={scheduledEditForm.trainer_name} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, trainer_name: e.target.value })} /></label>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setEditingScheduledSession(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={isSavingScheduledEdit}>{isSavingScheduledEdit ? "Saving..." : "Save Changes"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Gate 1 Feedback Completion */}
       {completingSession && (
         <div style={{
@@ -2585,15 +2685,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                         <th style={{ padding: "8px 12px" }}>Topic</th>
                         <th style={{ padding: "8px 12px" }}>Faculty</th>
                         <th style={{ padding: "8px 12px" }}>Hours</th>
+                        <th style={{ padding: "8px 12px" }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {extractedRows.map((r, i) => (
                         <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>{formatDate(r.date_of_training)}</td>
-                          <td style={{ padding: "8px 12px" }}>{r.topic}</td>
-                          <td style={{ padding: "8px 12px" }}>{r.faculty_name || "—"}</td>
-                          <td style={{ padding: "8px 12px" }}>{r.no_of_hours}h</td>
+                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>
+                            {editingParsedRow === i ? <input type="date" value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            {editingParsedRow === i ? <input value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            {editingParsedRow === i ? <input value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            {editingParsedRow === i ? <input type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
+                              {editingParsedRow === i ? <Check size={13} /> : <Edit3 size={13} />}
+                              {editingParsedRow === i ? "Done" : "Edit"}
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2915,10 +3030,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             background: "rgba(15, 23, 42, 0.65)",
             backdropFilter: "blur(4px)",
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             justifyContent: "center",
             zIndex: 1100,
             padding: 16,
+            overflowY: "auto",
           }}
           onClick={(e) => {
             e.stopPropagation();
@@ -3122,9 +3238,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             style={{
               maxWidth: 540,
               width: "100%",
+              maxHeight: "calc(100vh - 32px)",
               background: "#ffffff",
               borderRadius: 14,
-              overflow: "hidden",
+              overflowY: "auto",
               boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
               border: "1px solid var(--border-subtle)",
             }}
@@ -3202,6 +3319,35 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             <form onSubmit={handleLogUtilizationSubmit} style={{ padding: "0 22px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Training Topic / Module *
+                </label>
+                <input
+                  type="text"
+                  value={utilTopic}
+                  onChange={(e) => setUtilTopic(e.target.value)}
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Training Date *</label>
+                  <input type="date" value={utilDate} onChange={(e) => setUtilDate(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Start Time *</label>
+                  <input type="time" value={utilStartTime} onChange={(e) => setUtilStartTime(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>End Time *</label>
+                  <input type="time" value={utilEndTime} onChange={(e) => setUtilEndTime(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
                   Actual Faculty / Trainer Name *
                 </label>
                 <input
@@ -3215,7 +3361,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 />
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
                 <div>
                   <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
                     Actual Hours Delivered *
@@ -3230,6 +3376,20 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     className="glass-input"
                     style={{ width: "100%" }}
                     required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Location City
+                  </label>
+                  <input
+                    type="text"
+                    value={utilCity}
+                    onChange={(e) => setUtilCity(e.target.value)}
+                    placeholder="e.g. Bengaluru"
+                    className="glass-input"
+                    style={{ width: "100%" }}
                   />
                 </div>
 
@@ -3289,6 +3449,65 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <option value="InProgress">In Progress</option>
                     <option value="Scheduled">Scheduled</option>
                   </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Feedback Rating
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="5"
+                  step="0.5"
+                  value={utilFeedbackRating}
+                  onChange={(e) => setUtilFeedbackRating(Number(e.target.value) || 0)}
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Feedback Notes
+                </label>
+                <textarea
+                  value={utilFeedbackNotes}
+                  onChange={(e) => setUtilFeedbackNotes(e.target.value)}
+                  placeholder="Session summary, observations, learner uptake, or notes for later audit review"
+                  className="glass-input"
+                  style={{ width: "100%", minHeight: 72, resize: "vertical" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Outcome Reason
+                  </label>
+                  <input
+                    type="text"
+                    value={utilOutcomeReason}
+                    onChange={(e) => setUtilOutcomeReason(e.target.value)}
+                    placeholder="e.g. Completed successfully / rescheduled / client request"
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Replacement Session ID
+                  </label>
+                  <input
+                    type="text"
+                    value={utilReplacementSessionId}
+                    onChange={(e) => setUtilReplacementSessionId(e.target.value)}
+                    placeholder="Optional linked replacement session UUID"
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                  />
                 </div>
               </div>
 

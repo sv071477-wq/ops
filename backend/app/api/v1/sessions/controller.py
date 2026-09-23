@@ -8,7 +8,8 @@ from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionDetailResponse,
-    SessionOutcomeRequest, SessionRescheduleRequest, TrainingSessionResponse
+    SessionOutcomeRequest, SessionRescheduleRequest, TrainingSessionResponse,
+    TrainingSessionUpdate, TrainingSessionCreate,
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.deps_services import get_session_service
@@ -26,6 +27,26 @@ def list_scheduled_sessions(
 ) -> Any:
     """Lists the ingested curriculum training schedule days for a batch."""
     return service.list_scheduled(batch_id, current_user.id)
+
+
+@router.patch("/scheduled/{id}", response_model=TrainingSessionResponse)
+def update_scheduled_session(
+    id: UUID,
+    session_in: TrainingSessionUpdate,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    """Correct a parsed curriculum row after it has been saved."""
+    return service.update_scheduled(id, session_in, current_user.id)
+
+
+@router.post("/scheduled", response_model=TrainingSessionResponse, status_code=status.HTTP_201_CREATED)
+def create_scheduled_session(
+    session_in: TrainingSessionCreate,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    return service.create_scheduled(session_in, current_user.id)
 
 
 @router.get("", response_model=List[SessionDetailResponse])

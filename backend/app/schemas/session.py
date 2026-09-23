@@ -89,6 +89,13 @@ class SessionBase(BaseModel):
     location_city: Optional[str] = None
     mode_of_delivery: str = "Online"  # Online, Offline, F2F, Blended
     status: str = "Scheduled"  # Scheduled, InProgress, Completed, Cancelled, Rescheduled
+    feedback_submitted: Optional[bool] = False
+    feedback_rating: Optional[Decimal] = None
+    feedback_notes: Optional[str] = None
+    outcome_reason: Optional[str] = None
+    outcome_at: Optional[datetime] = None
+    outcome_by: Optional[UUID] = None
+    replacement_session_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -123,6 +130,13 @@ class SessionUpdate(BaseModel):
     location_city: Optional[str] = None
     mode_of_delivery: Optional[str] = None
     status: Optional[str] = None
+    feedback_submitted: Optional[bool] = None
+    feedback_rating: Optional[Decimal] = None
+    feedback_notes: Optional[str] = None
+    outcome_reason: Optional[str] = None
+    outcome_at: Optional[datetime] = None
+    outcome_by: Optional[UUID] = None
+    replacement_session_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod

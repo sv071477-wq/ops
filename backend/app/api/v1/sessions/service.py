@@ -12,7 +12,11 @@ from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User, Role
 from app.core.security import get_password_hash
 from app.schemas.feedback import SessionFeedbackCreate
-from app.schemas.session import SessionCreate, SessionUpdate, SessionOutcomeRequest, SessionRescheduleRequest, TrainingSessionResponse
+from app.schemas.session import (
+    SessionCreate, SessionUpdate, SessionOutcomeRequest, SessionRescheduleRequest,
+    TrainingSessionCreate,
+    TrainingSessionResponse, TrainingSessionUpdate,
+)
 from app.api.v1.gates.service import GatekeeperService
 from app.api.v1.schedules.conflict_engine import ConflictEngine
 from app.api.deps import get_manager_scope_user_ids
@@ -76,6 +80,47 @@ class SessionService:
                 "actual_hours": util.no_of_hours if util else None,
             })
         return result
+
+    def update_scheduled(self, session_id: UUID, session_in: TrainingSessionUpdate, user_id: Optional[UUID] = None) -> TrainingSession:
+        session = self.db.query(TrainingSession).filter(TrainingSession.id == session_id).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Scheduled session not found")
+        batch = self.db.query(Batch).filter(Batch.id == session.batch_id).first()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if user_id:
+            self._require_batch_scope(batch, user_id)
+        if batch.status == "Completed":
+            raise HTTPException(status_code=409, detail="Completed batches cannot be edited")
+
+        updates = session_in.model_dump(exclude_unset=True)
+        if "session_date" in updates and updates["session_date"]:
+            session.day_name = updates["session_date"].strftime("%A")
+        for field, value in updates.items():
+            setattr(session, field, value)
+        session.updated_at = datetime.now(timezone.utc)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    def create_scheduled(self, session_in: TrainingSessionCreate, user_id: Optional[UUID] = None) -> TrainingSession:
+        batch = self.db.query(Batch).filter(Batch.id == session_in.batch_id).first()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if user_id:
+            self._require_batch_scope(batch, user_id)
+        last_sequence = self.db.query(TrainingSession.sequence_number).filter(
+            TrainingSession.batch_id == batch.id
+        ).order_by(TrainingSession.sequence_number.desc()).first()
+        session = TrainingSession(
+            **session_in.model_dump(exclude={"batch_id", "sequence_number"}),
+            batch_id=batch.id,
+            sequence_number=session_in.sequence_number or ((last_sequence[0] or 0) + 1 if last_sequence else 1),
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
 
     def _resolve_faculty(self, faculty_id: Optional[UUID], faculty_name: Optional[str]) -> User:
         if faculty_id:

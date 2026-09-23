@@ -454,8 +454,41 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     [batches, period]
   );
 
-  const managers = useMemo(() => users.filter((u) => u.role === "Manager"), [users]);
-  const coordinators = useMemo(() => users.filter((u) => u.role === "Coordinator"), [users]);
+  const managers = useMemo(() => {
+    const managerIds = new Set(users.filter((u) => u.role === "Manager").map((u) => u.id));
+    return users.filter(
+      (u) => u.role === "Manager" && (!u.manager_id || !managerIds.has(u.manager_id))
+    );
+  }, [users]);
+
+  const managerById = useMemo(() => new Map(users.filter((u) => u.role === "Manager").map((u) => [u.id, u])), [users]);
+
+  const coordinators = useMemo(() => {
+    const managerIds = new Set(managers.map((m) => m.id));
+    return users.filter((u) => {
+      if (u.role !== "Coordinator") return false;
+      if (u.manager_id && managerIds.has(u.manager_id)) return true;
+      if (u.manager_name) {
+        return managers.some((m) => m.full_name === u.manager_name);
+      }
+      return false;
+    });
+  }, [users, managers]);
+
+  const coordinatorIdsByManager = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    managers.forEach((m) => map.set(m.id, new Set()));
+
+    users.forEach((u) => {
+      if (u.role !== "Coordinator") return;
+      const managerId = u.manager_id ||
+        users.find((m) => m.role === "Manager" && m.full_name === u.manager_name)?.id || null;
+      if (!managerId || !map.has(managerId)) return;
+      map.get(managerId)?.add(u.id);
+    });
+
+    return map;
+  }, [users, managers]);
 
   const statusBuckets = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -483,9 +516,12 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     () =>
       managers
         .map((m) => {
-          const mb = activeBatchesDataset.filter(
-            (b) => b.primary_manager_id === m.id || b.approver_1_id === m.id || b.approver_2_id === m.id
-          );
+          const relatedCoordinatorIds = coordinatorIdsByManager.get(m.id) || new Set<string>();
+          const mb = activeBatchesDataset.filter((b) => {
+            const isOwnedByManager = b.primary_manager_id === m.id || b.approver_1_id === m.id || b.approver_2_id === m.id;
+            const isManagedByCoordinator = !!b.coordinator_id && relatedCoordinatorIds.has(b.coordinator_id);
+            return isOwnedByManager || isManagedByCoordinator;
+          });
           return {
             manager: m,
             total: mb.length,
@@ -497,7 +533,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
           };
         })
         .sort((a, b) => b.active - a.active),
-    [managers, activeBatchesDataset]
+    [managers, activeBatchesDataset, coordinatorIdsByManager]
   );
 
   const coordinatorWorkload = useMemo(

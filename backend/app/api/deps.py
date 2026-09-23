@@ -105,8 +105,17 @@ def get_all_subordinate_ids(manager_id: UUID, db: Session) -> List[UUID]:
 
 
 def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:
-    """Returns all subordinate UUIDs (direct and nested) under a given manager."""
-    return get_all_subordinate_ids(manager_id, db)
+    """Return only coordinators under a manager, excluding other managers and unrelated roles."""
+    subordinate_ids = get_all_subordinate_ids(manager_id, db)
+    if not subordinate_ids:
+        return []
+
+    rows = db.query(User.id).filter(
+        User.id.in_(subordinate_ids),
+        User.role == "Coordinator",
+        User.is_active == True,
+    ).all()
+    return [UUID(str(row[0])) for row in rows]
 
 
 def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
@@ -114,7 +123,7 @@ def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
     role = (user.role or "").lower()
     if role == "manager":
         scope_ids: Set[UUID] = {user.id}
-        scope_ids.update(get_all_subordinate_ids(user.id, db))
+        scope_ids.update(get_managed_coordinator_ids(user.id, db))
         return list(scope_ids)
 
     if role != "coordinator":
@@ -136,7 +145,7 @@ def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
     scope_ids = {user.id}
     for manager_id in manager_ids:
         scope_ids.add(manager_id)
-        scope_ids.update(get_all_subordinate_ids(manager_id, db))
+        scope_ids.update(get_managed_coordinator_ids(manager_id, db))
     return list(scope_ids)
 
 

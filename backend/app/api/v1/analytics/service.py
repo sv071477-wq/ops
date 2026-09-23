@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, and_, cast, Date
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_managed_coordinator_ids
 from app.models.batch import Batch
 from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User, UserManagerMapping
@@ -35,31 +36,21 @@ class AnalyticsService:
         return Decimal(str(round(sum(valid_floats) / len(valid_floats), 2)))
 
     def _get_scoped_batch_ids(self, current_user: Optional[User]) -> Optional[list]:
-        """Returns a list of batch IDs scoped to the manager, or None if admin/unrestricted."""
+        """Returns a list of batch IDs scoped to the manager hierarchy, or None if admin/unrestricted."""
         if not current_user or current_user.role.lower() == "admin":
             return None
 
-        # Manager scoping
-        direct_coord_ids = set()
-        # Direct reports via User.manager_id
-        for u in self.db.query(User.id).filter(User.manager_id == current_user.id).all():
-            direct_coord_ids.add(u[0])
-        # Direct reports via UserManagerMapping
-        for m in self.db.query(UserManagerMapping.coordinator_id).filter(UserManagerMapping.manager_id == current_user.id).all():
-            direct_coord_ids.add(m[0])
+        scope_user_ids = {current_user.id}
+        scope_user_ids.update(get_managed_coordinator_ids(current_user.id, self.db))
 
         batch_filters = [
             Batch.primary_manager_id == current_user.id,
-            Batch.approver_1_id == current_user.id,
-            Batch.approver_2_id == current_user.id,
+            Batch.coordinator_id.in_(list(scope_user_ids)),
         ]
-        if direct_coord_ids:
-            batch_filters.append(Batch.coordinator_id.in_(list(direct_coord_ids)))
 
         scoped_batches = self.db.query(Batch.id).filter(or_(*batch_filters)).all()
         scoped_ids = [b[0] for b in scoped_batches]
 
-        # If manager has no directly assigned batches yet, default to all visible batches for a seamless demo
         if not scoped_ids:
             return None
         return scoped_ids
@@ -132,15 +123,29 @@ class AnalyticsService:
             )
         ).count()
 
-        # Faculty utilization ratio: deployed faculty / total faculty count
-        total_fac_count = self.db.query(User).filter(
-            User.role == "Faculty",
-            User.is_active == True
-        ).count()
+        # Faculty utilization ratio: deployed faculty / total faculty count within the manager's hierarchy scope
+        if scoped_ids is not None:
+            related_faculty_ids = self.db.query(User.id).filter(
+                User.role == "Faculty",
+                User.is_active == True,
+                User.manager_id.in_(list(scope_user_ids))
+            ).all()
+            faculty_ids = {u[0] for u in related_faculty_ids}
+            total_fac_count = len(faculty_ids)
 
-        deployed_fac_count = self.db.query(FacultyUtilization.faculty_name).filter(
-            FacultyUtilization.status.in_(["Scheduled", "InProgress", "Completed"])
-        ).distinct().count()
+            deployed_fac_count = self.db.query(FacultyUtilization.faculty_name).filter(
+                FacultyUtilization.batch_id.in_(scoped_ids),
+                FacultyUtilization.status.in_(["Scheduled", "InProgress", "Completed"])
+            ).distinct().count()
+        else:
+            total_fac_count = self.db.query(User).filter(
+                User.role == "Faculty",
+                User.is_active == True
+            ).count()
+
+            deployed_fac_count = self.db.query(FacultyUtilization.faculty_name).filter(
+                FacultyUtilization.status.in_(["Scheduled", "InProgress", "Completed"])
+            ).distinct().count()
 
         if total_fac_count > 0:
             util_ratio = Decimal(str(round((min(deployed_fac_count, total_fac_count) / total_fac_count) * 100, 1)))

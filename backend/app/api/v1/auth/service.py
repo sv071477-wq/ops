@@ -228,8 +228,8 @@ class AuthService:
             return [self._enrich_user(c) for c in coords]
         
         # All direct & indirect reports
-        from app.api.deps import get_all_subordinate_ids
-        sub_ids = get_all_subordinate_ids(current_user.id, self.db)
+        from app.api.deps import get_managed_coordinator_ids
+        sub_ids = get_managed_coordinator_ids(current_user.id, self.db)
         coords = self.db.query(User).filter(User.id.in_(sub_ids)).all()
         return [self._enrich_user(c) for c in coords]
 

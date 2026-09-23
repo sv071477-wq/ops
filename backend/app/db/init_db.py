@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from app.core.database import SessionLocal, Base, engine
 from app.models.user import User, UserManagerMapping, Role, Team
 from app.models.batch import (
@@ -17,12 +17,41 @@ def init_db(db: Session = None) -> None:
     """Creates database schema tables, ensures migration columns exist, and seeds base roles without demo data."""
     Base.metadata.create_all(bind=engine)
 
-    # Auto-migrate schema columns if tables were created previously
+    # Keep existing databases aligned without requiring a migration runner.
     try:
         with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id UUID REFERENCES roles(id) ON DELETE SET NULL;"))
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;"))
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL;"))
+            schema_columns = {
+                "users": {
+                    "role_id": "UUID REFERENCES roles(id) ON DELETE SET NULL",
+                    "team_id": "UUID REFERENCES teams(id) ON DELETE SET NULL",
+                    "manager_id": "UUID REFERENCES users(id) ON DELETE SET NULL",
+                },
+                "batches": {
+                    "nps_total_responses": "INTEGER",
+                    "nps_promoters": "INTEGER",
+                    "nps_passives": "INTEGER",
+                    "nps_detractors": "INTEGER",
+                },
+                "training_sessions": {
+                    "sequence_number": "INTEGER",
+                    "faculty_name": "VARCHAR(255)",
+                    "outcome_reason": "TEXT",
+                    "outcome_at": "TIMESTAMPTZ",
+                    "outcome_by": "UUID REFERENCES users(id) ON DELETE SET NULL",
+                    "replacement_session_id": "UUID REFERENCES faculty_utilization(id) ON DELETE SET NULL",
+                },
+            }
+
+            inspector = inspect(conn)
+            for table_name, columns in schema_columns.items():
+                if not inspector.has_table(table_name):
+                    continue
+                existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+                for column_name, definition in columns.items():
+                    if column_name not in existing_columns:
+                        conn.execute(text(
+                            f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {definition}'
+                        ))
             conn.commit()
     except Exception as e:
         print(f"Note: Column migration check returned: {e}")

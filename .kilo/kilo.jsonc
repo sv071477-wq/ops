@@ -1,0 +1,9 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "indexing": {
+    "mistral": {
+      "apiKey": "mstrl_xAJC9p5km8gV8wjPB9upZTFPYDDbsDkz_3z6aqr"
+    },
+    "model": "mistral-embed"
+  }
+}

@@ -232,6 +232,8 @@ export interface TrainingSession {
   mode_of_delivery: string;
   status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Rescheduled" | "Not Conducted";
   feedback_submitted: boolean;
+  feedback_rating?: number | null;
+  feedback_notes?: string | null;
   outcome_reason?: string | null;
   outcome_at?: string | null;
   outcome_by?: string | null;
@@ -276,11 +278,19 @@ export interface CreateSessionPayload {
   location_city?: string;
   mode_of_delivery?: string;
   status?: string;
+  feedback_submitted?: boolean;
+  feedback_rating?: number;
+  feedback_notes?: string;
+  outcome_reason?: string;
+  outcome_at?: string;
+  outcome_by?: string;
+  replacement_session_id?: string;
 }
 
 export interface SessionFeedbackPayload {
   rating: number; // 1.0 - 5.0
   topic_feedback: string;
+  faculty_observations?: string;
   total_students_present?: number;
 }
 
@@ -726,6 +736,29 @@ class ApiService {
 
   async getScheduledSessions(batchId: string): Promise<ScheduledSession[]> {
     return this.request<ScheduledSession[]>(`/sessions/scheduled?batch_id=${batchId}`);
+  }
+
+  async updateScheduledSession(id: string, payload: Partial<ScheduledSession>): Promise<ScheduledSession> {
+    return this.request<ScheduledSession>(`/sessions/scheduled/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async createScheduledSession(payload: {
+    batch_id: string;
+    session_date: string;
+    start_time?: string;
+    end_time?: string;
+    duration_hours: number;
+    module: string;
+    trainer_name?: string;
+    status?: string;
+  }): Promise<ScheduledSession> {
+    return this.request<ScheduledSession>("/sessions/scheduled", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   async createSession(payload: CreateSessionPayload): Promise<TrainingSession> {

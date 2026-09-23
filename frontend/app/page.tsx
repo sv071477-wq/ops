@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
-  api, Batch, ManagerDashboardSummary, FacultyMember, FacultyUtilizationSummary, User
+  api, Batch, ManagerDashboardSummary, FacultyMember, FacultyUtilizationSummary, TrainingSession, User
 } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { CreateBatchModal } from "@/components/CreateBatchModal";
@@ -67,6 +67,7 @@ export default function DashboardPage() {
   // Faculty state
   const [facultyList, setFacultyList] = useState<FacultyMember[]>([]);
   const [facultyUtilization, setFacultyUtilization] = useState<FacultyUtilizationSummary | null>(null);
+  const [facultyUtilizationLedger, setFacultyUtilizationLedger] = useState<TrainingSession[]>([]);
   const [facultyDomainFilter, setFacultyDomainFilter] = useState("ALL");
   const [isLoadingFaculty, setIsLoadingFaculty] = useState(false);
 
@@ -200,12 +201,16 @@ export default function DashboardPage() {
   const fetchFaculty = async () => {
     setIsLoadingFaculty(true);
     try {
-      const [facList, util] = await Promise.all([
+      const [facList, util, ledger] = await Promise.all([
         api.getFacultyList({ domain: facultyDomainFilter !== "ALL" ? facultyDomainFilter : undefined }).catch(() => []),
         api.getFacultyUtilization().catch(() => null),
+        api.getSessions().catch(() => []),
       ]);
       setFacultyList(facList);
       setFacultyUtilization(util);
+      setFacultyUtilizationLedger(
+        [...ledger].sort((a, b) => new Date(b.date_of_training).getTime() - new Date(a.date_of_training).getTime())
+      );
     } catch (err) {
       console.error("Failed to load faculty data:", err);
     } finally {
@@ -244,10 +249,10 @@ export default function DashboardPage() {
     }
   }, [user]);
 
-  // Fetch direct reports for logged-in user
+  // Fetch all coordinators under the manager (includes direct reports + UserManagerMapping assignments)
   useEffect(() => {
     if (user) {
-      api.getMyReports().then((res) => setMyReports(res)).catch(() => setMyReports([]));
+      api.getCoordinators().then((res) => setMyReports(res)).catch(() => setMyReports([]));
     }
   }, [user]);
 
@@ -1192,6 +1197,116 @@ export default function DashboardPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", background: "#f8fafc" }}>
+                <div style={{ fontWeight: 800, color: "var(--text-main)", letterSpacing: "0.02em", textTransform: "uppercase", fontSize: "0.8rem" }}>
+                  Live Utilization Ledger
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                  {facultyUtilizationLedger.length} DB-backed records
+                </div>
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table className="glass-table" style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.77rem", color: "var(--text-dim)" }}>
+                      <th style={{ padding: "12px 14px" }}>Date</th>
+                      <th style={{ padding: "12px 14px" }}>Faculty</th>
+                      <th style={{ padding: "12px 14px" }}>Topic</th>
+                      <th style={{ padding: "12px 14px" }}>Hours</th>
+                      <th style={{ padding: "12px 14px" }}>City</th>
+                      <th style={{ padding: "12px 14px" }}>Venue</th>
+                      <th style={{ padding: "12px 14px" }}>Mode</th>
+                      <th style={{ padding: "12px 14px" }}>Status</th>
+                      <th style={{ padding: "12px 14px" }}>Feedback</th>
+                      <th style={{ padding: "12px 14px" }}>Notes</th>
+                      <th style={{ padding: "12px 14px" }}>Outcome</th>
+                      <th style={{ padding: "12px 14px" }}>Replacement</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingFaculty ? (
+                      <tr>
+                        <td colSpan={12} style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)" }}>
+                          Loading utilization ledger...
+                        </td>
+                      </tr>
+                    ) : facultyUtilizationLedger.length === 0 ? (
+                      <tr>
+                        <td colSpan={12} style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)" }}>
+                          No logged delivery records yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      facultyUtilizationLedger.slice(0, 25).map((row) => (
+                        <tr key={row.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.825rem", verticalAlign: "top" }}>
+                          <td style={{ padding: "12px 14px", color: "var(--text-main)", fontWeight: 600 }}>
+                            {formatDate(row.date_of_training)}
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-main)" }}>
+                            {row.faculty_name || "—"}
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-main)", maxWidth: 240 }}>
+                            <div style={{ whiteSpace: "normal" }}>{row.topic || "—"}</div>
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
+                            {row.no_of_hours ?? "—"}h
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
+                            {row.location_city || "—"}
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
+                            {row.venue || "—"}
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <span style={{
+                              display: "inline-block",
+                              padding: "3px 8px",
+                              borderRadius: 6,
+                              background: "#e8f2fb",
+                              color: "#0b5cab",
+                              fontWeight: 700,
+                              fontSize: "0.72rem"
+                            }}>
+                              {row.mode_of_delivery || "Online"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <span style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              background: row.status === "Completed" ? "#f0fdf4" : row.status === "Cancelled" ? "#fef2f2" : row.status === "InProgress" ? "#fff7ed" : "#e8f2fb",
+                              color: row.status === "Completed" ? "#166534" : row.status === "Cancelled" ? "#b91c1c" : row.status === "InProgress" ? "#b45309" : "#0b5cab",
+                              borderRadius: 6,
+                              padding: "3px 8px",
+                              fontWeight: 700,
+                              fontSize: "0.72rem"
+                            }}>
+                              {row.status || "Scheduled"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
+                            {row.feedback_rating ?? row.rating ?? "—"}
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)", maxWidth: 200 }}>
+                            <div style={{ whiteSpace: "normal" }}>{row.feedback_notes || "—"}</div>
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)", maxWidth: 200 }}>
+                            <div style={{ whiteSpace: "normal" }}>{row.outcome_reason || "—"}</div>
+                          </td>
+                          <td style={{ padding: "12px 14px", color: "var(--text-muted)", maxWidth: 160 }}>
+                            {row.replacement_session_id || "—"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
