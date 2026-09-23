@@ -57,13 +57,16 @@ class BatchBase(BaseModel):
     @model_validator(mode="after")
     def validate_dates(self):
         if self.start_date and self.end_date and self.end_date < self.start_date:
-            raise ValueError("end_date must be on or after start_date")
-
+            self.end_date = self.start_date
         return self
 
 
 class BatchCreate(BatchBase):
-    pass
+    @model_validator(mode="after")
+    def validate_create_dates(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self
 
 
 class BatchApprove(BaseModel):
@@ -175,6 +178,8 @@ class BatchResponse(BatchBase):
     primary_manager: Optional[UserResponse] = None
     coordinator: Optional[UserResponse] = None
     sales_spoc: Optional[UserResponse] = None
+    sessions_conducted: Optional[int] = 0
+    completion_rate: Optional[float] = 0.0
     created_at: datetime
     updated_at: datetime
 

@@ -160,6 +160,8 @@ export interface Batch {
   retrospective_notes?: string | null;
   remarks?: string | null;
   comments?: string | null;
+  sessions_conducted?: number;
+  completion_rate?: number;
   created_at: string;
   updated_at: string;
 }

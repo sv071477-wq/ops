@@ -10,12 +10,14 @@ import {
 } from "lucide-react";
 import { Batch, User, ManagerDashboardSummary } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
+import { PaginationControls } from "./PaginationControls";
 
 interface EnterpriseDashboardProps {
   batches: Batch[];
   users: User[];
   dashboardSummary: ManagerDashboardSummary | null;
   isLoading: boolean;
+  currentUser?: User | null;
 }
 
 type TimePeriod = "daily" | "weekly" | "monthly" | "quarterly" | "all";
@@ -88,26 +90,6 @@ function isBatchInPeriod(batch: Batch, period: TimePeriod): boolean {
   return false;
 }
 
-function MiniBar({ values, color }: { values: number[]; color: string }) {
-  const max = Math.max(...values, 1);
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 28 }}>
-      {values.map((v, i) => (
-        <div
-          key={i}
-          style={{
-            width: 5,
-            height: `${Math.max(4, (v / max) * 28)}px`,
-            background: color,
-            borderRadius: 2,
-            opacity: 0.45 + (i / values.length) * 0.55,
-            transition: "height 0.3s ease",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
 
 function Trend({ value, suffix = "" }: { value: number; suffix?: string }) {
   if (value === 0)
@@ -143,7 +125,6 @@ function KpiCard({
   color,
   icon: Icon,
   trend,
-  sparkValues,
 }: {
   label: string;
   value: string | number;
@@ -151,7 +132,6 @@ function KpiCard({
   color: string;
   icon: React.ElementType;
   trend?: number;
-  sparkValues?: number[];
 }) {
   return (
     <div
@@ -183,11 +163,6 @@ function KpiCard({
         {sub && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{sub}</div>}
         {trend !== undefined && <Trend value={trend} />}
       </div>
-      {sparkValues && (
-        <div style={{ marginTop: 4 }}>
-          <MiniBar values={sparkValues} color={color} />
-        </div>
-      )}
     </div>
   );
 }
@@ -332,37 +307,33 @@ function SvgDeliveryTimeline({
   batches: Batch[];
 }) {
   const points = useMemo(() => {
-    const monthCounts: Record<string, { label: string; count: number; hours: number }> = {};
+    if (!batches || batches.length === 0) return [];
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    
-    // Seed the last 6 months
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthCounts[key] = {
-        label: `${months[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`,
-        count: 0,
-        hours: 0,
-      };
-    }
+    const monthCounts: Record<string, { label: string; count: number; hours: number; sortKey: string }> = {};
 
     batches.forEach((b) => {
       const dateStr = b.start_date || b.created_at;
       if (!dateStr) return;
       const d = new Date(dateStr);
       if (isNaN(d.getTime())) return;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      if (monthCounts[key]) {
-        monthCounts[key].count++;
-        monthCounts[key].hours += Number(b.total_hours) || 0;
+      const sortKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthCounts[sortKey]) {
+        monthCounts[sortKey] = {
+          label: `${months[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`,
+          count: 0,
+          hours: 0,
+          sortKey,
+        };
       }
+      monthCounts[sortKey].count++;
+      monthCounts[sortKey].hours += Number(b.total_hours) || 0;
     });
 
-    return Object.values(monthCounts);
+    const sorted = Object.values(monthCounts).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+    return sorted.slice(-12);
   }, [batches]);
 
-  const maxVal = Math.max(...points.map((p) => p.count), 4);
+  const maxVal = Math.max(...points.map((p) => p.count), 1);
   const width = 540;
   const height = 140;
   const paddingX = 40;
@@ -433,62 +404,392 @@ function SvgDeliveryTimeline({
   );
 }
 
-export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoading }: EnterpriseDashboardProps) {
+/**
+ * SVG Grouped Bar Chart — compare multiple metrics across teams
+ */
+function SvgGroupedBar({
+  groups,
+  series,
+  height = 180,
+}: {
+  groups: { label: string; values: number[] }[];
+  series: { label: string; color: string }[];
+  height?: number;
+}) {
+  const maxVal = Math.max(...groups.flatMap((g) => g.values), 1);
+  const barW = 14;
+  const gap = 4;
+  const groupGap = 20;
+  const paddingL = 36;
+  const paddingB = 28;
+  const seriesCount = series.length;
+  const groupW = seriesCount * (barW + gap) - gap + groupGap;
+  const totalW = paddingL + groups.length * groupW + 20;
+  const chartH = height - paddingB;
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${totalW} ${height}`} style={{ width: "100%", minWidth: Math.min(totalW, 340), height }}>
+        {/* Y gridlines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+          const y = 8 + (1 - pct) * (chartH - 8);
+          const val = Math.round(pct * maxVal);
+          return (
+            <g key={i}>
+              <line x1={paddingL} y1={y} x2={totalW - 10} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" strokeWidth={1} />
+              <text x={paddingL - 4} y={y + 4} textAnchor="end" fontSize={8} fill="#94a3b8">{val}</text>
+            </g>
+          );
+        })}
+        {/* Bars */}
+        {groups.map((group, gi) => {
+          const gX = paddingL + gi * groupW;
+          return (
+            <g key={gi}>
+              {series.map((s, si) => {
+                const val = group.values[si] || 0;
+                const barH = (val / maxVal) * (chartH - 8);
+                const x = gX + si * (barW + gap);
+                const y = chartH - barH;
+                return (
+                  <g key={si}>
+                    <rect x={x} y={y} width={barW} height={Math.max(barH, 1)} fill={s.color} rx={3} opacity={0.88} />
+                    {val > 0 && (
+                      <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize={8} fontWeight={700} fill={s.color}>{val}</text>
+                    )}
+                  </g>
+                );
+              })}
+              <text
+                x={gX + (seriesCount * (barW + gap) - gap) / 2}
+                y={chartH + 12}
+                textAnchor="middle"
+                fontSize={9}
+                fontWeight={600}
+                fill="#64748b"
+              >
+                {group.label.length > 10 ? group.label.slice(0, 9) + "…" : group.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 8, fontSize: "0.72rem", fontWeight: 700 }}>
+        {series.map((s) => (
+          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
+            <span style={{ color: "var(--text-main)" }}>{s.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Mini role composition donut for each team
+ */
+function TeamRoleDonut({ counts, size = 56 }: { counts: Record<string, number>; size?: number }) {
+  const roleColors: Record<string, string> = {
+    Manager: "#0b5cab",
+    Coordinator: "#06b6d4",
+    Faculty: "#8b5cf6",
+    Sales: "#f59e0b",
+    Admin: "#ef4444",
+  };
+  const r = size / 2 - 5;
+  const circ = 2 * Math.PI * r;
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  let acc = 0;
+  const segments = Object.entries(counts).map(([role, count]) => {
+    const frac = total > 0 ? count / total : 0;
+    const dash = frac * circ;
+    const offset = -acc;
+    acc += dash;
+    return { role, count, color: roleColors[role] || "#94a3b8", dash, offset };
+  });
+  return (
+    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f1f5f9" strokeWidth={8} />
+      {total > 0 && segments.map((seg, i) =>
+        seg.count > 0 ? (
+          <circle
+            key={i}
+            cx={size / 2} cy={size / 2} r={r}
+            fill="none" stroke={seg.color} strokeWidth={8}
+            strokeDasharray={`${seg.dash} ${circ}`}
+            strokeDashoffset={seg.offset}
+          />
+        ) : null
+      )}
+    </svg>
+  );
+}
+
+/**
+ * Horizontal ranked bar — city / location heatmap
+ */
+function RankedBars({
+  data,
+  color,
+  maxItems = 8,
+}: {
+  data: { label: string; value: number; sub?: string }[];
+  color: string;
+  maxItems?: number;
+}) {
+  const slice = data.slice(0, maxItems);
+  const maxVal = Math.max(...slice.map((d) => d.value), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {slice.map((item, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 20, fontSize: "0.7rem", fontWeight: 700, color: "var(--text-dim)", textAlign: "right", flexShrink: 0 }}>{i + 1}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{item.label}</span>
+              <span style={{ fontSize: "0.72rem", fontWeight: 800, color, flexShrink: 0 }}>{item.value}{item.sub}</span>
+            </div>
+            <div style={{ height: 6, background: "#f1f5f9", borderRadius: 4 }}>
+              <div style={{ width: `${(item.value / maxVal) * 100}%`, height: "100%", background: color, borderRadius: 4, transition: "width 0.5s" }} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Quality Scatter — NPS vs Feedback bubble
+ */
+function QualityBubble({
+  data,
+}: {
+  data: { label: string; nps: number | null; feedback: number | null; batches: number; color: string }[];
+}) {
+  const w = 380;
+  const h = 200;
+  const pL = 44, pR = 16, pT = 16, pB = 36;
+  const cW = w - pL - pR;
+  const cH = h - pT - pB;
+
+  const validData = data.filter((d) => d.nps !== null && d.feedback !== null);
+  if (validData.length === 0) {
+    return (
+      <div style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+        No NPS / feedback data available yet.
+      </div>
+    );
+  }
+
+  const maxBatches = Math.max(...validData.map((d) => d.batches), 1);
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", minWidth: 300, height: h }}>
+        {/* Axes */}
+        <line x1={pL} y1={pT} x2={pL} y2={pT + cH} stroke="#e2e8f0" strokeWidth={1} />
+        <line x1={pL} y1={pT + cH} x2={pL + cW} y2={pT + cH} stroke="#e2e8f0" strokeWidth={1} />
+        {/* X axis labels: Feedback 1–5 */}
+        {[1, 2, 3, 4, 5].map((v) => (
+          <g key={v}>
+            <line x1={pL + ((v - 1) / 4) * cW} y1={pT} x2={pL + ((v - 1) / 4) * cW} y2={pT + cH} stroke="#f1f5f9" strokeWidth={1} />
+            <text x={pL + ((v - 1) / 4) * cW} y={pT + cH + 14} textAnchor="middle" fontSize={9} fill="#94a3b8">{v}</text>
+          </g>
+        ))}
+        <text x={pL + cW / 2} y={h - 2} textAnchor="middle" fontSize={9} fill="#64748b">Avg Feedback (Gate 1)</text>
+        {/* Y axis labels: NPS -100 to 100 */}
+        {[-100, -50, 0, 50, 100].map((v) => {
+          const y = pT + cH - ((v + 100) / 200) * cH;
+          return (
+            <g key={v}>
+              <line x1={pL} y1={y} x2={pL + cW} y2={y} stroke="#f1f5f9" strokeWidth={1} />
+              <text x={pL - 4} y={y + 4} textAnchor="end" fontSize={8} fill="#94a3b8">{v}</text>
+            </g>
+          );
+        })}
+        {/* Zero NPS line */}
+        <line x1={pL} y1={pT + cH / 2} x2={pL + cW} y2={pT + cH / 2} stroke="#e2e8f0" strokeDasharray="4 3" strokeWidth={1} />
+        {/* Bubbles */}
+        {validData.map((d, i) => {
+          const cx = pL + ((d.feedback! - 1) / 4) * cW;
+          const cy = pT + cH - ((d.nps! + 100) / 200) * cH;
+          const r = 6 + (d.batches / maxBatches) * 14;
+          return (
+            <g key={i}>
+              <circle cx={cx} cy={cy} r={r} fill={d.color} opacity={0.75} />
+              <text x={cx} y={cy + 4} textAnchor="middle" fontSize={8} fontWeight={700} fill="#fff">
+                {d.label.length > 5 ? d.label.slice(0, 5) + "…" : d.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoading, currentUser }: EnterpriseDashboardProps) {
   const [period, setPeriod] = useState<TimePeriod>("monthly");
   const [workloadTab, setWorkloadTab] = useState<"managers" | "coordinators">("managers");
+  const [teamAnalyticsTab, setTeamAnalyticsTab] = useState<"comparison" | "composition" | "quality">("comparison");
 
-  // Precompute live counts for every horizon tab so counts are visible on the buttons
-  const periodCounts = useMemo(() => {
-    return {
-      daily: batches.filter((b) => isBatchInPeriod(b, "daily")).length,
-      weekly: batches.filter((b) => isBatchInPeriod(b, "weekly")).length,
-      monthly: batches.filter((b) => isBatchInPeriod(b, "monthly")).length,
-      quarterly: batches.filter((b) => isBatchInPeriod(b, "quarterly")).length,
-      all: batches.length,
-    };
-  }, [batches]);
+  // Pagination states
+  const [mgrPage, setMgrPage] = useState(1);
+  const [mgrPageSize, setMgrPageSize] = useState(5);
 
-  // Active dataset for dashboard and team analytics directly driven by selected period
-  const activeBatchesDataset = useMemo(
-    () => (period === "all" ? batches : batches.filter((b) => isBatchInPeriod(b, period))),
-    [batches, period]
-  );
+  const [coordPage, setCoordPage] = useState(1);
+  const [coordPageSize, setCoordPageSize] = useState(10);
 
-  const managers = useMemo(() => {
-    const managerIds = new Set(users.filter((u) => u.role === "Manager").map((u) => u.id));
-    return users.filter(
-      (u) => u.role === "Manager" && (!u.manager_id || !managerIds.has(u.manager_id))
-    );
-  }, [users]);
+  const [chartPage, setChartPage] = useState(1);
+  const chartPageSize = 6;
 
-  const managerById = useMemo(() => new Map(users.filter((u) => u.role === "Manager").map((u) => [u.id, u])), [users]);
+  const [activityPage, setActivityPage] = useState(1);
+  const [activityPageSize, setActivityPageSize] = useState(10);
 
-  const coordinators = useMemo(() => {
-    const managerIds = new Set(managers.map((m) => m.id));
-    return users.filter((u) => {
-      if (u.role !== "Coordinator") return false;
-      if (u.manager_id && managerIds.has(u.manager_id)) return true;
-      if (u.manager_name) {
-        return managers.some((m) => m.full_name === u.manager_name);
-      }
-      return false;
-    });
-  }, [users, managers]);
+  const [clientPage, setClientPage] = useState(1);
+  const [clientPageSize, setClientPageSize] = useState(10);
+
+  const currentRole = (currentUser?.role || "").toLowerCase();
+  const isOrgAdmin = currentRole === "admin";
 
   const coordinatorIdsByManager = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    managers.forEach((m) => map.set(m.id, new Set()));
+    users.filter((u) => u.role === "Manager").forEach((m) => map.set(m.id, new Set()));
 
     users.forEach((u) => {
       if (u.role !== "Coordinator") return;
-      const managerId = u.manager_id ||
-        users.find((m) => m.role === "Manager" && m.full_name === u.manager_name)?.id || null;
-      if (!managerId || !map.has(managerId)) return;
+      const managerId =
+        u.manager_id ||
+        users.find((m) => m.role === "Manager" && m.full_name === u.manager_name)?.id ||
+        null;
+      if (!managerId) return;
+      if (!map.has(managerId)) map.set(managerId, new Set());
       map.get(managerId)?.add(u.id);
     });
 
     return map;
-  }, [users, managers]);
+  }, [users]);
+
+  // Find all direct & indirect subordinates strictly BELOW currentUser
+  // User Rules:
+  // 1. "himself should not be considered" -> currentUser is NEVER in subordinates
+  // 2. "and top mangers should not be include" -> any superiors/ancestors are excluded
+  // 3. "only below him" -> only descendants in the reporting tree
+  const subordinateUserIds = useMemo(() => {
+    if (!currentUser) return new Set<string>();
+    if (isOrgAdmin) {
+      // For Admin, all organization staff members except Admin himself
+      return new Set(users.filter((u) => u.id !== currentUser.id).map((u) => u.id));
+    }
+
+    const subordinates = new Set<string>();
+    const queue: string[] = [currentUser.id];
+    const visited = new Set<string>([currentUser.id]);
+
+    while (queue.length > 0) {
+      const parentId = queue.shift()!;
+      users.forEach((u) => {
+        if (visited.has(u.id)) return;
+        const matchesManagerId = u.manager_id === parentId;
+        const parentUser = users.find((p) => p.id === parentId);
+        const matchesManagerName =
+          parentUser && u.manager_name && u.manager_name.toLowerCase() === parentUser.full_name.toLowerCase();
+
+        if (matchesManagerId || matchesManagerName) {
+          visited.add(u.id);
+          subordinates.add(u.id);
+          queue.push(u.id);
+        }
+      });
+
+      const mappedCoordinators = coordinatorIdsByManager.get(parentId);
+      if (mappedCoordinators) {
+        mappedCoordinators.forEach((coordId) => {
+          if (!visited.has(coordId)) {
+            visited.add(coordId);
+            subordinates.add(coordId);
+            queue.push(coordId);
+          }
+        });
+      }
+    }
+
+    return subordinates;
+  }, [currentUser, isOrgAdmin, users, coordinatorIdsByManager]);
+
+  // Subordinate managers strictly below currentUser
+  const managers = useMemo(() => {
+    return users.filter(
+      (u) =>
+        u.role === "Manager" &&
+        u.id !== currentUser?.id && // himself should not be considered
+        subordinateUserIds.has(u.id) // only below him, top managers excluded
+    );
+  }, [users, currentUser, subordinateUserIds]);
+
+  // Subordinate coordinators strictly below currentUser
+  const coordinators = useMemo(() => {
+    return users.filter(
+      (u) =>
+        u.role === "Coordinator" &&
+        u.id !== currentUser?.id &&
+        subordinateUserIds.has(u.id)
+    );
+  }, [users, currentUser, subordinateUserIds]);
+
+  // Batches scoped to current user and their subordinates
+  const scopedBatches = useMemo(() => {
+    if (isOrgAdmin) return batches;
+    if (!currentUser) return batches;
+
+    return batches.filter((b) => {
+      // Direct ownership by current user
+      if (b.primary_manager_id === currentUser.id) return true;
+      // Ownership by subordinate manager
+      if (b.primary_manager_id && subordinateUserIds.has(b.primary_manager_id)) return true;
+      // Coordinated by subordinate coordinator
+      if (b.coordinator_id && subordinateUserIds.has(b.coordinator_id)) return true;
+      return false;
+    });
+  }, [batches, isOrgAdmin, currentUser, subordinateUserIds]);
+
+  // Automatically switch tab if no subordinate managers exist
+  React.useEffect(() => {
+    if (managers.length === 0 && coordinators.length > 0) {
+      setWorkloadTab("coordinators");
+    } else if (managers.length > 0) {
+      setWorkloadTab("managers");
+    }
+  }, [managers.length, coordinators.length]);
+
+  // Reset pagination pages on period filter change
+  React.useEffect(() => {
+    setActivityPage(1);
+    setChartPage(1);
+    setMgrPage(1);
+    setCoordPage(1);
+    setClientPage(1);
+  }, [period]);
+
+  // Precompute live counts for every horizon tab so counts are visible on the buttons
+  const periodCounts = useMemo(() => {
+    return {
+      daily: scopedBatches.filter((b) => isBatchInPeriod(b, "daily")).length,
+      weekly: scopedBatches.filter((b) => isBatchInPeriod(b, "weekly")).length,
+      monthly: scopedBatches.filter((b) => isBatchInPeriod(b, "monthly")).length,
+      quarterly: scopedBatches.filter((b) => isBatchInPeriod(b, "quarterly")).length,
+      all: scopedBatches.length,
+    };
+  }, [scopedBatches]);
+
+  // Active dataset for dashboard and team analytics directly driven by selected period
+  const activeBatchesDataset = useMemo(
+    () => (period === "all" ? scopedBatches : scopedBatches.filter((b) => isBatchInPeriod(b, period))),
+    [scopedBatches, period]
+  );
 
   const statusBuckets = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -518,9 +819,9 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
         .map((m) => {
           const relatedCoordinatorIds = coordinatorIdsByManager.get(m.id) || new Set<string>();
           const mb = activeBatchesDataset.filter((b) => {
-            const isOwnedByManager = b.primary_manager_id === m.id || b.approver_1_id === m.id || b.approver_2_id === m.id;
-            const isManagedByCoordinator = !!b.coordinator_id && relatedCoordinatorIds.has(b.coordinator_id);
-            return isOwnedByManager || isManagedByCoordinator;
+            if (b.primary_manager_id === m.id) return true;
+            if (!b.primary_manager_id && b.coordinator_id && relatedCoordinatorIds.has(b.coordinator_id)) return true;
+            return false;
           });
           return {
             manager: m,
@@ -532,9 +833,14 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             totalEnrollments: mb.reduce((s, b) => s + (Number(b.total_enrollments) || 0), 0),
           };
         })
-        .sort((a, b) => b.active - a.active),
+        .sort((a, b) => b.active - a.active || b.total - a.total),
     [managers, activeBatchesDataset, coordinatorIdsByManager]
   );
+
+  const paginatedManagerWorkload = useMemo(() => {
+    const start = (mgrPage - 1) * mgrPageSize;
+    return managerWorkload.slice(start, start + mgrPageSize);
+  }, [managerWorkload, mgrPage, mgrPageSize]);
 
   const coordinatorWorkload = useMemo(
     () =>
@@ -555,6 +861,11 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     [coordinators, activeBatchesDataset]
   );
 
+  const paginatedCoordinatorWorkload = useMemo(() => {
+    const start = (coordPage - 1) * coordPageSize;
+    return coordinatorWorkload.slice(start, start + coordPageSize);
+  }, [coordinatorWorkload, coordPage, coordPageSize]);
+
   const clientStats = useMemo(() => {
     const map: Record<string, { batches: number; enrollments: number; hours: number; active: number }> = {};
     activeBatchesDataset.forEach((b) => {
@@ -565,8 +876,18 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
       map[c].hours += Number(b.total_hours) || 0;
       if (["Approved", "Upcoming", "Ongoing"].includes(b.status)) map[c].active++;
     });
-    return Object.entries(map).sort((a, b) => b[1].batches - a[1].batches).slice(0, 10);
+    return Object.entries(map).sort((a, b) => b[1].batches - a[1].batches);
   }, [activeBatchesDataset]);
+
+  const paginatedClientStats = useMemo(() => {
+    const start = (clientPage - 1) * clientPageSize;
+    return clientStats.slice(start, start + clientPageSize);
+  }, [clientStats, clientPage, clientPageSize]);
+
+  const paginatedActivityBatches = useMemo(() => {
+    const start = (activityPage - 1) * activityPageSize;
+    return activeBatchesDataset.slice(start, start + activityPageSize);
+  }, [activeBatchesDataset, activityPage, activityPageSize]);
 
   const modeStats = useMemo(() => {
     const map: Record<string, number> = {};
@@ -603,6 +924,155 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   const activeRate = totalBatches > 0 ? Math.round((activeBatchesCount / totalBatches) * 100) : 0;
   const cancellationRate = totalBatches > 0 ? Math.round((cancelledBatches / totalBatches) * 100) : 0;
 
+  // ── TEAM ANALYTICS DERIVATIONS ──────────────────────────────────────────────
+
+  // Distinct teams from users array
+  const teamMap = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; department: string }>();
+    users.forEach((u) => {
+      if (u.team_id && u.team_name) {
+        map.set(u.team_id, { id: u.team_id, name: u.team_name, department: u.department || "Ops" });
+      }
+    });
+    return map;
+  }, [users]);
+
+  // Only include teams that belong to the current manager's own team (e.g. Delivery, not Finance).
+  // Finance managers may appear as subordinates of this user, but their team is excluded here.
+  // Admins see all teams.
+  const teamList = useMemo(() => {
+    const all = Array.from(teamMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    if (isOrgAdmin) return all;
+
+    // Derive the manager's own team_id: prefer currentUser.team_id, fallback to looking up
+    // the full user record from the users array (which is loaded from the admin API).
+    const meInUsers = users.find((u) => u.id === currentUser?.id);
+    const myTeamId = currentUser?.team_id ?? meInUsers?.team_id ?? null;
+
+    return all.filter((t) => {
+      // EXPLICIT REQUIREMENT: Do not include the Finance team in these analyses
+      if (t.name.toLowerCase().includes("finance")) return false;
+
+      // If we know the manager's team, only show that team
+      if (myTeamId && t.id !== myTeamId) return false;
+      // Must have at least one subordinate (or self) member in this team
+      return users.some(
+        (u) =>
+          u.team_id === t.id &&
+          (subordinateUserIds.has(u.id) || u.id === currentUser?.id)
+      );
+    });
+  }, [teamMap, isOrgAdmin, users, subordinateUserIds, currentUser]);
+
+
+  // Per-team member role composition — scoped to subordinate members only (not the full team roster)
+  const teamRoleComposition = useMemo(() => {
+    const result = new Map<string, Record<string, number>>();
+    teamList.forEach((t) => result.set(t.id, {}));
+    users.forEach((u) => {
+      if (!u.team_id || !result.has(u.team_id)) return;
+      // Non-admin: only count users in the manager's direct-report hierarchy
+      if (!isOrgAdmin && !subordinateUserIds.has(u.id) && u.id !== currentUser?.id) return;
+      const rec = result.get(u.team_id)!;
+      rec[u.role] = (rec[u.role] || 0) + 1;
+    });
+    return result;
+  }, [teamList, users, isOrgAdmin, subordinateUserIds, currentUser]);
+
+  // Per-team batch stats (linked via primary_manager or coordinator who belongs to that team)
+  const teamBatchStats = useMemo(() => {
+    const userTeamMap = new Map<string, string>(); // userId -> teamId
+    users.forEach((u) => { if (u.team_id) userTeamMap.set(u.id, u.team_id); });
+
+    const stats = new Map<string, {
+      active: number; completed: number; pipeline: number; total: number;
+      hours: number; enrollments: number;
+      npsValues: number[]; feedbackValues: number[];
+    }>();
+    teamList.forEach((t) => stats.set(t.id, { active: 0, completed: 0, pipeline: 0, total: 0, hours: 0, enrollments: 0, npsValues: [], feedbackValues: [] }));
+
+    activeBatchesDataset.forEach((b) => {
+      // Attribute batch to team of primary_manager or coordinator
+      const ownerTeam =
+        (b.primary_manager_id && userTeamMap.get(b.primary_manager_id)) ||
+        (b.coordinator_id && userTeamMap.get(b.coordinator_id)) ||
+        null;
+      if (!ownerTeam || !stats.has(ownerTeam)) return;
+      const s = stats.get(ownerTeam)!;
+      s.total++;
+      s.hours += Number(b.total_hours) || 0;
+      s.enrollments += Number(b.total_enrollments) || 0;
+      if (["Approved", "Upcoming", "Ongoing"].includes(b.status)) s.active++;
+      else if (b.status === "Completed") s.completed++;
+      else s.pipeline++;
+      if (b.batch_nps !== null && b.batch_nps !== undefined) s.npsValues.push(Number(b.batch_nps));
+      if (b.batch_avg_feedback !== null && b.batch_avg_feedback !== undefined) s.feedbackValues.push(Number(b.batch_avg_feedback));
+    });
+    return stats;
+  }, [teamList, activeBatchesDataset, users]);
+
+  // Team KPI cards data
+  const teamKpiData = useMemo(() =>
+    teamList.map((t) => {
+      const s = teamBatchStats.get(t.id)!;
+      const composition = teamRoleComposition.get(t.id) || {};
+      const memberCount = Object.values(composition).reduce((a, b) => a + b, 0);
+      const avgNps = s.npsValues.length > 0 ? s.npsValues.reduce((a, b) => a + b, 0) / s.npsValues.length : null;
+      const avgFeedback = s.feedbackValues.length > 0 ? s.feedbackValues.reduce((a, b) => a + b, 0) / s.feedbackValues.length : null;
+      return { team: t, memberCount, ...s, avgNps, avgFeedback };
+    }).filter((t) => t.memberCount > 0 || t.total > 0)
+  , [teamList, teamBatchStats, teamRoleComposition]);
+
+  // City / location stats
+  const cityStats = useMemo(() => {
+    const map: Record<string, { batches: number; hours: number; enrollments: number }> = {};
+    activeBatchesDataset.forEach((b) => {
+      const city = b.location_city || "Remote / Online";
+      if (!map[city]) map[city] = { batches: 0, hours: 0, enrollments: 0 };
+      map[city].batches++;
+      map[city].hours += Number(b.total_hours) || 0;
+      map[city].enrollments += Number(b.total_enrollments) || 0;
+    });
+    return Object.entries(map).sort((a, b) => b[1].batches - a[1].batches);
+  }, [activeBatchesDataset]);
+
+  // Client quality bubble data (NPS vs Feedback)
+  const clientQualityData = useMemo(() => {
+    const BUBBLE_COLORS = ["#0b5cab", "#8b5cf6", "#06b6d4", "#f59e0b", "#16a34a", "#ef4444", "#f97316", "#ec4899"];
+    const map: Record<string, { npsSum: number; npsCount: number; fbSum: number; fbCount: number; batches: number }> = {};
+    activeBatchesDataset.forEach((b) => {
+      const key = b.client_name || "Unassigned";
+      if (!map[key]) map[key] = { npsSum: 0, npsCount: 0, fbSum: 0, fbCount: 0, batches: 0 };
+      map[key].batches++;
+      if (b.batch_nps !== null && b.batch_nps !== undefined) { map[key].npsSum += Number(b.batch_nps); map[key].npsCount++; }
+      if (b.batch_avg_feedback !== null && b.batch_avg_feedback !== undefined) { map[key].fbSum += Number(b.batch_avg_feedback); map[key].fbCount++; }
+    });
+    return Object.entries(map)
+      .filter(([, v]) => v.npsCount > 0 || v.fbCount > 0)
+      .sort((a, b) => b[1].batches - a[1].batches)
+      .slice(0, 12)
+      .map(([label, v], i) => ({
+        label,
+        nps: v.npsCount > 0 ? v.npsSum / v.npsCount : null,
+        feedback: v.fbCount > 0 ? v.fbSum / v.fbCount : null,
+        batches: v.batches,
+        color: BUBBLE_COLORS[i % BUBBLE_COLORS.length],
+      }));
+  }, [activeBatchesDataset]);
+
+  // Technology breakdown
+  const techStats = useMemo(() => {
+    const map: Record<string, { batches: number; hours: number; active: number }> = {};
+    activeBatchesDataset.forEach((b) => {
+      const tech = b.technology || "General";
+      if (!map[tech]) map[tech] = { batches: 0, hours: 0, active: 0 };
+      map[tech].batches++;
+      map[tech].hours += Number(b.total_hours) || 0;
+      if (["Approved", "Upcoming", "Ongoing"].includes(b.status)) map[tech].active++;
+    });
+    return Object.entries(map).sort((a, b) => b[1].batches - a[1].batches);
+  }, [activeBatchesDataset]);
+
   // Donut chart segments for status
   const donutData = useMemo(() => [
     { label: "Live Delivery", count: activeBatchesDataset.filter((b) => ["Upcoming", "Ongoing"].includes(b.status)).length, color: "#8b5cf6" },
@@ -631,11 +1101,13 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               Team Analytics & Operations Command
             </h2>
             <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0b5cab", padding: "3px 8px", borderRadius: 12 }}>
-              Executive View
+              {isOrgAdmin ? "Executive View (All Teams)" : `Team Scope: ${currentUser?.full_name || "Manager View"}`}
             </span>
           </div>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-            Visual workload distribution, operational throughput, and capacity analytics.
+            {isOrgAdmin
+              ? "Organization-wide visual workload distribution, operational throughput, and capacity analytics."
+              : `Visual workload analytics strictly scoped to reporting personnel below ${currentUser?.full_name || "your management line"}.`}
           </p>
         </div>
 
@@ -713,14 +1185,335 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
       {/* KPI Strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))", gap: 14 }}>
-        <KpiCard label="Total Batches" value={totalBatches} sub="Under governance" color="#0b5cab" icon={Briefcase} sparkValues={[2, 4, 3, 5, 6, 4, 7, totalBatches]} />
-        <KpiCard label="Active Batches" value={activeBatchesCount} sub={`${activeRate}% of portfolio`} color="#8b5cf6" icon={Activity} sparkValues={[1, 2, 3, 2, 4, 3, 5, activeBatchesCount]} />
+        <KpiCard label="Total Batches" value={totalBatches} sub="Under governance" color="#0b5cab" icon={Briefcase} />
+        <KpiCard label="Active Batches" value={activeBatchesCount} sub={`${activeRate}% of portfolio`} color="#8b5cf6" icon={Activity} />
         <KpiCard label="Total Enrollments" value={totalEnrollments.toLocaleString()} sub="Learners deployed" color="#06b6d4" icon={Users} />
         <KpiCard label="Scheduled Hours" value={`${Math.round(totalHours).toLocaleString()}h`} sub="Curriculum delivery" color="#f59e0b" icon={Clock} />
         <KpiCard label="Completed" value={completedBatches} sub={`${completionRate}% completion rate`} color="#16a34a" icon={CheckCircle2} />
         <KpiCard label="Pending Approvals" value={pendingApprovals} sub="Awaiting signoff" color="#f97316" icon={AlertTriangle} />
         <KpiCard label="On Hold" value={onHoldBatches} sub="Action required" color="#d97706" icon={Shield} />
         <KpiCard label="Cancellations" value={cancelledBatches} sub={`${cancellationRate}% cancellation rate`} color="#ef4444" icon={TrendingDown} />
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* TEAM ANALYTICS — 5 rich visualizations derived from the DB schema  */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+
+      {/* Team KPI Cards — one per team */}
+      {teamKpiData.length > 0 && (
+        <div className="glass-panel" style={{ padding: "22px 24px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
+            <SectionHeader
+              title="Team Performance Overview"
+              sub="Per-team batch delivery KPIs, member breakdown and quality scores"
+              icon={Users}
+            />
+            <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "#f1f5f9", color: "var(--text-dim)", padding: "3px 9px", borderRadius: 12 }}>
+              {teamKpiData.length} Teams
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 14 }}>
+            {teamKpiData.map((t, ci) => {
+              const CARD_COLORS = ["#0b5cab", "#8b5cf6", "#06b6d4", "#16a34a", "#f59e0b", "#f97316", "#ec4899", "#ef4444"];
+              const color = CARD_COLORS[ci % CARD_COLORS.length];
+              const composition = teamRoleComposition.get(t.team.id) || {};
+              const totalMembers = t.memberCount;
+              return (
+                <div
+                  key={t.team.id}
+                  style={{
+                    border: "1px solid var(--border-subtle)",
+                    borderRadius: 12,
+                    padding: "16px 18px",
+                    background: `${color}05`,
+                    borderLeft: `4px solid ${color}`,
+                    position: "relative",
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Team header */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: "0.92rem", color, lineHeight: 1.2 }}>{t.team.name}</div>
+                      <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 600, marginTop: 2 }}>{t.team.department}</div>
+                    </div>
+                    <TeamRoleDonut counts={composition} size={48} />
+                  </div>
+
+                  {/* 4-grid KPI */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    {[
+                      { label: "Members", val: totalMembers, col: color },
+                      { label: "Active Batches", val: t.active, col: "#8b5cf6" },
+                      { label: "Completed", val: t.completed, col: "#16a34a" },
+                      { label: "Hours", val: `${Math.round(t.hours)}h`, col: "#f59e0b" },
+                    ].map(({ label, val, col }) => (
+                      <div key={label}>
+                        <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 800, color: col }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Role pills */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+                    {Object.entries(composition).map(([role, count]) => {
+                      const roleColors: Record<string, string> = {
+                        Manager: "#0b5cab", Coordinator: "#06b6d4",
+                        Faculty: "#8b5cf6", Sales: "#f59e0b", Admin: "#ef4444",
+                      };
+                      const rc = roleColors[role] || "#94a3b8";
+                      return (
+                        <span key={role} style={{ fontSize: "0.65rem", fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: `${rc}15`, color: rc, border: `1px solid ${rc}30` }}>
+                          {role}: {count}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  {/* NPS & Feedback */}
+                  <div style={{ display: "flex", gap: 14, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
+                    <div>
+                      <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>Avg NPS</div>
+                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: t.avgNps !== null ? (t.avgNps >= 50 ? "#16a34a" : t.avgNps >= 0 ? "#f59e0b" : "#ef4444") : "#94a3b8" }}>
+                        {t.avgNps !== null ? t.avgNps.toFixed(1) : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>Avg Feedback</div>
+                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: t.avgFeedback !== null ? (t.avgFeedback >= 4 ? "#16a34a" : t.avgFeedback >= 3 ? "#f59e0b" : "#ef4444") : "#94a3b8" }}>
+                        {t.avgFeedback !== null ? t.avgFeedback.toFixed(2) : "—"}
+                        {t.avgFeedback !== null && <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 500 }}> / 5</span>}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>Enrollments</div>
+                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: "#06b6d4" }}>{t.enrollments.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Team Comparison Charts — 3-tab panel */}
+      <div className="glass-panel" style={{ padding: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+          <SectionHeader
+            title="Team Analytics Deep-Dive"
+            sub="Detailed cross-team performance, composition, and quality analysis"
+            icon={BarChart3}
+          />
+          <div style={{ display: "flex", gap: 4, background: "#f8fafc", padding: "4px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
+            {(["comparison", "composition", "quality"] as const).map((tab) => {
+              const labels = { comparison: "📊 Delivery Comparison", composition: "🧩 Role Composition", quality: "⭐ Quality Matrix" };
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setTeamAnalyticsTab(tab)}
+                  style={{
+                    padding: "6px 13px",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "0.77rem",
+                    fontWeight: 700,
+                    background: teamAnalyticsTab === tab ? "linear-gradient(135deg,#0b5cab,#1d6ed8)" : "transparent",
+                    color: teamAnalyticsTab === tab ? "#fff" : "var(--text-dim)",
+                    transition: "all 0.2s",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {labels[tab]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Tab: Delivery Comparison */}
+        {teamAnalyticsTab === "comparison" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+            {/* Left: Grouped bar chart per team */}
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 14 }}>Batch Delivery Status by Team</div>
+              {teamKpiData.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: "0.82rem" }}>No team data available.</div>
+              ) : (
+                <SvgGroupedBar
+                  groups={teamKpiData.map((t) => ({
+                    label: t.team.name,
+                    values: [t.active, t.completed, t.pipeline],
+                  }))}
+                  series={[
+                    { label: "Active", color: "#8b5cf6" },
+                    { label: "Completed", color: "#16a34a" },
+                    { label: "Pipeline", color: "#f59e0b" },
+                  ]}
+                  height={200}
+                />
+              )}
+            </div>
+
+            {/* Right: Hours delivered per team */}
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 14 }}>Training Hours Delivered per Team</div>
+              {teamKpiData.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: "0.82rem" }}>No team data available.</div>
+              ) : (
+                <RankedBars
+                  data={teamKpiData
+                    .sort((a, b) => b.hours - a.hours)
+                    .map((t) => ({ label: t.team.name, value: Math.round(t.hours), sub: "h" }))}
+                  color="#0b5cab"
+                  maxItems={8}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Role Composition */}
+        {teamAnalyticsTab === "composition" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+              {teamKpiData.map((t, ci) => {
+                const CARD_COLORS = ["#0b5cab", "#8b5cf6", "#06b6d4", "#16a34a", "#f59e0b", "#f97316"];
+                const color = CARD_COLORS[ci % CARD_COLORS.length];
+                const composition = teamRoleComposition.get(t.team.id) || {};
+                const total = Object.values(composition).reduce((a, b) => a + b, 0);
+                const roleColors: Record<string, string> = { Manager: "#0b5cab", Coordinator: "#06b6d4", Faculty: "#8b5cf6", Sales: "#f59e0b", Admin: "#ef4444" };
+                return (
+                  <div key={t.team.id} style={{ border: "1px solid var(--border-subtle)", borderRadius: 12, padding: "14px 16px", background: `${color}05`, borderTop: `3px solid ${color}` }}>
+                    <div style={{ fontWeight: 800, fontSize: "0.88rem", color, marginBottom: 4 }}>{t.team.name}</div>
+                    <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: 12 }}>{total} members · {t.team.department}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <TeamRoleDonut counts={composition} size={64} />
+                      <div style={{ flex: 1 }}>
+                        {Object.entries(composition).map(([role, count]) => {
+                          const rc = roleColors[role] || "#94a3b8";
+                          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                          return (
+                            <div key={role} style={{ marginBottom: 5 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                                <span style={{ fontSize: "0.68rem", fontWeight: 700, color: rc }}>{role}</span>
+                                <span style={{ fontSize: "0.68rem", color: "var(--text-dim)" }}>{count} ({pct}%)</span>
+                              </div>
+                              <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2 }}>
+                                <div style={{ width: `${pct}%`, height: "100%", background: rc, borderRadius: 2 }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Technology breakdown */}
+            <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 18 }}>
+              <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 14 }}>
+                <Layers size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
+                Technology Stack Distribution
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
+                {techStats.slice(0, 10).map(([tech, s], i) => {
+                  const TECH_COLORS = ["#0b5cab", "#8b5cf6", "#06b6d4", "#f59e0b", "#16a34a", "#f97316", "#ec4899", "#ef4444", "#64748b", "#a855f7"];
+                  const c = TECH_COLORS[i % TECH_COLORS.length];
+                  const activePct = s.batches > 0 ? Math.round((s.active / s.batches) * 100) : 0;
+                  return (
+                    <div key={tech} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: `${c}06` }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: `${c}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <span style={{ fontSize: "0.8rem", fontWeight: 800, color: c }}>{s.batches}</span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tech}</div>
+                        <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{Math.round(s.hours)}h · {activePct}% active</div>
+                        <div style={{ height: 3, background: "#e2e8f0", borderRadius: 2, marginTop: 3 }}>
+                          <div style={{ width: `${activePct}%`, height: "100%", background: c, borderRadius: 2 }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Quality Matrix */}
+        {teamAnalyticsTab === "quality" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+            {/* NPS vs Feedback bubble chart */}
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 8 }}>Client NPS vs Avg Feedback (bubble = batch volume)</div>
+              <QualityBubble data={clientQualityData} />
+              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 8, display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {clientQualityData.map((d) => (
+                  <div key={d.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                    <span>{d.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* City heatmap + team NPS ranked */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 12 }}>
+                  <MapPin size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                  Top Delivery Locations
+                </div>
+                <RankedBars
+                  data={cityStats.map(([city, s]) => ({ label: city, value: s.batches }))}
+                  color="#06b6d4"
+                  maxItems={6}
+                />
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 14 }}>
+                <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 12 }}>
+                  <Award size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                  Team NPS League
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {teamKpiData
+                    .filter((t) => t.avgNps !== null)
+                    .sort((a, b) => (b.avgNps || 0) - (a.avgNps || 0))
+                    .map((t, rank) => {
+                      const nps = t.avgNps!;
+                      const npsColor = nps >= 50 ? "#16a34a" : nps >= 0 ? "#f59e0b" : "#ef4444";
+                      const pct = Math.max(0, Math.min(100, ((nps + 100) / 200) * 100));
+                      return (
+                        <div key={t.team.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 22, height: 22, borderRadius: "50%", background: rank < 3 ? npsColor : "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.65rem", fontWeight: 800, color: rank < 3 ? "#fff" : "var(--text-dim)", flexShrink: 0 }}>
+                            {rank + 1}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                              <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)" }}>{t.team.name}</span>
+                              <span style={{ fontSize: "0.78rem", fontWeight: 800, color: npsColor }}>{nps.toFixed(1)}</span>
+                            </div>
+                            <div style={{ height: 5, background: "#f1f5f9", borderRadius: 3 }}>
+                              <div style={{ width: `${pct}%`, height: "100%", background: npsColor, borderRadius: 3 }} />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {teamKpiData.filter((t) => t.avgNps !== null).length === 0 && (
+                    <div style={{ textAlign: "center", padding: "16px 0", color: "var(--text-muted)", fontSize: "0.8rem" }}>No NPS data yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* PRIMARY SECTION: Team Workload Graphs & Visual Distribution */}
@@ -787,10 +1580,27 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
         {/* Stacked Visual Bar Graph */}
         {workloadTab === "managers" ? (
           managerWorkload.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>No manager workload data available.</div>
+            <div style={{ textAlign: "center", padding: "36px 20px", color: "var(--text-muted)", background: "#f8fafc", borderRadius: 10, border: "1px dashed var(--border-subtle)" }}>
+              <Briefcase size={36} color="#94a3b8" style={{ margin: "0 auto 12px" }} />
+              <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+                No Subordinate Managers
+              </div>
+              <div style={{ fontSize: "0.83rem", color: "var(--text-muted)", maxWidth: 440, margin: "0 auto 16px" }}>
+                There are no managerial personnel reporting below your management line. You are directly managing {coordinators.length} coordinator(s).
+              </div>
+              {coordinators.length > 0 && (
+                <button
+                  onClick={() => setWorkloadTab("coordinators")}
+                  className="btn btn-primary"
+                  style={{ padding: "6px 16px", fontSize: "0.8rem" }}
+                >
+                  View Coordinators ({coordinators.length})
+                </button>
+              )}
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {managerWorkload.map((w) => {
+              {paginatedManagerWorkload.map((w) => {
                 const total = Math.max(w.total, 1);
                 const activePct = (w.active / total) * 100;
                 const pendingPct = (w.pending / total) * 100;
@@ -855,13 +1665,24 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                   </div>
                 );
               })}
+              {managerWorkload.length > mgrPageSize && (
+                <PaginationControls
+                  currentPage={mgrPage}
+                  totalItems={managerWorkload.length}
+                  pageSize={mgrPageSize}
+                  onPageChange={setMgrPage}
+                  onPageSizeChange={setMgrPageSize}
+                  pageSizeOptions={[3, 5, 10]}
+                  color="#0b5cab"
+                />
+              )}
             </div>
           )
         ) : coordinatorWorkload.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>No coordinator workload data available.</div>
+          <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>No coordinator workload data available in your scope.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {coordinatorWorkload.map((w) => {
+            {paginatedCoordinatorWorkload.map((w) => {
               const total = Math.max(w.total, 1);
               const activePct = (w.active / total) * 100;
               const pendingPct = (w.pending / total) * 100;
@@ -926,6 +1747,17 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 </div>
               );
             })}
+            {coordinatorWorkload.length > coordPageSize && (
+              <PaginationControls
+                currentPage={coordPage}
+                totalItems={coordinatorWorkload.length}
+                pageSize={coordPageSize}
+                onPageChange={setCoordPage}
+                onPageSizeChange={setCoordPageSize}
+                pageSizeOptions={[5, 10, 20]}
+                color="#06b6d4"
+              />
+            )}
           </div>
         )}
       </div>
@@ -1097,11 +1929,11 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               {managerWorkload.length === 0 ? (
                 <tr>
                   <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                    No manager data available.
+                    No subordinate managers reporting under your direct line.
                   </td>
                 </tr>
               ) : (
-                managerWorkload.map(({ manager, total, active, pending, completed, totalHours, totalEnrollments }) => {
+                paginatedManagerWorkload.map(({ manager, total, active, pending, completed, totalHours, totalEnrollments }) => {
                   const load = total > 0 ? Math.round((active / total) * 100) : 0;
                   const loadColor = load >= 75 ? "#ef4444" : load >= 45 ? "#f59e0b" : "#16a34a";
                   return (
@@ -1141,12 +1973,23 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             </tbody>
           </table>
         </div>
+        {managerWorkload.length > 0 && (
+          <PaginationControls
+            currentPage={mgrPage}
+            totalItems={managerWorkload.length}
+            pageSize={mgrPageSize}
+            onPageChange={setMgrPage}
+            onPageSizeChange={setMgrPageSize}
+            pageSizeOptions={[5, 10, 20]}
+            color="#0b5cab"
+          />
+        )}
       </div>
 
       {/* Detailed Coordinator Workload Ledger Table */}
       <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "18px 22px", borderBottom: "1px solid var(--border-subtle)" }}>
-          <SectionHeader title="Coordinator Workload Ledger" sub={`${coordinators.length} coordinator(s) — operational capacity & batch tracking`} icon={Users} />
+          <SectionHeader title="Coordinator Workload Ledger" sub={`${coordinators.length} coordinator(s) in scope — operational capacity & batch tracking`} icon={Users} />
         </div>
         <div style={{ overflowX: "auto" }}>
           <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
@@ -1163,11 +2006,11 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               {coordinatorWorkload.length === 0 ? (
                 <tr>
                   <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                    No coordinator data available.
+                    No coordinator data available in your scope.
                   </td>
                 </tr>
               ) : (
-                coordinatorWorkload.map(({ coordinator, total, active, pending, completed, totalHours, totalEnrollments }) => {
+                paginatedCoordinatorWorkload.map(({ coordinator, total, active, pending, completed, totalHours, totalEnrollments }) => {
                   const capacity = total > 0 ? Math.round((active / total) * 100) : 0;
                   const capColor = capacity >= 80 ? "#ef4444" : capacity >= 45 ? "#f59e0b" : "#06b6d4";
                   return (
@@ -1207,6 +2050,17 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             </tbody>
           </table>
         </div>
+        {coordinatorWorkload.length > 0 && (
+          <PaginationControls
+            currentPage={coordPage}
+            totalItems={coordinatorWorkload.length}
+            pageSize={coordPageSize}
+            onPageChange={setCoordPage}
+            onPageSizeChange={setCoordPageSize}
+            pageSizeOptions={[5, 10, 20, 50]}
+            color="#06b6d4"
+          />
+        )}
       </div>
 
       {/* Client Portfolio + Executive Quality Panel */}
@@ -1226,20 +2080,39 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               </tr>
             </thead>
             <tbody>
-              {clientStats.map(([client, stats], i) => (
-                <tr key={client} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.82rem" }}>
-                  <td style={{ padding: "10px 16px", color: "var(--text-dim)", fontWeight: 700 }}>{i + 1}</td>
-                  <td style={{ padding: "10px 16px", fontWeight: 700 }}>{client}</td>
-                  <td style={{ padding: "10px 16px", fontWeight: 800, color: "#0b5cab" }}>{stats.batches}</td>
-                  <td style={{ padding: "10px 16px" }}>
-                    {stats.active > 0 ? <span style={{ color: "#16a34a", fontWeight: 700 }}>{stats.active}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
+              {clientStats.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)" }}>
+                    No client data available in this horizon.
                   </td>
-                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>{stats.enrollments.toLocaleString()}</td>
-                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>{Math.round(stats.hours)}h</td>
                 </tr>
-              ))}
+              ) : (
+                paginatedClientStats.map(([client, stats], i) => (
+                  <tr key={client} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.82rem" }}>
+                    <td style={{ padding: "10px 16px", color: "var(--text-dim)", fontWeight: 700 }}>{(clientPage - 1) * clientPageSize + i + 1}</td>
+                    <td style={{ padding: "10px 16px", fontWeight: 700 }}>{client}</td>
+                    <td style={{ padding: "10px 16px", fontWeight: 800, color: "#0b5cab" }}>{stats.batches}</td>
+                    <td style={{ padding: "10px 16px" }}>
+                      {stats.active > 0 ? <span style={{ color: "#16a34a", fontWeight: 700 }}>{stats.active}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>{stats.enrollments.toLocaleString()}</td>
+                    <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>{Math.round(stats.hours)}h</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+          {clientStats.length > clientPageSize && (
+            <PaginationControls
+              currentPage={clientPage}
+              totalItems={clientStats.length}
+              pageSize={clientPageSize}
+              onPageChange={setClientPage}
+              onPageSizeChange={setClientPageSize}
+              pageSizeOptions={[5, 10, 20]}
+              color="#0b5cab"
+            />
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1321,7 +2194,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 </tr>
               </thead>
               <tbody>
-                {activeBatchesDataset.slice(0, 20).map((b) => (
+                {paginatedActivityBatches.map((b) => (
                   <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.81rem" }}>
                     <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0b5cab", whiteSpace: "nowrap" }}>{b.batch_id}</td>
                     <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
@@ -1352,10 +2225,16 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 ))}
               </tbody>
             </table>
-            {activeBatchesDataset.length > 20 && (
-              <div style={{ textAlign: "center", padding: "12px 0", fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                Showing 20 of {activeBatchesDataset.length} batches.
-              </div>
+            {activeBatchesDataset.length > 0 && (
+              <PaginationControls
+                currentPage={activityPage}
+                totalItems={activeBatchesDataset.length}
+                pageSize={activityPageSize}
+                onPageChange={setActivityPage}
+                onPageSizeChange={setActivityPageSize}
+                pageSizeOptions={[10, 25, 50, 100]}
+                color="#0b5cab"
+              />
             )}
           </div>
         )}

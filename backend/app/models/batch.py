@@ -105,6 +105,34 @@ class Batch(Base):
     def delivery_mode(self, value: str):
         self._delivery_mode_name = value
 
+    @property
+    def sessions_conducted(self) -> int:
+        val = getattr(self, "_sessions_conducted", None)
+        if val is not None:
+            return val
+        if self.status == "Completed":
+            return self.training_days or 1
+        return 0
+
+    @sessions_conducted.setter
+    def sessions_conducted(self, value: int):
+        self._sessions_conducted = value
+
+    @property
+    def completion_rate(self) -> float:
+        val = getattr(self, "_completion_rate", None)
+        if val is not None:
+            return val
+        if self.status == "Completed":
+            return 100.0
+        conducted = self.sessions_conducted
+        total = self.training_days or conducted or 1
+        return round(min(100.0, (conducted / total) * 100.0), 1)
+
+    @completion_rate.setter
+    def completion_rate(self, value: float):
+        self._completion_rate = value
+
 
 class BatchOptionMixin:
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)

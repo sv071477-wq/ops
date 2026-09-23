@@ -44,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
 
   const isAdmin = user?.role?.toLowerCase() === "admin";
-  const isFinance = user?.team_name?.trim().toLowerCase() === "finance";
+  const isFinance = user?.team_name?.trim().toLowerCase() === "finance" || user?.role?.toLowerCase() === "finance";
   const isApprover = user?.is_configured_approver === true;
   const canCreateBatch = !isAdmin && user?.team_name?.trim().toLowerCase() === "delivery";
   const isManager = (user?.direct_reports_count ?? 0) > 0 || user?.is_manager || user?.role?.toLowerCase() === "manager" || isAdmin;
@@ -581,37 +581,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <Zap size={17} color={activeView === "analytics" ? "#0f172a" : "#64748b"} />
               <span>Team Analytics</span>
-            </button>
-          )}
-
-          {/* Finance Review for Non-Finance Users who have access */}
-          {!isFinance && (isAdmin || isManager) && (
-            <button
-              onClick={() => setActiveView("finance")}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "none",
-                outline: "none",
-                background: activeView === "finance" ? "#f4f4f5" : "transparent",
-                color: activeView === "finance" ? "#0f172a" : "#475569",
-                fontWeight: activeView === "finance" ? 700 : 500,
-                fontSize: "0.875rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              onMouseOver={(e) => {
-                if (activeView !== "finance") e.currentTarget.style.background = "#f8fafc";
-              }}
-              onMouseOut={(e) => {
-                if (activeView !== "finance") e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <Layers size={17} color={activeView === "finance" ? "#0f172a" : "#64748b"} />
-              <span>Finance Review</span>
             </button>
           )}
         </div>

@@ -135,7 +135,7 @@ def list_batches(
     client_name: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 5000,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:

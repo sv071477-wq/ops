@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
@@ -9,10 +9,11 @@ import {
 import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { Navbar } from "@/components/Navbar";
 import { ChangePasswordModal } from "@/components/ChangePasswordModal";
+import { PaginationControls } from "@/components/PaginationControls";
 import {
   Shield, Users, Tag, UserPlus, Plus, Trash2, CheckCircle2,
   AlertCircle, RefreshCw, GitFork, Briefcase, Layers, Building2,
-  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2, Link2, KeyRound
+  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2, Link2, KeyRound, Search
 } from "lucide-react";
 
 // Recursive Org Tree Node Component
@@ -227,6 +228,70 @@ export default function AdminPortalPage() {
   const [mappingManagerId, setMappingManagerId] = useState("");
   const [mappingFormError, setMappingFormError] = useState<string | null>(null);
   const [isSubmittingMapping, setIsSubmittingMapping] = useState(false);
+
+  // Pagination states for all admin tables
+  const [userPage, setUserPage] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(10);
+  const [userSearch, setUserSearch] = useState("");
+
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamPageSize, setTeamPageSize] = useState(10);
+
+  const [rolePage, setRolePage] = useState(1);
+  const [rolePageSize, setRolePageSize] = useState(10);
+
+  const [optionPage, setOptionPage] = useState(1);
+  const [optionPageSize, setOptionPageSize] = useState(10);
+
+  const [fmsLogPage, setFmsLogPage] = useState(1);
+  const [fmsLogPageSize, setFmsLogPageSize] = useState(10);
+
+  const [mappingPage, setMappingPage] = useState(1);
+  const [mappingPageSize, setMappingPageSize] = useState(10);
+
+  // Derived filtered & paginated records
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(
+      (u) =>
+        u.full_name?.toLowerCase().includes(q) ||
+        u.email?.toLowerCase().includes(q) ||
+        u.role?.toLowerCase().includes(q) ||
+        u.team_name?.toLowerCase().includes(q) ||
+        u.manager_name?.toLowerCase().includes(q)
+    );
+  }, [users, userSearch]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (userPage - 1) * userPageSize;
+    return filteredUsers.slice(start, start + userPageSize);
+  }, [filteredUsers, userPage, userPageSize]);
+
+  const paginatedTeams = useMemo(() => {
+    const start = (teamPage - 1) * teamPageSize;
+    return teams.slice(start, start + teamPageSize);
+  }, [teams, teamPage, teamPageSize]);
+
+  const paginatedRoles = useMemo(() => {
+    const start = (rolePage - 1) * rolePageSize;
+    return roles.slice(start, start + rolePageSize);
+  }, [roles, rolePage, rolePageSize]);
+
+  const paginatedOptions = useMemo(() => {
+    const start = (optionPage - 1) * optionPageSize;
+    return batchOptions.slice(start, start + optionPageSize);
+  }, [batchOptions, optionPage, optionPageSize]);
+
+  const paginatedFmsLogs = useMemo(() => {
+    const start = (fmsLogPage - 1) * fmsLogPageSize;
+    return fmsLogs.slice(start, start + fmsLogPageSize);
+  }, [fmsLogs, fmsLogPage, fmsLogPageSize]);
+
+  const paginatedMappings = useMemo(() => {
+    const start = (mappingPage - 1) * mappingPageSize;
+    return mappings.slice(start, start + mappingPageSize);
+  }, [mappings, mappingPage, mappingPageSize]);
 
   // Security Check
   useEffect(() => {
@@ -980,7 +1045,7 @@ export default function AdminPortalPage() {
                       </td>
                     </tr>
                   ) : (
-                    teams.map((t) => (
+                    paginatedTeams.map((t) => (
                       <tr key={t.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
                         <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
                           {t.name}
@@ -1061,6 +1126,17 @@ export default function AdminPortalPage() {
                   )}
                 </tbody>
               </table>
+
+              <PaginationControls
+                currentPage={teamPage}
+                totalItems={teams.length}
+                pageSize={teamPageSize}
+                onPageChange={setTeamPage}
+                onPageSizeChange={(newSize) => {
+                  setTeamPageSize(newSize);
+                  setTeamPage(1);
+                }}
+              />
             </div>
           </div>
         )}
@@ -1123,7 +1199,7 @@ export default function AdminPortalPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {roles.map((r) => (
+                  {paginatedRoles.map((r) => (
                     <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
                       <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
                         {r.name}
@@ -1151,6 +1227,17 @@ export default function AdminPortalPage() {
                   ))}
                 </tbody>
               </table>
+
+              <PaginationControls
+                currentPage={rolePage}
+                totalItems={roles.length}
+                pageSize={rolePageSize}
+                onPageChange={setRolePage}
+                onPageSizeChange={(newSize) => {
+                  setRolePageSize(newSize);
+                  setRolePage(1);
+                }}
+              />
             </div>
           </div>
         )}
@@ -1222,7 +1309,7 @@ export default function AdminPortalPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {batchOptions.map((opt) => (
+                    {paginatedOptions.map((opt) => (
                       <tr key={opt.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
                         <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
                           {opt.name}
@@ -1248,6 +1335,17 @@ export default function AdminPortalPage() {
                     ))}
                   </tbody>
                 </table>
+
+                <PaginationControls
+                  currentPage={optionPage}
+                  totalItems={batchOptions.length}
+                  pageSize={optionPageSize}
+                  onPageChange={setOptionPage}
+                  onPageSizeChange={(newSize) => {
+                    setOptionPageSize(newSize);
+                    setOptionPage(1);
+                  }}
+                />
               </div>
             )}
           </div>
@@ -1266,7 +1364,22 @@ export default function AdminPortalPage() {
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ position: "relative", minWidth: 260 }}>
+                  <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
+                  <input
+                    type="text"
+                    placeholder="Search staff by name, email, role, team..."
+                    value={userSearch}
+                    onChange={(e) => {
+                      setUserSearch(e.target.value);
+                      setUserPage(1);
+                    }}
+                    className="glass-input"
+                    style={{ paddingLeft: 32, fontSize: "0.825rem", width: "100%" }}
+                  />
+                </div>
+
                 <button
                   onClick={() => handleOpenChangePassword(null)}
                   className="btn btn-secondary"
@@ -1302,76 +1415,96 @@ export default function AdminPortalPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                      <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
-                        {u.full_name}
-                      </td>
-                      <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
-                        {u.email}
-                      </td>
-                      <td style={{ padding: "14px 16px" }}>
-                        <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600, background: "#e8f2fb", color: "#0b5cab" }}>
-                          {u.role_detail?.name || u.role}
-                        </span>
-                      </td>
-                      <td style={{ padding: "14px 16px" }}>
-                        {u.team_detail ? (
-                          <span style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "0.85rem" }}>
-                            {u.team_detail.name}
-                          </span>
-                        ) : (
-                          <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>— Unassigned —</span>
-                        )}
-                      </td>
-                      <td style={{ padding: "14px 16px", color: u.manager_name ? "var(--text-main)" : "var(--text-dim)", fontSize: "0.825rem" }}>
-                        {u.manager_name || "— Top Level —"}
-                      </td>
-                      <td style={{ padding: "14px 16px" }}>
-                        {u.direct_reports_count && u.direct_reports_count > 0 ? (
-                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 700, background: "#f0fdf4", color: "#16a34a" }}>
-                            {u.direct_reports_count} direct report(s)
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>0</span>
-                        )}
-                      </td>
-                      <td style={{ padding: "14px 16px" }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: u.is_active ? "#16a34a" : "#94a3b8", fontSize: "0.8rem", fontWeight: 600 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.is_active ? "#16a34a" : "#94a3b8" }} />
-                          {u.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button
-                          onClick={() => handleOpenChangePassword(u)}
-                          title="Change User Password"
-                          aria-label={`Change password for ${u.full_name}`}
-                          style={{ background: "transparent", border: "none", color: "#d97706", cursor: "pointer", padding: 6 }}
-                        >
-                          <KeyRound size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleOpenEditUser(u)}
-                          title="Edit staff member"
-                          aria-label={`Edit ${u.full_name}`}
-                          style={{ background: "transparent", border: "none", color: "#0b5cab", cursor: "pointer", padding: 6 }}
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteUser(u)}
-                          title="Delete staff member"
-                          aria-label={`Delete ${u.full_name}`}
-                          style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: 6 }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                  {paginatedUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} style={{ textAlign: "center", padding: "36px 0", color: "var(--text-muted)" }}>
+                        No staff members found matching &quot;{userSearch}&quot;.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    paginatedUsers.map((u) => (
+                      <tr key={u.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
+                          {u.full_name}
+                        </td>
+                        <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
+                          {u.email}
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600, background: "#e8f2fb", color: "#0b5cab" }}>
+                            {u.role_detail?.name || u.role}
+                          </span>
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          {u.team_detail ? (
+                            <span style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "0.85rem" }}>
+                              {u.team_detail.name}
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>— Unassigned —</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "14px 16px", color: u.manager_name ? "var(--text-main)" : "var(--text-dim)", fontSize: "0.825rem" }}>
+                          {u.manager_name || "— Top Level —"}
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          {u.direct_reports_count && u.direct_reports_count > 0 ? (
+                            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 700, background: "#f0fdf4", color: "#16a34a" }}>
+                              {u.direct_reports_count} direct report(s)
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>0</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "14px 16px" }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: u.is_active ? "#16a34a" : "#94a3b8", fontSize: "0.8rem", fontWeight: 600 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.is_active ? "#16a34a" : "#94a3b8" }} />
+                            {u.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            onClick={() => handleOpenChangePassword(u)}
+                            title="Change User Password"
+                            aria-label={`Change password for ${u.full_name}`}
+                            style={{ background: "transparent", border: "none", color: "#d97706", cursor: "pointer", padding: 6 }}
+                          >
+                            <KeyRound size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleOpenEditUser(u)}
+                            title="Edit staff member"
+                            aria-label={`Edit ${u.full_name}`}
+                            style={{ background: "transparent", border: "none", color: "#0b5cab", cursor: "pointer", padding: 6 }}
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteUser(u)}
+                            title="Delete staff member"
+                            aria-label={`Delete ${u.full_name}`}
+                            style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: 6 }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
+
+              <PaginationControls
+                currentPage={userPage}
+                totalItems={filteredUsers.length}
+                pageSize={userPageSize}
+                pageSizeOptions={[10, 25, 50, 100]}
+                onPageChange={setUserPage}
+                onPageSizeChange={(newSize) => {
+                  setUserPageSize(newSize);
+                  setUserPage(1);
+                }}
+              />
             </div>
           </div>
         )}
@@ -1474,7 +1607,7 @@ export default function AdminPortalPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {fmsLogs.map((log) => (
+                      {paginatedFmsLogs.map((log) => (
                         <tr key={log.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                           <td style={{ padding: "10px 14px", fontWeight: 600 }}>{log.faculty_id}</td>
                           <td style={{ padding: "10px 14px" }}>{log.event_type}</td>
@@ -1500,6 +1633,17 @@ export default function AdminPortalPage() {
                       ))}
                     </tbody>
                   </table>
+
+                  <PaginationControls
+                    currentPage={fmsLogPage}
+                    totalItems={fmsLogs.length}
+                    pageSize={fmsLogPageSize}
+                    onPageChange={setFmsLogPage}
+                    onPageSizeChange={(newSize) => {
+                      setFmsLogPageSize(newSize);
+                      setFmsLogPage(1);
+                    }}
+                  />
                 </div>
               )}
             </div>
@@ -1622,7 +1766,7 @@ export default function AdminPortalPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {mappings.map((m) => (
+                      {paginatedMappings.map((m) => (
                         <tr key={m.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
                           <td style={{ padding: "14px 16px" }}>
                             <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{m.coordinator_name || "—"}</div>
@@ -1649,6 +1793,17 @@ export default function AdminPortalPage() {
                       ))}
                     </tbody>
                   </table>
+
+                  <PaginationControls
+                    currentPage={mappingPage}
+                    totalItems={mappings.length}
+                    pageSize={mappingPageSize}
+                    onPageChange={setMappingPage}
+                    onPageSizeChange={(newSize) => {
+                      setMappingPageSize(newSize);
+                      setMappingPage(1);
+                    }}
+                  />
                 </div>
               )}
             </div>

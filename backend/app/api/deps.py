@@ -72,36 +72,34 @@ require_coordinator_or_above = require_roles(["Admin", "Manager", "Coordinator"]
 
 
 def get_all_subordinate_ids(manager_id: UUID, db: Session) -> List[UUID]:
-    """Return all direct and indirect subordinate UUIDs under a manager via a single recursive CTE.
+    """Return all direct and indirect subordinate UUIDs under a manager.
     Combines both the self-referential User.manager_id hierarchy and the legacy UserManagerMapping table.
     """
-    # Single recursive CTE — avoids the N+1 BFS query loop
-    cte_sql = text("""
-        WITH RECURSIVE subordinates AS (
-            -- Anchor: direct reports via self-referential manager_id
-            SELECT u.id
-            FROM users u
-            WHERE u.manager_id = :manager_id AND u.is_active = TRUE
+    subordinates: Set[UUID] = set()
+    queue = [manager_id]
+    visited = {manager_id}
 
-            UNION
+    while queue:
+        current_id = queue.pop(0)
 
-            -- Anchor: legacy coordinator mappings for this manager
-            SELECT umm.coordinator_id AS id
-            FROM user_manager_mappings umm
-            WHERE umm.manager_id = :manager_id
+        # 1. Direct reports via manager_id
+        direct_reports = db.query(User.id).filter(
+            User.manager_id == current_id,
+            User.is_active == True
+        ).all()
 
-            UNION ALL
+        # 2. Legacy coordinator mappings
+        mapped_reports = db.query(UserManagerMapping.coordinator_id).filter(
+            UserManagerMapping.manager_id == current_id
+        ).all()
 
-            -- Recursive: subordinates of discovered subordinates
-            SELECT u2.id
-            FROM users u2
-            INNER JOIN subordinates s ON u2.manager_id = s.id
-            WHERE u2.is_active = TRUE
-        )
-        SELECT DISTINCT id FROM subordinates
-    """)
-    rows = db.execute(cte_sql, {"manager_id": str(manager_id)}).fetchall()
-    return [UUID(str(row[0])) for row in rows]
+        for (sub_id,) in direct_reports + mapped_reports:
+            if sub_id and sub_id not in visited:
+                visited.add(sub_id)
+                subordinates.add(sub_id)
+                queue.append(sub_id)
+
+    return list(subordinates)
 
 
 def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:

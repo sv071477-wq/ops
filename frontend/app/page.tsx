@@ -13,6 +13,7 @@ import { BatchDetailDrawer } from "@/components/BatchDetailDrawer";
 import { ManagerBoard } from "@/components/ManagerBoard";
 import { Sidebar } from "@/components/Sidebar";
 import { EnterpriseDashboard } from "@/components/EnterpriseDashboard";
+import { PaginationControls } from "@/components/PaginationControls";
 import {
   Layers, Search, Filter, Plus, CheckCircle2, Clock, PlayCircle,
   Archive, Eye, Lock, Building2, MapPin, Sparkles, RefreshCw,
@@ -70,6 +71,22 @@ export default function DashboardPage() {
   const [facultyUtilizationLedger, setFacultyUtilizationLedger] = useState<TrainingSession[]>([]);
   const [facultyDomainFilter, setFacultyDomainFilter] = useState("ALL");
   const [isLoadingFaculty, setIsLoadingFaculty] = useState(false);
+
+  // Pagination states for all platform lists/tables
+  const [batchPage, setBatchPage] = useState(1);
+  const [batchPageSize, setBatchPageSize] = useState(10);
+
+  const [approvalPage, setApprovalPage] = useState(1);
+  const [approvalPageSize, setApprovalPageSize] = useState(10);
+
+  const [financePage, setFinancePage] = useState(1);
+  const [financePageSize, setFinancePageSize] = useState(10);
+
+  const [facultyRosterPage, setFacultyRosterPage] = useState(1);
+  const [facultyRosterPageSize, setFacultyRosterPageSize] = useState(10);
+
+  const [facultyUtilPage, setFacultyUtilPage] = useState(1);
+  const [facultyUtilPageSize, setFacultyUtilPageSize] = useState(15);
 
   // Modal States
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -306,10 +323,10 @@ export default function DashboardPage() {
   );
 
   const activeBatches = useMemo(
-    () => user?.is_configured_approver === true
+    () => (user?.is_configured_approver === true && statusFilter === "ALL")
       ? batches.filter((b) => ["Approved", "Upcoming", "Ongoing"].includes(b.status))
       : batches,
-    [batches, user?.is_configured_approver]
+    [batches, user?.is_configured_approver, statusFilter]
   );
 
   const FINANCE_ACTIVE_STATUSES = new Set(["Approved", "Upcoming", "Ongoing", "Completed"]);
@@ -358,6 +375,52 @@ export default function DashboardPage() {
     financeStartDate,
     financeEndDate,
   ]);
+
+  // Reset pagination on filter or search changes
+  useEffect(() => {
+    setBatchPage(1);
+  }, [searchQuery, statusFilter, domainFilter, categoryFilter, batches]);
+
+  useEffect(() => {
+    setApprovalPage(1);
+  }, [approvalQueue.length]);
+
+  useEffect(() => {
+    setFinancePage(1);
+  }, [financeSearch, financeStatusFilter, financeCheckStatusFilter, financeDomainFilter, financeModeFilter, financeStartDate, financeEndDate]);
+
+  useEffect(() => {
+    setFacultyRosterPage(1);
+  }, [facultyDomainFilter, facultyList.length]);
+
+  useEffect(() => {
+    setFacultyUtilPage(1);
+  }, [facultyUtilizationLedger.length]);
+
+  const paginatedBatches = useMemo(() => {
+    const start = (batchPage - 1) * batchPageSize;
+    return activeBatches.slice(start, start + batchPageSize);
+  }, [activeBatches, batchPage, batchPageSize]);
+
+  const paginatedApprovals = useMemo(() => {
+    const start = (approvalPage - 1) * approvalPageSize;
+    return approvalQueue.slice(start, start + approvalPageSize);
+  }, [approvalQueue, approvalPage, approvalPageSize]);
+
+  const paginatedFinanceBatches = useMemo(() => {
+    const start = (financePage - 1) * financePageSize;
+    return filteredFinanceBatches.slice(start, start + financePageSize);
+  }, [filteredFinanceBatches, financePage, financePageSize]);
+
+  const paginatedFacultyList = useMemo(() => {
+    const start = (facultyRosterPage - 1) * facultyRosterPageSize;
+    return facultyList.slice(start, start + facultyRosterPageSize);
+  }, [facultyList, facultyRosterPage, facultyRosterPageSize]);
+
+  const paginatedFacultyUtil = useMemo(() => {
+    const start = (facultyUtilPage - 1) * facultyUtilPageSize;
+    return facultyUtilizationLedger.slice(start, start + facultyUtilPageSize);
+  }, [facultyUtilizationLedger, facultyUtilPage, facultyUtilPageSize]);
 
   // Track which finance rows have unsaved changes
   const dirtyFinanceIds = useMemo(() => {
@@ -411,7 +474,7 @@ export default function DashboardPage() {
   };
 
   const isApprover = user?.is_configured_approver === true;
-  const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance";
+  const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance" || user?.role?.toLowerCase() === "finance";
   const canCreateBatch = user?.role?.toLowerCase() !== "admin" && user?.team_name?.trim().toLowerCase() === "delivery";
 
   useEffect(() => {
@@ -603,22 +666,23 @@ export default function DashboardPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Filter size={15} color="var(--text-dim)" />
                     <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", fontWeight: 600 }}>Status:</span>
-                    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="glass-input" style={{ padding: "6px 12px", fontSize: "0.85rem" }}>
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => {
+                        setStatusFilter(e.target.value);
+                        setBatchPage(1);
+                      }}
+                      className="glass-input"
+                      style={{ padding: "6px 12px", fontSize: "0.85rem", fontWeight: 500 }}
+                    >
                       <option value="ALL">All Statuses</option>
-                      <option value="Requested">Requested</option>
-                      <option value="Approved">Approved</option>
                       <option value="Ongoing">Ongoing</option>
                       <option value="Completed">Completed</option>
-                    </select>
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", fontWeight: 600 }}>Vertical:</span>
-                    <select value={domainFilter} onChange={(e) => setDomainFilter(e.target.value)} className="glass-input" style={{ padding: "6px 12px", fontSize: "0.85rem" }}>
-                      <option value="ALL">All Verticals</option>
-                      <option value="IT/ITES">IT/ITES</option>
-                      <option value="DS/ITES">DS/ITES</option>
-                      <option value="BFSI">BFSI</option>
+                      <option value="Upcoming">Upcoming</option>
+                      <option value="Approved">Approved</option>
+                      <option value="Requested">Requested</option>
+                      <option value="OnHold">On Hold</option>
+                      <option value="Cancelled">Cancelled</option>
                     </select>
                   </div>
                 </div>
@@ -638,9 +702,11 @@ export default function DashboardPage() {
                   <thead>
                     <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
                       <th style={{ padding: "12px 16px" }}>Batch & Curriculum</th>
-                      <th style={{ padding: "12px 16px" }}>Client & Vertical</th>
-                      <th style={{ padding: "12px 16px" }}>Delivery Mode & Venue</th>
-                      <th style={{ padding: "12px 16px" }}>Schedule & Hours</th>
+                      <th style={{ padding: "12px 16px" }}>Client & Venue</th>
+                      <th style={{ padding: "12px 16px" }}>Start Date</th>
+                      <th style={{ padding: "12px 16px" }}>End Date</th>
+                      <th style={{ padding: "12px 16px" }}>Sessions Conducted</th>
+                      <th style={{ padding: "12px 16px" }}>Completion Rate</th>
                       <th style={{ padding: "12px 16px" }}>Status</th>
                       <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
                     </tr>
@@ -648,14 +714,14 @@ export default function DashboardPage() {
                   <tbody>
                     {isLoading ? (
                       <tr>
-                        <td colSpan={6} style={{ textAlign: "center", padding: "40px 0" }}>
+                        <td colSpan={8} style={{ textAlign: "center", padding: "40px 0" }}>
                           <RefreshCw className="animate-spin" size={24} color="#0b5cab" style={{ margin: "0 auto 8px auto" }} />
                           <div style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Loading batch records...</div>
                         </td>
                       </tr>
                     ) : activeBatches.length === 0 ? (
                       <tr>
-                        <td colSpan={6} style={{ textAlign: "center", padding: "48px 0" }}>
+                        <td colSpan={8} style={{ textAlign: "center", padding: "48px 0" }}>
                           <div style={{ color: "var(--text-dim)", fontSize: "0.95rem", fontWeight: 600 }}>No matching batches found</div>
                           <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 4 }}>
                             Try clearing your search or filter parameters.
@@ -663,46 +729,109 @@ export default function DashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      activeBatches.map((b) => (
-                        <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</div>
-                            <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ color: "var(--text-main)" }}>{b.delivery_mode || "Online"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{b.training_days} days ({b.total_hours} hrs)</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-                              {b.start_date ? formatDate(b.start_date) : "TBD"}
-                            </div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            {getStatusBadge(b.status)}
-                          </td>
-                          <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                            <div style={{ display: "inline-flex", gap: 8 }}>
-                              <button
-                                onClick={() => setSelectedBatchForDetail(b)}
-                                className="btn btn-secondary"
-                                style={{ padding: "5px 10px", fontSize: "0.775rem" }}
-                              >
-                                View Full Batch Details
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                      paginatedBatches.map((b) => {
+                        const isCompleted = b.status?.toLowerCase() === "completed";
+                        const conducted = b.sessions_conducted ?? 0;
+                        const totalDays = b.training_days || 0;
+                        const rawRate = isCompleted
+                          ? 100
+                          : b.completion_rate !== undefined && b.completion_rate !== null
+                          ? b.completion_rate
+                          : totalDays && conducted
+                          ? (conducted / totalDays) * 100
+                          : 0;
+                        const rate = Math.min(100, Math.max(0, Math.round(rawRate)));
+                        const barColor = rate >= 100 ? "#10b981" : rate >= 50 ? "#0b5cab" : rate > 0 ? "#f59e0b" : "#94a3b8";
+
+                        return (
+                          <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</div>
+                              <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
+                                {b.delivery_mode || "Online"}{b.location_city ? ` • ${b.location_city}` : ""}
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
+                              <div style={{ color: "var(--text-main)", fontWeight: 600 }}>
+                                {b.start_date ? formatDate(b.start_date) : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>TBD</span>}
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
+                              <div style={{ color: "var(--text-main)", fontWeight: 600 }}>
+                                {b.end_date ? formatDate(b.end_date) : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>TBD</span>}
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                                <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-main)" }}>
+                                  {conducted}
+                                </span>
+                                {totalDays > 0 ? (
+                                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                                    / {totalDays} {totalDays === 1 ? "day" : "days"}
+                                  </span>
+                                ) : null}
+                              </div>
+                              {b.total_hours ? (
+                                <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
+                                  {b.total_hours} hrs planned
+                                </div>
+                              ) : null}
+                            </td>
+                            <td style={{ padding: "14px 16px", minWidth: 120 }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+                                <span style={{ fontSize: "0.8rem", fontWeight: 700, color: barColor }}>
+                                  {rate}%
+                                </span>
+                              </div>
+                              <div style={{ width: "100%", height: 6, background: "#e2e8f0", borderRadius: 9999, overflow: "hidden" }}>
+                                <div
+                                  style={{
+                                    width: `${rate}%`,
+                                    height: "100%",
+                                    background: barColor,
+                                    borderRadius: 9999,
+                                    transition: "width 0.3s ease",
+                                  }}
+                                />
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px 16px" }}>
+                              {getStatusBadge(b.status)}
+                            </td>
+                            <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                              <div style={{ display: "inline-flex", gap: 8 }}>
+                                <button
+                                  onClick={() => setSelectedBatchForDetail(b)}
+                                  className="btn btn-secondary"
+                                  style={{ padding: "5px 10px", fontSize: "0.775rem" }}
+                                >
+                                  View Full Batch Details
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
+
+              <PaginationControls
+                currentPage={batchPage}
+                totalItems={activeBatches.length}
+                pageSize={batchPageSize}
+                onPageChange={setBatchPage}
+                onPageSizeChange={(newSize) => {
+                  setBatchPageSize(newSize);
+                  setBatchPage(1);
+                }}
+              />
             </div>
           </div>
         )}
@@ -759,7 +888,7 @@ export default function DashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      approvalQueue.map((b) => {
+                      paginatedApprovals.map((b) => {
                         const submittedDays = b.batch_request_date
                           ? Math.floor((Date.now() - new Date(b.batch_request_date).getTime()) / 86400000)
                           : null;
@@ -816,6 +945,17 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               </div>
+
+              <PaginationControls
+                currentPage={approvalPage}
+                totalItems={approvalQueue.length}
+                pageSize={approvalPageSize}
+                onPageChange={setApprovalPage}
+                onPageSizeChange={(newSize) => {
+                  setApprovalPageSize(newSize);
+                  setApprovalPage(1);
+                }}
+              />
             </div>
           </div>
         )}
@@ -979,7 +1119,7 @@ export default function DashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      filteredFinanceBatches.map((b) => {
+                      paginatedFinanceBatches.map((b) => {
                         const draft = financeDrafts[b.id] || {
                           finance_status: b.finance_status || "Pending",
                           finance_status_check_date: b.finance_status_check_date || "",
@@ -1044,6 +1184,17 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               </div>
+
+              <PaginationControls
+                currentPage={financePage}
+                totalItems={filteredFinanceBatches.length}
+                pageSize={financePageSize}
+                onPageChange={setFinancePage}
+                onPageSizeChange={(newSize) => {
+                  setFinancePageSize(newSize);
+                  setFinancePage(1);
+                }}
+              />
             </div>
           </div>
         )}
@@ -1053,6 +1204,7 @@ export default function DashboardPage() {
           <EnterpriseDashboard
             batches={batches}
             users={allUsers}
+            currentUser={user}
             dashboardSummary={dashboardSummary}
             isLoading={isLoadingAnalytics}
           />
@@ -1155,7 +1307,7 @@ export default function DashboardPage() {
                       </td>
                     </tr>
                   ) : (
-                    facultyList.map((f) => (
+                    paginatedFacultyList.map((f) => (
                       <tr key={f.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
                         <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
                           {f.full_name}
@@ -1197,6 +1349,17 @@ export default function DashboardPage() {
                   )}
                 </tbody>
               </table>
+
+              <PaginationControls
+                currentPage={facultyRosterPage}
+                totalItems={facultyList.length}
+                pageSize={facultyRosterPageSize}
+                onPageChange={setFacultyRosterPage}
+                onPageSizeChange={(newSize) => {
+                  setFacultyRosterPageSize(newSize);
+                  setFacultyRosterPage(1);
+                }}
+              />
             </div>
 
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
@@ -1241,7 +1404,7 @@ export default function DashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      facultyUtilizationLedger.slice(0, 25).map((row) => (
+                      paginatedFacultyUtil.map((row) => (
                         <tr key={row.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.825rem", verticalAlign: "top" }}>
                           <td style={{ padding: "12px 14px", color: "var(--text-main)", fontWeight: 600 }}>
                             {formatDate(row.date_of_training)}
@@ -1307,6 +1470,18 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               </div>
+
+              <PaginationControls
+                currentPage={facultyUtilPage}
+                totalItems={facultyUtilizationLedger.length}
+                pageSize={facultyUtilPageSize}
+                pageSizeOptions={[15, 25, 50, 100]}
+                onPageChange={setFacultyUtilPage}
+                onPageSizeChange={(newSize) => {
+                  setFacultyUtilPageSize(newSize);
+                  setFacultyUtilPage(1);
+                }}
+              />
             </div>
           </div>
         )}

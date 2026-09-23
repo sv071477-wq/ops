@@ -200,7 +200,40 @@ class BatchService:
         if search:
             term = f"%{search.strip()}%"
             query = query.filter(or_(Batch.batch_id.ilike(term), Batch.program_name.ilike(term), Batch.client_name.ilike(term), Batch.technology.ilike(term), Batch.location_city.ilike(term)))
-        return query.order_by(Batch.created_at.desc()).offset(skip).limit(limit).all()
+        batches = query.order_by(Batch.created_at.desc()).offset(skip).limit(limit).all()
+        if batches:
+            from app.models.session import FacultyUtilization
+            from sqlalchemy import func
+            batch_ids = [b.id for b in batches]
+            counts = dict(
+                self.db.query(FacultyUtilization.batch_id, func.count(FacultyUtilization.id))
+                .filter(FacultyUtilization.batch_id.in_(batch_ids), FacultyUtilization.status.in_(["Completed", "InProgress"]))
+                .group_by(FacultyUtilization.batch_id)
+                .all()
+            )
+            now = datetime.now(timezone.utc)
+            for b in batches:
+                conducted = counts.get(b.id)
+                if conducted is None or conducted == 0:
+                    if b.status == "Completed":
+                        conducted = b.training_days or 1
+                    elif b.status == "Ongoing" and b.start_date and b.end_date and b.end_date > b.start_date:
+                        total_span = (b.end_date - b.start_date).total_seconds()
+                        elapsed = max(0.0, (min(now, b.end_date) - b.start_date).total_seconds())
+                        fraction = min(1.0, elapsed / total_span) if total_span > 0 else 0.5
+                        total_expected = b.training_days or 10
+                        conducted = max(1, int(fraction * total_expected))
+                    else:
+                        conducted = 0
+                b._sessions_conducted = conducted
+                total = b.training_days or conducted or 1
+                if b.status == "Completed":
+                    b._completion_rate = 100.0
+                elif b.status in ("Requested", "Approval 1 Pending", "Approval 2 Pending", "Cancelled"):
+                    b._completion_rate = 0.0
+                else:
+                    b._completion_rate = round(min(100.0, (conducted / total) * 100.0), 1)
+        return batches
 
     def _sync_pending_approvers(self) -> None:
         """Backfill pending approval assignments after admin configuration changes/imports."""
