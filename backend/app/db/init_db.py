@@ -71,7 +71,7 @@ def init_db(db: Session = None) -> None:
             (BatchCategory, ["Bootcamp", "RBT", "PJP", "Workshop"]),
             (DeliveryMode, ["Online", "F2F", "Blended"]),
             (Accommodation, ["Residential", "Non-Residential"]),
-            (Entity, ["Default"]),
+            (Entity, ["Unext", "Unext BSFI"]),
         ]
         for option_model, names in default_options:
             for name in names:

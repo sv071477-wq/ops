@@ -241,8 +241,30 @@ export interface TrainingSession {
   created_at: string;
 }
 
+export interface ScheduledSession {
+  id: string;
+  batch_id: string;
+  sequence_number?: number | null;
+  week?: string | null;
+  session_date: string;
+  day_name?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_hours: number;
+  module: string;
+  trainer_name?: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  utilization_logged?: boolean;
+  utilization_id?: string | null;
+  actual_trainer?: string | null;
+  actual_hours?: number | null;
+}
+
 export interface CreateSessionPayload {
   batch_id: string;
+  training_session_id?: string;
   date_of_training: string;
   start_time?: string;
   end_time?: string;
@@ -253,6 +275,7 @@ export interface CreateSessionPayload {
   venue?: string;
   location_city?: string;
   mode_of_delivery?: string;
+  status?: string;
 }
 
 export interface SessionFeedbackPayload {
@@ -479,6 +502,21 @@ class ApiService {
     });
   }
 
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+  }
+
+  async adminChangeUserPassword(userId: string, newPassword: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/auth/users/${userId}/change-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+  }
+
+
   async getCoordinators(): Promise<User[]> {
     return this.request<User[]>("/auth/users/coordinators");
   }
@@ -590,6 +628,13 @@ class ApiService {
     });
   }
 
+  async updateBatchLifecycleStatus(id: string, status: string, reason: string): Promise<Batch> {
+    return this.request<Batch>(`/batches/${id}/lifecycle-status`, {
+      method: "POST",
+      body: JSON.stringify({ status, reason }),
+    });
+  }
+
   async submitBatch(id: string): Promise<Batch> {
     return this.request<Batch>(`/batches/${id}/submit`, { method: "POST" });
   }
@@ -677,6 +722,10 @@ class ApiService {
     if (params?.status) query.append("status", params.status);
     const suffix = query.toString() ? `?${query.toString()}` : "";
     return this.request<TrainingSession[]>(`/sessions${suffix}`);
+  }
+
+  async getScheduledSessions(batchId: string): Promise<ScheduledSession[]> {
+    return this.request<ScheduledSession[]>(`/sessions/scheduled?batch_id=${batchId}`);
   }
 
   async createSession(payload: CreateSessionPayload): Promise<TrainingSession> {
@@ -827,3 +876,4 @@ class ApiService {
 }
 
 export const api = new ApiService();
+export { formatDate, formatDateTime } from "./dateUtils";

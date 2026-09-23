@@ -3,14 +3,97 @@
 import React, { useState, useEffect } from "react";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail,
-  api, BatchOption
+  api, BatchOption, ScheduledSession
 } from "@/lib/api";
+import { formatDate as formatDateDMY } from "@/lib/dateUtils";
 import {
   X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
   Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
   PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check,
-  Edit3, GraduationCap, ShieldCheck, Mail, Briefcase, Info, Hash
+  Edit3, GraduationCap, ShieldCheck, Mail, Briefcase, Info, Hash,
+  PauseCircle, Ban
 } from "lucide-react";
+
+interface ParsedRemarkItem {
+  id: number;
+  isAudit: boolean;
+  timestamp: string | null;
+  action: string | null;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  actor?: string | null;
+  message: string;
+  raw: string;
+}
+
+const parseRemarksList = (rawRemarks?: string | null): ParsedRemarkItem[] => {
+  if (!rawRemarks || !rawRemarks.trim()) return [];
+
+  // 1. Normalize legacy UTC timestamps to IST
+  const normalized = rawRemarks.replace(
+    /(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})\s+UTC/g,
+    (_match, d, m, y, h, min) => {
+      const dt = new Date(Date.UTC(parseInt(y), parseInt(m) - 1, parseInt(d), parseInt(h), parseInt(min)));
+      const istOffsetMs = (5 * 60 + 30) * 60 * 1000;
+      const istDate = new Date(dt.getTime() + istOffsetMs);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      return `${pad(istDate.getUTCDate())}-${pad(istDate.getUTCMonth() + 1)}-${istDate.getUTCFullYear()} ${pad(istDate.getUTCHours())}:${pad(istDate.getUTCMinutes())} IST`;
+    }
+  );
+
+  // 2. Split into entries either by newlines or by lookahead before '[' timestamp pattern
+  const chunks = normalized
+    .split(/\r?\n+|(?<=\S)\s*(?=\[\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}\s+(?:IST|UTC))/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return chunks.map((item, idx) => {
+    // Audit format: [DD-MM-YYYY HH:MM IST/UTC - ACTION]: MESSAGE
+    const auditRegex = /^\[(\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}\s+(?:IST|UTC))\s*-\s*([^\]]+)\]:\s*([\s\S]*)$/;
+    const match = item.match(auditRegex);
+
+    if (match) {
+      const timestamp = match[1].replace("UTC", "IST");
+      const actionText = match[2].trim();
+      const message = match[3].trim();
+
+      const statusRegex = /^Status changed from '([^']+)' to '([^']+)' by (.+)$/i;
+      const statusMatch = actionText.match(statusRegex);
+
+      if (statusMatch) {
+        return {
+          id: idx + 1,
+          isAudit: true,
+          timestamp,
+          action: actionText,
+          fromStatus: statusMatch[1],
+          toStatus: statusMatch[2],
+          actor: statusMatch[3],
+          message,
+          raw: item,
+        };
+      }
+
+      return {
+        id: idx + 1,
+        isAudit: true,
+        timestamp,
+        action: actionText,
+        message,
+        raw: item,
+      };
+    }
+
+    return {
+      id: idx + 1,
+      isAudit: false,
+      timestamp: null,
+      action: null,
+      message: item,
+      raw: item,
+    };
+  });
+};
 
 interface BatchDetailDrawerProps {
   batch: Batch | null;
@@ -34,7 +117,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     entities: BatchOption[];
     categories: BatchOption[];
     accommodations: BatchOption[];
-  }>({ entities: [], categories: [], accommodations: [] });
+    delivery_modes: BatchOption[];
+  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [] });
 
   useEffect(() => {
     setCurrentBatch(batch);
@@ -53,8 +137,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         api.getBatchOptions("entities").catch(() => []),
         api.getBatchOptions("categories").catch(() => []),
         api.getBatchOptions("accommodations").catch(() => []),
-      ]).then(([entities, categories, accommodations]) => {
-        setOptions({ entities, categories, accommodations });
+        api.getBatchOptions("delivery-modes").catch(() => []),
+      ]).then(([entities, categories, accommodations, delivery_modes]) => {
+        setOptions({ entities, categories, accommodations, delivery_modes });
       });
     }
   }, [isOpen]);
@@ -70,13 +155,15 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const openEditModal = () => {
     const target = currentBatch || batch;
     if (!target) return;
+    const deliveryModeVal = target.delivery_mode || (target.delivery_mode_id ? options.delivery_modes.find((m) => m.id === target.delivery_mode_id)?.name : null) || "Online";
     setEditForm({
       program_name: target.program_name,
       client_name: target.client_name,
       sow_number: target.sow_number,
       domain: target.domain,
       technology: target.technology,
-      delivery_mode: target.delivery_mode,
+      delivery_mode: deliveryModeVal,
+      delivery_mode_id: target.delivery_mode_id,
       location_city: target.location_city,
       start_date: target.start_date ? target.start_date.split("T")[0] : "",
       end_date: target.end_date ? target.end_date.split("T")[0] : "",
@@ -118,9 +205,126 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     }
   };
 
-  // Sessions state
+  // Lifecycle Status Modal State (OnHold / Cancelled / Resume)
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [targetStatus, setTargetStatus] = useState<string>("");
+  const [statusReason, setStatusReason] = useState("");
+  const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  const getResumedStatus = (target: Batch): string => {
+    if (target.approver_1_status === "Pending") {
+      return "Approval 1 Pending";
+    }
+    if (target.approver_1_status === "Approved" && target.approver_2_status === "Pending") {
+      return "Approval 2 Pending";
+    }
+    if (target.approver_1_status === "Rejected" || target.approver_2_status === "Rejected") {
+      return "Requested";
+    }
+    if (target.approver_1_status === "Approved" && target.approver_2_status === "Approved") {
+      return "Approved";
+    }
+    return "Approval 1 Pending";
+  };
+
+  const openStatusModal = (newStatus: "OnHold" | "Cancelled" | "Resume" | string) => {
+    const target = currentBatch || batch;
+    let effectiveStatus = newStatus;
+    if (newStatus === "Resume" && target) {
+      effectiveStatus = getResumedStatus(target);
+    }
+    setTargetStatus(effectiveStatus);
+    setStatusReason("");
+    setStatusError(null);
+    setIsStatusModalOpen(true);
+  };
+
+  const handleSaveStatus = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = currentBatch || batch;
+    if (!target || !targetStatus) return;
+    if (!statusReason.trim() || statusReason.trim().length < 3) {
+      setStatusError("A reason (minimum 3 characters) is required.");
+      return;
+    }
+    setIsSubmittingStatus(true);
+    setStatusError(null);
+    try {
+      const updated = await api.updateBatchLifecycleStatus(target.id, targetStatus, statusReason.trim());
+      setCurrentBatch(updated);
+      setIsStatusModalOpen(false);
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      setStatusError(err.message || "Failed to update batch status");
+    } finally {
+      setIsSubmittingStatus(false);
+    }
+  };
+
+  // Sessions & Curriculum Schedule state
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+
+  // Log Faculty Utilization on Session Day Modal
+  const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
+  const [selectedScheduleDay, setSelectedScheduleDay] = useState<ScheduledSession | null>(null);
+  const [utilFacultyName, setUtilFacultyName] = useState("");
+  const [utilHours, setUtilHours] = useState(8);
+  const [utilDeliveryMode, setUtilDeliveryMode] = useState("Online");
+  const [utilVenue, setUtilVenue] = useState("");
+  const [utilCity, setUtilCity] = useState("");
+  const [utilStatus, setUtilStatus] = useState("Completed");
+  const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
+  const [utilError, setUtilError] = useState<string | null>(null);
+
+  const openLogUtilizationModal = (day: ScheduledSession) => {
+    setSelectedScheduleDay(day);
+    const target = currentBatch || batch;
+    setUtilFacultyName(day.trainer_name || target?.faculty_assigned_text || "");
+    setUtilHours(Number(day.duration_hours) || 8);
+    const defMode = target?.delivery_mode || (target?.delivery_mode_id ? options.delivery_modes.find(m => m.id === target.delivery_mode_id)?.name : null) || "Online";
+    setUtilDeliveryMode(defMode);
+    setUtilVenue(target?.location_city ? `${target.location_city} Center` : "Virtual MS Teams");
+    setUtilCity(target?.location_city || "");
+    setUtilStatus("Completed");
+    setUtilError(null);
+    setIsLogUtilizationOpen(true);
+  };
+
+  const handleLogUtilizationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = currentBatch || batch;
+    if (!selectedScheduleDay || !target) return;
+    setIsSubmittingUtil(true);
+    setUtilError(null);
+    try {
+      const sDate = selectedScheduleDay.session_date;
+      const dateOfTrainingIso = new Date(`${sDate}T09:00:00`).toISOString();
+      await api.createSession({
+        batch_id: target.id,
+        training_session_id: selectedScheduleDay.id,
+        date_of_training: dateOfTrainingIso,
+        start_time: selectedScheduleDay.start_time || "09:30",
+        end_time: selectedScheduleDay.end_time || "17:30",
+        topic: selectedScheduleDay.module,
+        faculty_name: utilFacultyName.trim() || target.faculty_assigned_text || "Faculty assigned",
+        no_of_hours: Number(utilHours) || 8,
+        venue: utilVenue.trim() || undefined,
+        location_city: utilCity.trim() || target.location_city || undefined,
+        mode_of_delivery: utilDeliveryMode,
+        status: utilStatus,
+      });
+      setIsLogUtilizationOpen(false);
+      await loadSessions();
+      if (onBatchUpdated) onBatchUpdated();
+    } catch (err: any) {
+      setUtilError(err.message || "Failed to log faculty utilization");
+    } finally {
+      setIsSubmittingUtil(false);
+    }
+  };
 
   // Add Session Modal
   const [isAddSessionOpen, setIsAddSessionOpen] = useState(false);
@@ -171,8 +375,12 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     if (!batch) return;
     setIsLoadingSessions(true);
     try {
-      const data = await api.getSessions({ batch_id: batch.id });
-      setSessions(data);
+      const [utilData, schedData] = await Promise.all([
+        api.getSessions({ batch_id: batch.id }).catch(() => []),
+        api.getScheduledSessions(batch.id).catch(() => []),
+      ]);
+      setSessions(utilData || []);
+      setScheduledSessions(schedData || []);
     } catch (err) {
       console.error("Failed to load sessions:", err);
     } finally {
@@ -192,12 +400,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   if (!activeBatch) return null;
 
   const formatDate = (dStr?: string | null) => {
-    if (!dStr) return "Not set";
-    return new Date(dStr).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return formatDateDMY(dStr, "Not set");
   };
 
   const getEntityName = (id?: string | null) => {
@@ -214,6 +417,15 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     if (resType === "R") return "Residential / Hotel Provided";
     if (resType === "NR") return "Non-Residential / Local Trainer";
     return resType || "Non-Residential";
+  };
+
+  const getDeliveryModeName = (id?: string | null, mode?: string | null) => {
+    if (mode && mode.trim()) return mode;
+    if (id) {
+      const found = options.delivery_modes.find((m) => m.id === id);
+      if (found?.name) return found.name;
+    }
+    return mode || "Online";
   };
 
   const calculatedCalendarDays =
@@ -243,6 +455,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     if (s === "upcoming") return <span className="badge badge-approved">Upcoming</span>;
     if (s === "ongoing") return <span className="badge badge-ongoing">Ongoing</span>;
     if (s === "completed") return <span className="badge badge-completed">Completed</span>;
+    if (s === "onhold") return <span className="badge badge-onhold">On Hold</span>;
+    if (s === "cancelled") return <span className="badge badge-cancelled">Cancelled</span>;
     return <span className="badge badge-cancelled">{status}</span>;
   };
 
@@ -629,6 +843,78 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           {/* TAB 1: OVERVIEW */}
           {activeTab === "overview" && (
             <>
+              {/* OnHold Notice Banner */}
+              {activeBatch.status === "OnHold" && (
+                <div
+                  style={{
+                    background: "rgba(245, 158, 11, 0.1)",
+                    border: "1px solid rgba(245, 158, 11, 0.4)",
+                    borderRadius: 14,
+                    padding: "16px 18px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                    <PauseCircle size={22} color="#d97706" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontWeight: 800, color: "#b45309", fontSize: "0.95rem" }}>
+                        Batch is Currently ON HOLD
+                      </div>
+                      <p style={{ fontSize: "0.82rem", color: "var(--text-main)", margin: "4px 0 0 0" }}>
+                        Delivery operations, faculty sessions, and schedule milestones are temporarily paused.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openStatusModal("Resume")}
+                    className="btn btn-primary"
+                    style={{ background: "#059669", padding: "7px 14px", fontSize: "0.8rem", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                  >
+                    <PlayCircle size={15} /> Resume Batch
+                  </button>
+                </div>
+              )}
+
+              {/* Cancelled Notice Banner */}
+              {activeBatch.status === "Cancelled" && (
+                <div
+                  style={{
+                    background: "rgba(225, 29, 72, 0.08)",
+                    border: "1px solid rgba(225, 29, 72, 0.35)",
+                    borderRadius: 14,
+                    padding: "16px 18px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                    <Ban size={22} color="#e11d48" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontWeight: 800, color: "#be123c", fontSize: "0.95rem" }}>
+                        Batch is CANCELLED
+                      </div>
+                      <p style={{ fontSize: "0.82rem", color: "var(--text-main)", margin: "4px 0 0 0" }}>
+                        This batch has been marked as cancelled. Scheduled delivery is terminated.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openStatusModal("Resume")}
+                    className="btn btn-secondary"
+                    style={{ padding: "7px 14px", fontSize: "0.8rem", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+                  >
+                    <RefreshCw size={14} /> Reopen Batch
+                  </button>
+                </div>
+              )}
+
               {/* Rejection / Revision Notice */}
               {activeBatch.comments && activeBatch.status === "Requested" && (
                 <div
@@ -715,7 +1001,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
                 <div className="glass-panel" style={{ padding: "14px 16px", background: "#ffffff" }}>
                   <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                    Client SOW Number
+                    Client SOW / PO Number
                   </div>
                   <div style={{ fontSize: "0.95rem", fontWeight: 700, color: activeBatch.sow_number ? "var(--text-main)" : "var(--text-muted)", marginTop: 4, fontFamily: "monospace" }}>
                     {activeBatch.sow_number || "Not specified"}
@@ -758,12 +1044,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, fontSize: "0.85rem" }}>
                   <div>
                     <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Delivery Mode</span>
-                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>{activeBatch.delivery_mode}</div>
+                    <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+                      {getDeliveryModeName(activeBatch.delivery_mode_id, activeBatch.delivery_mode)}
+                    </div>
                   </div>
                   <div>
                     <span style={{ color: "var(--text-dim)", fontSize: "0.75rem", textTransform: "uppercase", fontWeight: 600 }}>Training Venue / City</span>
                     <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
-                      {activeBatch.location_city || (activeBatch.delivery_mode === "Online" ? "Remote (Online)" : "Not specified")}
+                      {activeBatch.location_city || (getDeliveryModeName(activeBatch.delivery_mode_id, activeBatch.delivery_mode) === "Online" ? "Remote (Online)" : "Not specified")}
                     </div>
                   </div>
                   <div>
@@ -950,21 +1238,179 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
               {/* Operational Remarks & Special Instructions */}
               <div className="glass-panel" style={{ padding: "18px 20px", background: "#ffffff" }}>
-                <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, marginBottom: 8, letterSpacing: "0.04em" }}>
-                  Operational Remarks & Special Instructions
-                </h4>
-                <div style={{
-                  fontSize: "0.875rem",
-                  color: activeBatch.remarks ? "var(--text-main)" : "var(--text-dim)",
-                  fontStyle: activeBatch.remarks ? "normal" : "italic",
-                  lineHeight: 1.5,
-                  background: "#f8fafc",
-                  padding: "12px 16px",
-                  borderRadius: 8,
-                  border: "1px solid var(--border-subtle)",
-                }}>
-                  {activeBatch.remarks || "No operational remarks or special instructions provided."}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, margin: 0, letterSpacing: "0.04em" }}>
+                      Operational Remarks & Special Instructions
+                    </h4>
+                    {parseRemarksList(activeBatch.remarks).length > 0 && (
+                      <span style={{
+                        background: "#e2e8f0",
+                        color: "#475569",
+                        fontSize: "0.72rem",
+                        fontWeight: 700,
+                        padding: "2px 8px",
+                        borderRadius: 12
+                      }}>
+                        {parseRemarksList(activeBatch.remarks).length} {parseRemarksList(activeBatch.remarks).length === 1 ? "entry" : "entries"}
+                      </span>
+                    )}
+                  </div>
                 </div>
+
+                {parseRemarksList(activeBatch.remarks).length === 0 ? (
+                  <div style={{
+                    fontSize: "0.875rem",
+                    color: "var(--text-dim)",
+                    fontStyle: "italic",
+                    lineHeight: 1.5,
+                    background: "#f8fafc",
+                    padding: "12px 16px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border-subtle)",
+                  }}>
+                    No operational remarks or special instructions provided.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {parseRemarksList(activeBatch.remarks).map((entry, idx) => (
+                      <div
+                        key={entry.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 12,
+                          padding: "12px 14px",
+                          borderRadius: 8,
+                          background: entry.isAudit ? "#f8fafc" : "#ffffff",
+                          border: "1px solid var(--border-subtle)",
+                          borderLeft: entry.isAudit
+                            ? entry.toStatus === "OnHold"
+                              ? "4px solid #d97706"
+                              : entry.toStatus === "Cancelled"
+                              ? "4px solid #e11d48"
+                              : "4px solid #3b82f6"
+                            : "4px solid #10b981",
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                        }}
+                      >
+                        {/* Number Indicator */}
+                        <div
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: "50%",
+                            background: entry.isAudit ? "#eff6ff" : "#ecfdf5",
+                            color: entry.isAudit ? "#2563eb" : "#059669",
+                            border: `1px solid ${entry.isAudit ? "#bfdbfe" : "#a7f3d0"}`,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                            flexShrink: 0,
+                            marginTop: 1,
+                          }}
+                        >
+                          {idx + 1}
+                        </div>
+
+                        {/* Detail Content */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {entry.isAudit ? (
+                            <>
+                              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                                {/* Timestamp Pill in IST */}
+                                <span
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 5,
+                                    fontSize: "0.75rem",
+                                    fontWeight: 700,
+                                    color: "#1e40af",
+                                    background: "#dbeafe",
+                                    padding: "2px 8px",
+                                    borderRadius: 4,
+                                    letterSpacing: "0.01em",
+                                  }}
+                                >
+                                  <Clock size={12} />
+                                  {entry.timestamp}
+                                </span>
+
+                                {/* Status Transition or Action Text */}
+                                {entry.fromStatus && entry.toStatus ? (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-main)" }}>
+                                    <span style={{
+                                      padding: "1px 6px",
+                                      borderRadius: 4,
+                                      background: "#f1f5f9",
+                                      border: "1px solid #cbd5e1",
+                                      fontSize: "0.75rem",
+                                      fontWeight: 600,
+                                      color: "#475569"
+                                    }}>
+                                      {entry.fromStatus}
+                                    </span>
+                                    <span style={{ color: "#94a3b8", fontWeight: 700 }}>&rarr;</span>
+                                    <span style={{
+                                      padding: "1px 6px",
+                                      borderRadius: 4,
+                                      background: entry.toStatus === "OnHold" ? "#fef3c7" : entry.toStatus === "Cancelled" ? "#fee2e2" : "#dbeafe",
+                                      color: entry.toStatus === "OnHold" ? "#b45309" : entry.toStatus === "Cancelled" ? "#b91c1c" : "#1d4ed8",
+                                      border: `1px solid ${entry.toStatus === "OnHold" ? "#fde68a" : entry.toStatus === "Cancelled" ? "#fca5a5" : "#bfdbfe"}`,
+                                      fontSize: "0.75rem",
+                                      fontWeight: 700
+                                    }}>
+                                      {entry.toStatus}
+                                    </span>
+                                    {entry.actor && (
+                                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginLeft: 2 }}>
+                                        by <strong>{entry.actor}</strong>
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontWeight: 500 }}>
+                                    {entry.action}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Message / Reason */}
+                              {entry.message && (
+                                <div
+                                  style={{
+                                    fontSize: "0.85rem",
+                                    color: "var(--text-main)",
+                                    lineHeight: 1.5,
+                                    padding: "8px 12px",
+                                    borderRadius: 6,
+                                    background: "#ffffff",
+                                    border: "1px solid #e2e8f0",
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 600, color: "var(--text-muted)", marginRight: 6 }}>Reason:</span>
+                                  <span style={{ color: "#1e293b" }}>{entry.message}</span>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div>
+                              <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "#059669", marginBottom: 4 }}>
+                                Note / Instruction
+                              </div>
+                              <div style={{ fontSize: "0.85rem", color: "var(--text-main)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                                {entry.message}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -1006,9 +1452,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               {isLoadingSessions ? (
                 <div style={{ textAlign: "center", padding: "32px", color: "var(--text-muted)" }}>
                   <RefreshCw className="animate-spin" size={24} color="#0b5cab" style={{ margin: "0 auto 8px" }} />
-                  <div>Loading sessions...</div>
+                  <div>Loading curriculum schedule and sessions...</div>
                 </div>
-              ) : sessions.length === 0 ? (
+              ) : scheduledSessions.length === 0 && sessions.length === 0 ? (
                 <div style={{
                   textAlign: "center",
                   padding: "40px 20px",
@@ -1024,7 +1470,149 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </div>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {/* SECTION 1: INGESTED CURRICULUM SCHEDULE */}
+                  {scheduledSessions.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: "0.825rem", fontWeight: 700, color: "var(--text-main)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                            Curriculum Schedule ({scheduledSessions.length} Days)
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: 12, fontSize: "0.775rem" }}>
+                          <span style={{ color: "#166534", fontWeight: 700, background: "#dcfce7", padding: "2px 8px", borderRadius: 12 }}>
+                            ✓ {scheduledSessions.filter((s) => s.utilization_logged).length} Delivered
+                          </span>
+                          <span style={{ color: "#b45309", fontWeight: 700, background: "#fef3c7", padding: "2px 8px", borderRadius: 12 }}>
+                            ⏳ {scheduledSessions.filter((s) => !s.utilization_logged).length} Pending
+                          </span>
+                        </div>
+                      </div>
+
+                      {scheduledSessions.map((s, idx) => (
+                        <div
+                          key={s.id}
+                          className="glass-panel"
+                          style={{
+                            padding: "14px 16px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: 12,
+                            background: "#ffffff",
+                            borderLeft: s.utilization_logged ? "4px solid #16a34a" : "4px solid #f59e0b",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <div style={{
+                              width: 44,
+                              height: 44,
+                              borderRadius: 8,
+                              background: s.utilization_logged ? "#f0fdf4" : "#fffbeb",
+                              color: s.utilization_logged ? "#16a34a" : "#d97706",
+                              border: `1px solid ${s.utilization_logged ? "#bbf7d0" : "#fde68a"}`,
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontWeight: 700,
+                              fontSize: "0.75rem",
+                              flexShrink: 0
+                            }}>
+                              <span style={{ fontSize: "0.65rem", textTransform: "uppercase", opacity: 0.8 }}>Day</span>
+                              <span style={{ fontSize: "0.95rem" }}>{s.sequence_number || idx + 1}</span>
+                            </div>
+
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: "0.925rem", color: "var(--text-main)" }}>
+                                {s.module}
+                              </div>
+                              <div style={{ fontSize: "0.775rem", color: "var(--text-muted)", marginTop: 3, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                <span>📅 {formatDate(s.session_date)} ({s.day_name || ""})</span>
+                                <span>•</span>
+                                <span>⏱️ {s.start_time ? String(s.start_time).slice(0, 5) : "09:30"} - {s.end_time ? String(s.end_time).slice(0, 5) : "17:30"} ({s.duration_hours} hrs)</span>
+                                <span>•</span>
+                                <span>👨‍🏫 Scheduled: <strong>{s.trainer_name || activeBatch.faculty_assigned_text || "Faculty assigned"}</strong></span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            {s.utilization_logged ? (
+                              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                                <span style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 5,
+                                  background: "#f0fdf4",
+                                  color: "#166534",
+                                  border: "1px solid #bbf7d0",
+                                  padding: "4px 10px",
+                                  borderRadius: 6,
+                                  fontSize: "0.775rem",
+                                  fontWeight: 700
+                                }}>
+                                  <CheckCircle2 size={14} color="#16a34a" />
+                                  Delivered & Logged
+                                </span>
+                                {s.actual_trainer && (
+                                  <span style={{ fontSize: "0.725rem", color: "var(--text-muted)", marginTop: 2 }}>
+                                    By {s.actual_trainer} ({s.actual_hours}h)
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  background: "#fffbeb",
+                                  color: "#b45309",
+                                  border: "1px solid #fde68a",
+                                  padding: "4px 8px",
+                                  borderRadius: 6,
+                                  fontSize: "0.75rem",
+                                  fontWeight: 600
+                                }}>
+                                  <Clock size={12} />
+                                  Pending Delivery
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => openLogUtilizationModal(s)}
+                                  className="btn btn-primary"
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 5,
+                                    padding: "6px 12px",
+                                    fontSize: "0.8rem",
+                                    background: "#2563eb"
+                                  }}
+                                >
+                                  <span>Log Utilization</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* SECTION 2: FACULTY UTILIZATION / DELIVERY LEDGER */}
+                  {sessions.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: scheduledSessions.length > 0 ? 8 : 0 }}>
+                      <div style={{ background: "#f8fafc", padding: "8px 12px", borderRadius: 6, border: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", gap: 6 }}>
+                        <Users size={14} color="#0b5cab" />
+                        <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", textTransform: "uppercase" }}>
+                          Faculty Utilization & Delivery Ledger ({sessions.length} Recorded)
+                        </span>
+                      </div>
                   {sessions.map((s, idx) => (
                     <div
                       key={s.id}
@@ -1058,7 +1646,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                             {s.topic}
                           </div>
                           <div style={{ fontSize: "0.775rem", color: "var(--text-muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
-                            <span>📅 {s.date_of_training}</span>
+                            <span>📅 {formatDate(s.date_of_training)}</span>
                             <span>•</span>
                             <span>⏱️ {s.start_time || "09:00"} - {s.end_time || "17:00"} ({s.no_of_hours} hrs)</span>
                             <span>•</span>
@@ -1130,6 +1718,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       </div>
                     </div>
                   ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1317,7 +1907,88 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             Close Details
           </button>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {/* Batch Lifecycle Status Actions (OnHold / Cancelled / Resume) */}
+            {activeBatch.status !== "Cancelled" && (
+              <>
+                {activeBatch.status !== "OnHold" ? (
+                  <button
+                    type="button"
+                    onClick={() => openStatusModal("OnHold")}
+                    className="btn btn-secondary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: "#b45309",
+                      borderColor: "#fcd34d",
+                      background: "#fffbeb",
+                    }}
+                    title="Place batch delivery on hold"
+                  >
+                    <PauseCircle size={15} color="#b45309" />
+                    <span>Put On Hold</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openStatusModal("Resume")}
+                    className="btn btn-secondary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: "#059669",
+                      borderColor: "#a7f3d0",
+                      background: "#ecfdf5",
+                    }}
+                    title="Resume and reactivate batch"
+                  >
+                    <PlayCircle size={15} color="#059669" />
+                    <span>Resume Batch</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => openStatusModal("Cancelled")}
+                  className="btn btn-secondary"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    color: "#b91c1c",
+                    borderColor: "#fca5a5",
+                    background: "#fef2f2",
+                  }}
+                  title="Cancel batch"
+                >
+                  <Ban size={15} color="#b91c1c" />
+                  <span>Cancel Batch</span>
+                </button>
+              </>
+            )}
+
+            {activeBatch.status === "Cancelled" && (
+              <button
+                type="button"
+                onClick={() => openStatusModal("Resume")}
+                className="btn btn-secondary"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  color: "#0b5cab",
+                  borderColor: "#93c5fd",
+                  background: "#eff6ff",
+                }}
+                title="Reopen cancelled batch"
+              >
+                <RefreshCw size={15} color="#0b5cab" />
+                <span>Reopen Batch</span>
+              </button>
+            )}
+
             {/* Edit Batch (Always available for active editing and post-approval adjustments) */}
             <button
               onClick={openEditModal}
@@ -1360,8 +2031,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
+        }} onClick={(e) => {
+          e.stopPropagation();
+          setIsAddSessionOpen(false);
         }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
               Schedule Session
             </h3>
@@ -1503,8 +2177,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
+        }} onClick={(e) => {
+          e.stopPropagation();
+          setCompletingSession(null);
         }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
               Quality Gate 1: Complete Session
             </h3>
@@ -1607,8 +2284,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
+        }} onClick={(e) => {
+          e.stopPropagation();
+          setIsGate2ModalOpen(false);
         }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 500, padding: 24, background: "#ffffff" }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 500, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
               Quality Gate 2: Batch NPS Closure
             </h3>
@@ -1719,6 +2399,28 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
                   Upload `.xlsx` / `.csv` schedule, run dry-run conflict check, and batch schedule.
                 </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                  <a
+                    href="/batch_schedule_january_2027.xlsx"
+                    download="batch_schedule_january_2027.xlsx"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      color: "#1e40af",
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      textDecoration: "none",
+                    }}
+                  >
+                    <FileSpreadsheet size={14} color="#2563eb" />
+                    <span>Download January 2027 Schedule Template (.xlsx)</span>
+                  </a>
+                </div>
               </div>
               <button onClick={() => setIsIngestModalOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-dim)" }}>
                 <X size={20} />
@@ -1888,7 +2590,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <tbody>
                       {extractedRows.map((r, i) => (
                         <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>{r.date_of_training}</td>
+                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>{formatDate(r.date_of_training)}</td>
                           <td style={{ padding: "8px 12px" }}>{r.topic}</td>
                           <td style={{ padding: "8px 12px" }}>{r.faculty_name || "—"}</td>
                           <td style={{ padding: "8px 12px" }}>{r.no_of_hours}h</td>
@@ -1940,8 +2642,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
+        }} onClick={(e) => {
+          e.stopPropagation();
+          setIsEditModalOpen(false);
         }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 660, maxHeight: "90vh", overflowY: "auto", padding: 24, background: "#ffffff", borderRadius: 16 }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 660, maxHeight: "90vh", overflowY: "auto", padding: 24, background: "#ffffff", borderRadius: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
               <div>
                 <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
@@ -2006,7 +2711,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Client SOW Number *
+                  Client SOW / PO Number *
                 </label>
                 <input
                   type="text"
@@ -2047,12 +2752,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </label>
                 <select
                   value={editForm.delivery_mode || "Online"}
-                  onChange={(e) => setEditForm((prev) => ({ ...prev, delivery_mode: e.target.value }))}
+                  onChange={(e) => {
+                    const selectedName = e.target.value;
+                    const matched = options.delivery_modes.find((m) => m.name === selectedName);
+                    setEditForm((prev) => ({
+                      ...prev,
+                      delivery_mode: selectedName,
+                      delivery_mode_id: matched ? matched.id : prev.delivery_mode_id,
+                    }));
+                  }}
                   className="glass-input"
                 >
-                  <option value="Online">Online</option>
-                  <option value="F2F">F2F</option>
-                  <option value="Blended">Blended</option>
+                  {options.delivery_modes.length > 0 ? (
+                    options.delivery_modes.map((mode) => (
+                      <option key={mode.id} value={mode.name}>
+                        {mode.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="Online">Online</option>
+                      <option value="F2F">F2F</option>
+                      <option value="Blended">Blended</option>
+                    </>
+                  )}
                 </select>
               </div>
 
@@ -2173,6 +2896,418 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   className="btn btn-primary"
                 >
                   {isSavingEdit ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Batch Lifecycle Status Transition (OnHold / Cancelled / Resume) */}
+      {isStatusModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+            padding: 16,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsStatusModalOpen(false);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: 490,
+              width: "100%",
+              background: "#ffffff",
+              borderRadius: 14,
+              overflow: "hidden",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              border: "1px solid var(--border-subtle)",
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{
+              padding: "18px 22px",
+              borderBottom: "1px solid var(--border-subtle)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: targetStatus === "Cancelled" ? "#fef2f2" : targetStatus === "OnHold" ? "#fffbeb" : "#f0fdf4",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {targetStatus === "Cancelled" ? (
+                  <Ban size={22} color="#e11d48" />
+                ) : targetStatus === "OnHold" ? (
+                  <PauseCircle size={22} color="#d97706" />
+                ) : (
+                  <PlayCircle size={22} color="#16a34a" />
+                )}
+                <div>
+                  <h3 style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
+                    {targetStatus === "Cancelled" ? "Cancel Batch" : targetStatus === "OnHold" ? "Put Batch On Hold" : "Reactivate / Resume Batch"}
+                  </h3>
+                  <p style={{ fontSize: "0.775rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
+                    Batch Reference: <strong>{activeBatch.batch_id}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsStatusModalOpen(false);
+                }}
+                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveStatus} style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+              {statusError && (
+                <div style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  color: "#f43f5e",
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  fontSize: "0.825rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6
+                }}>
+                  <AlertCircle size={15} />
+                  <span>{statusError}</span>
+                </div>
+              )}
+
+              <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
+                {targetStatus === "Cancelled" ? (
+                  <span>
+                    Are you sure you want to cancel this batch? This will halt operations and record an official cancellation note.
+                  </span>
+                ) : targetStatus === "OnHold" ? (
+                  <span>
+                    Placing this batch on hold will pause delivery milestones and notify coordinators and managers.
+                  </span>
+                ) : (
+                  <span>
+                    Resuming this batch will continue its workflow at <strong>{targetStatus}</strong>.
+                  </span>
+                )}
+              </div>
+
+              {targetStatus !== "OnHold" && targetStatus !== "Cancelled" && (
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Target Resumed Status *
+                  </label>
+                  <select
+                    value={targetStatus}
+                    onChange={(e) => setTargetStatus(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                  >
+                    {activeBatch.approver_1_status !== "Approved" && (
+                      <option value="Approval 1 Pending">Approval 1 Pending (Approver 1 Review)</option>
+                    )}
+                    {activeBatch.approver_1_status === "Approved" && activeBatch.approver_2_status !== "Approved" && (
+                      <option value="Approval 2 Pending">Approval 2 Pending (Approver 2 Review)</option>
+                    )}
+                    {activeBatch.approver_1_status === "Approved" && activeBatch.approver_2_status === "Approved" && (
+                      <>
+                        <option value="Approved">Approved</option>
+                        <option value="Upcoming">Upcoming</option>
+                        <option value="Ongoing">Ongoing</option>
+                      </>
+                    )}
+                    {(activeBatch.approver_1_status === "Rejected" || activeBatch.approver_2_status === "Rejected") && (
+                      <option value="Requested">Requested (Revisions Needed)</option>
+                    )}
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Reason / Justification *
+                </label>
+                <textarea
+                  value={statusReason}
+                  onChange={(e) => setStatusReason(e.target.value)}
+                  placeholder={
+                    targetStatus === "Cancelled"
+                      ? "e.g. Client cancelled training contract due to internal budget reallocation..."
+                      : targetStatus === "OnHold"
+                      ? "e.g. Client requested start date deferral until curriculum revision is finalized..."
+                      : "e.g. Client confirmed new schedule and faculty availability verified..."
+                  }
+                  rows={3}
+                  className="glass-input"
+                  style={{ width: "100%", resize: "vertical" }}
+                  required
+                />
+                <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
+                  A clear reason (minimum 3 characters) is required for audit and governance compliance.
+                </span>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6, paddingTop: 12, borderTop: "1px solid var(--border-subtle)" }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsStatusModalOpen(false);
+                  }}
+                  className="btn btn-secondary"
+                  style={{ padding: "8px 14px", fontSize: "0.85rem" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingStatus || statusReason.trim().length < 3}
+                  className="btn btn-primary"
+                  style={{
+                    padding: "8px 16px",
+                    fontSize: "0.85rem",
+                    background: targetStatus === "Cancelled" ? "#e11d48" : targetStatus === "OnHold" ? "#d97706" : "#059669",
+                  }}
+                >
+                  {isSubmittingStatus ? "Saving..." : targetStatus === "Cancelled" ? "Confirm Cancellation" : targetStatus === "OnHold" ? "Confirm On Hold" : "Confirm Resume"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Log Faculty Utilization on Session Day */}
+      {isLogUtilizationOpen && selectedScheduleDay && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+            padding: 16,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsLogUtilizationOpen(false);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: 540,
+              width: "100%",
+              background: "#ffffff",
+              borderRadius: 14,
+              overflow: "hidden",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              border: "1px solid var(--border-subtle)",
+            }}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                padding: "18px 22px",
+                borderBottom: "1px solid var(--border-subtle)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "#f8fafc",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    background: "#eff6ff",
+                    color: "#2563eb",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Calendar size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
+                    Log Faculty Utilization
+                  </h3>
+                  <p style={{ fontSize: "0.775rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
+                    Day {selectedScheduleDay.sequence_number} • {formatDate(selectedScheduleDay.session_date)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsLogUtilizationOpen(false);
+                }}
+                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Error Message */}
+            {utilError && (
+              <div style={{ margin: "16px 22px 0", background: "#fef2f2", border: "1px solid #fecaca", color: "#e11d48", padding: "10px 14px", borderRadius: 8, fontSize: "0.825rem" }}>
+                {utilError}
+              </div>
+            )}
+
+            {/* Pre-filled Curriculum Context Banner */}
+            <div style={{ margin: "16px 22px", padding: "12px 14px", borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: "0.825rem" }}>
+              <div style={{ fontWeight: 700, color: "#166534", marginBottom: 4 }}>
+                Curriculum Topic / Module:
+              </div>
+              <div style={{ color: "#1e293b", fontWeight: 600 }}>
+                {selectedScheduleDay.module}
+              </div>
+              <div style={{ display: "flex", gap: 14, marginTop: 6, color: "#475569", fontSize: "0.775rem" }}>
+                <span>Scheduled Trainer: <strong>{selectedScheduleDay.trainer_name || activeBatch.faculty_assigned_text || "Unassigned"}</strong></span>
+                <span>•</span>
+                <span>Planned Hours: <strong>{selectedScheduleDay.duration_hours} hrs</strong></span>
+              </div>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleLogUtilizationSubmit} style={{ padding: "0 22px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Actual Faculty / Trainer Name *
+                </label>
+                <input
+                  type="text"
+                  value={utilFacultyName}
+                  onChange={(e) => setUtilFacultyName(e.target.value)}
+                  placeholder="Trainer full name"
+                  className="glass-input"
+                  style={{ width: "100%" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Actual Hours Delivered *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="24"
+                    value={utilHours}
+                    onChange={(e) => setUtilHours(parseFloat(e.target.value) || 0)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Delivery Mode *
+                  </label>
+                  <select
+                    value={utilDeliveryMode}
+                    onChange={(e) => setUtilDeliveryMode(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  >
+                    {options.delivery_modes.length > 0 ? (
+                      options.delivery_modes.map((m) => (
+                        <option key={m.id} value={m.name}>{m.name}</option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="Online">Online</option>
+                        <option value="F2F">F2F</option>
+                        <option value="Blended">Blended</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Venue / Room
+                  </label>
+                  <input
+                    type="text"
+                    value={utilVenue}
+                    onChange={(e) => setUtilVenue(e.target.value)}
+                    placeholder="e.g. MS Teams Room 1 / Lab 3"
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Delivery Status *
+                  </label>
+                  <select
+                    value={utilStatus}
+                    onChange={(e) => setUtilStatus(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  >
+                    <option value="Completed">Completed / Delivered</option>
+                    <option value="InProgress">In Progress</option>
+                    <option value="Scheduled">Scheduled</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
+                <button
+                  type="button"
+                  onClick={() => setIsLogUtilizationOpen(false)}
+                  className="btn btn-secondary"
+                  style={{ padding: "8px 14px", fontSize: "0.85rem" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingUtil || !utilFacultyName.trim()}
+                  className="btn btn-primary"
+                  style={{ padding: "8px 18px", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  {isSubmittingUtil ? "Saving..." : "Save Faculty Utilization"}
                 </button>
               </div>
             </form>

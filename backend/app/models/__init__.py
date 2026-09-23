@@ -7,7 +7,7 @@ from app.models.batch import (
     Entity,
     ApprovalConfiguration,
 )
-from app.models.session import TrainingSession
+from app.models.session import TrainingSession, FacultyUtilization
 
 __all__ = [
     "User",
@@ -16,4 +16,5 @@ __all__ = [
     "Team",
     "Batch",
     "TrainingSession",
+    "FacultyUtilization",
 ]

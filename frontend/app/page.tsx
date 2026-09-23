@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import {
   api, Batch, ManagerDashboardSummary, FacultyMember, FacultyUtilizationSummary, User
 } from "@/lib/api";
-import { Navbar } from "@/components/Navbar";
+import { formatDate } from "@/lib/dateUtils";
 import { CreateBatchModal } from "@/components/CreateBatchModal";
 import { ApproveBatchModal } from "@/components/ApproveBatchModal";
 import { BatchDetailDrawer } from "@/components/BatchDetailDrawer";
 import { ManagerBoard } from "@/components/ManagerBoard";
+import { Sidebar } from "@/components/Sidebar";
+import { EnterpriseDashboard } from "@/components/EnterpriseDashboard";
 import {
   Layers, Search, Filter, Plus, CheckCircle2, Clock, PlayCircle,
   Archive, Eye, Lock, Building2, MapPin, Sparkles, RefreshCw,
@@ -28,6 +30,9 @@ export default function DashboardPage() {
 
   // Direct reports state for managerial dashboard
   const [myReports, setMyReports] = useState<User[]>([]);
+
+  // All users for enterprise dashboard
+  const [allUsers, setAllUsers] = useState<User[]>([]);
 
   // Batches state
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -221,6 +226,8 @@ export default function DashboardPage() {
         fetchBatches(true);
       } else if (activeView === "analytics") {
         fetchAnalytics();
+        fetchBatches(true);
+        api.getUsers().then(setAllUsers).catch(() => {});
       } else if (activeView === "faculty") {
         fetchFaculty();
       }
@@ -429,337 +436,44 @@ export default function DashboardPage() {
   };
 
   const getStatusBadge = (status: string) => {
-    const s = status.toLowerCase();
+    const s = (status || "").toLowerCase();
     if (s === "requested") return <span className="badge badge-requested">Requested</span>;
     if (s === "approval 1 pending") return <span className="badge badge-requested">Approval 1 Pending</span>;
     if (s === "approval 2 pending") return <span className="badge badge-requested">Approval 2 Pending</span>;
     if (s === "approved") return <span className="badge badge-approved">Approved</span>;
+    if (s === "upcoming") return <span className="badge badge-approved">Upcoming</span>;
     if (s === "ongoing") return <span className="badge badge-ongoing">Ongoing</span>;
     if (s === "completed") return <span className="badge badge-completed">Completed</span>;
+    if (s === "onhold") return <span className="badge badge-onhold">On Hold</span>;
+    if (s === "cancelled") return <span className="badge badge-cancelled">Cancelled</span>;
     return <span className="badge badge-cancelled">{status}</span>;
   };
 
   return (
-    <div className="dashboard-shell" style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <Navbar />
+    <div className="dashboard-shell" style={{
+      minHeight: "100vh",
+      display: "flex",
+      padding: "16px 20px",
+      gap: 24,
+      alignItems: "stretch",
+      justifyContent: "flex-start",
+      background: "#f8fafc",
+      boxSizing: "border-box",
+    }}>
+      {/* Modern Card Sidebar Matching Reference Design */}
+      <Sidebar
+        activeView={activeView}
+        setActiveView={setActiveView}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        onOpenCreateBatch={() => setIsCreateOpen(true)}
+        pendingApprovalsCount={approvalQueue.length}
+        onFilterCategory={(cat) => setCategoryFilter(cat)}
+        activeCategoryFilter={categoryFilter}
+      />
 
-      <div style={{
-        width: "100%",
-        padding: "24px 20px",
-        flex: 1,
-        display: "flex",
-        gap: 24,
-        alignItems: "flex-start",
-        justifyContent: "flex-start"
-      }}>
-        {/* Unified Operational Sidebar */}
-        <aside style={{
-          width: 260,
-          flexShrink: 0,
-          position: "sticky",
-          top: 76
-        }}>
-          <div className="glass-panel" style={{
-            background: "#f4f9ff",
-            borderRadius: 16,
-            border: "1px solid #cfe0f7",
-            boxShadow: "0 8px 16px rgba(15, 23, 42, 0.05)",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column"
-          }}>
-            {/* Unified Sidebar Actions & Navigation */}
-            <div style={{ padding: "12px 10px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {/* Quick Action: New Batch */}
-              {canCreateBatch && (
-                <button
-                  onClick={() => setIsCreateOpen(true)}
-                  className="btn btn-primary"
-                  style={{
-                    width: "100%",
-                    padding: "11px 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    fontSize: "0.94rem",
-                    fontWeight: 700,
-                    borderRadius: 12,
-                    background: "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)",
-                    color: "#ffffff",
-                    border: "1px solid rgba(11, 92, 171, 0.9)",
-                    boxShadow: "0 8px 16px rgba(11, 92, 171, 0.12)",
-                    cursor: "pointer",
-                    minHeight: 52
-                  }}
-                >
-                  <PlusCircle size={18} strokeWidth={2.2} />
-                  <span>New Batch</span>
-                </button>
-              )}
-
-              {/* Manager Control Board */}
-              {user?.team_name?.trim().toLowerCase() !== "finance"
-                && (user?.role?.toLowerCase() === "manager" || user?.role?.toLowerCase() === "admin" || hasReportingStaff) && (
-                <button
-                  onClick={() => setActiveView("manager_board")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    width: "100%",
-                    padding: "12px 12px",
-                    borderRadius: 12,
-                    border: activeView === "manager_board" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
-                    background: activeView === "manager_board" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
-                    color: activeView === "manager_board" ? "#ffffff" : "#0b5cab",
-                    fontWeight: 700,
-                    fontSize: "0.9rem",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    boxShadow: activeView === "manager_board" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
-                    opacity: 1,
-                    transition: "all 0.15s",
-                    minHeight: 52,
-                    position: "relative",
-                  }}
-                >
-                  <Kanban size={18} color={activeView === "manager_board" ? "#ffffff" : "#0b5cab"} />
-                  <span style={{ lineHeight: 1.2 }}>Manager Board</span>
-                  {approvalQueue.length > 0 && (
-                    <span style={{
-                      position: "absolute",
-                      top: 8,
-                      right: 10,
-                      background: activeView === "manager_board" ? "#ffffff" : "#7c3aed",
-                      color: activeView === "manager_board" ? "#7c3aed" : "#ffffff",
-                      borderRadius: 999,
-                      fontSize: "0.7rem",
-                      fontWeight: 800,
-                      minWidth: 18,
-                      height: 18,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: "0 5px",
-                      lineHeight: 1,
-                    }}>
-                      {approvalQueue.length}
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {/* Active Batches & Sessions */}
-              <button
-                onClick={() => setActiveView("batches")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                    gap: 10,
-                  width: "100%",
-                    padding: "12px 12px",
-                    borderRadius: 12,
-                    border: activeView === "batches" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
-                    background: activeView === "batches" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
-                  color: activeView === "batches" ? "#ffffff" : "#0b5cab",
-                    fontWeight: 700,
-                    fontSize: "0.9rem",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  boxShadow: activeView === "batches"
-                    ? "0 10px 18px rgba(11, 92, 171, 0.14)"
-                    : "none",
-                  opacity: 1,
-                  transition: "all 0.15s",
-                    minHeight: 52
-                }}
-              >
-                  <Layers size={18} color={activeView === "batches" ? "#ffffff" : "#0b5cab"} />
-                  <span style={{ lineHeight: 1.2 }}>Active Batches</span>
-              </button>
-
-              {isApprover && (
-                <button
-                  onClick={() => setActiveView("approvals")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    width: "100%",
-                    padding: "12px 12px",
-                    borderRadius: 12,
-                    border: activeView === "approvals" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
-                    background: activeView === "approvals" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
-                    color: activeView === "approvals" ? "#ffffff" : "#0b5cab",
-                    fontWeight: 700,
-                    fontSize: "0.9rem",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    boxShadow: activeView === "approvals" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
-                    opacity: 1,
-                    transition: "all 0.15s",
-                    minHeight: 52,
-                    position: "relative",
-                  }}
-                >
-                  <ShieldCheck size={18} color={activeView === "approvals" ? "#ffffff" : "#0b5cab"} />
-                  <span style={{ lineHeight: 1.2 }}>Approvals</span>
-                  {approvalQueue.length > 0 && (
-                    <span style={{
-                      position: "absolute",
-                      top: 8,
-                      right: 10,
-                      background: activeView === "approvals" ? "#ffffff" : "#dc2626",
-                      color: activeView === "approvals" ? "#dc2626" : "#ffffff",
-                      borderRadius: 999,
-                      fontSize: "0.7rem",
-                      fontWeight: 800,
-                      minWidth: 18,
-                      height: 18,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: "0 5px",
-                      lineHeight: 1,
-                    }}>
-                      {approvalQueue.length}
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {isFinanceViewAvailable && (
-                <button
-                  onClick={() => setActiveView("finance")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    width: "100%",
-                    padding: "12px 12px",
-                    borderRadius: 12,
-                    border: activeView === "finance" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
-                    background: activeView === "finance" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
-                    color: activeView === "finance" ? "#ffffff" : "#0b5cab",
-                    fontWeight: 700,
-                    fontSize: "0.9rem",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    boxShadow: activeView === "finance" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
-                    opacity: 1,
-                    transition: "all 0.15s",
-                    minHeight: 52
-                  }}
-                >
-                  <Briefcase size={18} color={activeView === "finance" ? "#ffffff" : "#0b5cab"} />
-                  <span style={{ lineHeight: 1.2 }}>Finance Review</span>
-                </button>
-              )}
-
-              {/* Faculty Utilization */}
-              <button
-                onClick={() => setActiveView("faculty")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                    gap: 10,
-                  width: "100%",
-                    padding: "12px 12px",
-                    borderRadius: 12,
-                    border: activeView === "faculty" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
-                    background: activeView === "faculty" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
-                  color: activeView === "faculty" ? "#ffffff" : "#0b5cab",
-                    fontWeight: 700,
-                    fontSize: "0.9rem",
-                  cursor: "pointer",
-                  textAlign: "left",
-                    boxShadow: activeView === "faculty" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
-                  opacity: 1,
-                  transition: "all 0.15s",
-                    minHeight: 52
-                }}
-              >
-                  <Users size={18} color={activeView === "faculty" ? "#ffffff" : "#0b5cab"} />
-                <span style={{ lineHeight: 1.2 }}>Faculty Utilization</span>
-              </button>
-
-              {/* Leadership Oversight - Visible if there are people reporting under this person */}
-              {user?.team_name?.trim().toLowerCase() !== "finance" && hasReportingStaff && (
-                <button
-                  onClick={() => setActiveView("analytics")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    width: "100%",
-                    padding: "12px 12px",
-                    borderRadius: 12,
-                    border: activeView === "analytics" ? "1px solid #7dd3fc" : "1px solid rgba(11, 92, 171, 0.2)",
-                    background: activeView === "analytics" ? "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)" : "rgba(11, 92, 171, 0.05)",
-                    color: activeView === "analytics" ? "#ffffff" : "#0b5cab",
-                    fontWeight: 700,
-                    fontSize: "0.9rem",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    boxShadow: activeView === "analytics" ? "0 10px 18px rgba(11, 92, 171, 0.14)" : "none",
-                    opacity: 1,
-                    transition: "all 0.15s",
-                    minHeight: 52
-                  }}
-                >
-                  <BarChart3 size={18} color={activeView === "analytics" ? "#ffffff" : "#0b5cab"} />
-                  <span style={{ lineHeight: 1.2 }}>Team Dashboard</span>
-                </button>
-              )}
-            </div>
-
-            {/* Department Assignment Footer */}
-            <div style={{
-              padding: "12px 14px 14px",
-              borderTop: "1px solid rgba(140, 170, 210, 0.7)",
-              background: "#f2f8ff",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              fontSize: "0.72rem"
-            }}>
-              <div style={{
-                fontSize: "0.67rem",
-                fontWeight: 800,
-                color: "#54739a",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                marginBottom: 2
-              }}>
-                Department Assignment
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <span style={{ color: "#3c5474", fontWeight: 600 }}>Team:</span>
-                <strong style={{ color: "#1f2f45", fontSize: "0.82rem" }}>{user.team_name || "Delivery"}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <span style={{ color: "#3c5474", fontWeight: 600 }}>Role:</span>
-                <strong style={{ color: "#0b5cab", fontSize: "0.8rem" }}>{user.role_detail?.name || user.role}</strong>
-              </div>
-              {hasReportingStaff && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: "#3c5474", fontWeight: 600 }}>Direct Reports:</span>
-                  <strong style={{ color: "#15803d", fontSize: "0.8rem" }}>{myReports.length || user.direct_reports_count || 0} staff</strong>
-                </div>
-              )}
-            </div>
-          </div>
-        </aside>
-
-        {/* Main Content Area */}
-        <main style={{ flex: 1, minWidth: 0 }}>
+      {/* Main Content Area */}
+      <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignSelf: "stretch" }}>
 
         {/* VIEW 0: MANAGER LEVEL CONTROL BOARD */}
         {activeView === "manager_board" && (
@@ -782,7 +496,7 @@ export default function DashboardPage() {
 
         {/* VIEW 1: BATCH OPERATIONS HUB */}
         {activeView === "batches" && (
-          <>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
             {/* Metric Cards Grid */}
             <div style={{
               display: "grid",
@@ -907,14 +621,14 @@ export default function DashboardPage() {
             </div>
 
             {/* Batches Table */}
-            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden", flex: 1, display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
                   Active Batch Roster ({activeBatches.length})
                 </h3>
               </div>
 
-              <div style={{ overflowX: "auto" }}>
+              <div style={{ overflowX: "auto", flex: 1, display: "flex", flexDirection: "column" }}>
                 <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
@@ -955,13 +669,13 @@ export default function DashboardPage() {
                             <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
                           </td>
                           <td style={{ padding: "14px 16px" }}>
-                            <div style={{ color: "var(--text-main)" }}>{b.delivery_mode}</div>
+                            <div style={{ color: "var(--text-main)" }}>{b.delivery_mode || "Online"}</div>
                             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
                           </td>
                           <td style={{ padding: "14px 16px" }}>
                             <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{b.training_days} days ({b.total_hours} hrs)</div>
                             <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-                              {b.start_date ? new Date(b.start_date).toLocaleDateString() : "TBD"}
+                              {b.start_date ? formatDate(b.start_date) : "TBD"}
                             </div>
                           </td>
                           <td style={{ padding: "14px 16px" }}>
@@ -985,12 +699,12 @@ export default function DashboardPage() {
                 </table>
               </div>
             </div>
-          </>
+          </div>
         )}
 
         {/* VIEW 2: APPROVAL QUEUE */}
         {activeView === "approvals" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 24, flex: 1 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
               <div>
                 <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
@@ -1013,14 +727,14 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden", flex: 1, display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
                   Pending Approvals
                 </h3>
               </div>
 
-              <div style={{ overflowX: "auto" }}>
+              <div style={{ overflowX: "auto", flex: 1, display: "flex", flexDirection: "column" }}>
                 <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
@@ -1065,14 +779,14 @@ export default function DashboardPage() {
                               <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
                             </td>
                             <td style={{ padding: "14px 16px" }}>
-                              <div>{b.delivery_mode}</div>
+                              <div>{b.delivery_mode || "Online"}</div>
                               <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
                             </td>
                             <td style={{ padding: "14px 16px" }}>
                               {b.batch_request_date ? (
                                 <>
                                   <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
-                                    {new Date(b.batch_request_date).toLocaleDateString()}
+                                    {formatDate(b.batch_request_date)}
                                   </div>
                                   <div style={{ fontSize: "0.72rem", color: submittedDays !== null && submittedDays >= 3 ? "#d97706" : "var(--text-muted)", marginTop: 2 }}>
                                     {submittedDays === 0 ? "Today" : `${submittedDays}d ago`}
@@ -1107,6 +821,7 @@ export default function DashboardPage() {
             display: "flex",
             flexDirection: "column",
             gap: 18,
+            flex: 1,
             ...(isFinanceFullScreen ? {
               position: "fixed",
               inset: 0,
@@ -1134,13 +849,11 @@ export default function DashboardPage() {
             {(() => {
               const pendingCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status || "Pending") === "Pending").length;
               const clearedCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status) === "Cleared").length;
-              const invoicedCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status) === "Invoiced").length;
               return (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
                   {[
                     { label: "Pending", count: pendingCount, bg: "#fef9ec", border: "#fcd34d", color: "#d97706" },
                     { label: "Cleared", count: clearedCount, bg: "#f0fdf4", border: "#86efac", color: "#16a34a" },
-                    { label: "Invoiced", count: invoicedCount, bg: "#eff6ff", border: "#93c5fd", color: "#1d4ed8" },
                   ].map(({ label, count, bg, border, color }) => (
                     <div key={label} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                       <div>
@@ -1148,7 +861,7 @@ export default function DashboardPage() {
                         <div style={{ fontSize: "1.6rem", fontWeight: 800, color, fontFamily: "var(--font-display)" }}>{count}</div>
                       </div>
                       <div style={{ width: 36, height: 36, borderRadius: 8, background: `${border}55`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: "1.1rem" }}>{label === "Pending" ? "⏳" : label === "Cleared" ? "✅" : "🧾"}</span>
+                        <span style={{ fontSize: "1.1rem" }}>{label === "Pending" ? "⏳" : "✅"}</span>
                       </div>
                     </div>
                   ))}
@@ -1167,7 +880,7 @@ export default function DashboardPage() {
               );
             })()}
 
-            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden", flex: 1, display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flex: 1 }}>
                   <input
@@ -1192,7 +905,6 @@ export default function DashboardPage() {
                     <option value="ALL">All finance status</option>
                     <option value="Pending">Pending</option>
                     <option value="Cleared">Cleared</option>
-                    <option value="Invoiced">Invoiced</option>
                   </select>
                   <select value={financeDomainFilter} onChange={(e) => setFinanceDomainFilter(e.target.value)} className="glass-input" style={{ width: 120, padding: "8px 10px", fontSize: "0.8rem" }}>
                     <option value="ALL">All domains</option>
@@ -1200,7 +912,7 @@ export default function DashboardPage() {
                   </select>
                   <select value={financeModeFilter} onChange={(e) => setFinanceModeFilter(e.target.value)} className="glass-input" style={{ width: 125, padding: "8px 10px", fontSize: "0.8rem" }}>
                     <option value="ALL">All modes</option>
-                    {[...new Set(batches.map((b) => b.delivery_mode).filter(Boolean))].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                    {[...new Set(batches.map((b) => b.delivery_mode || "Online").filter(Boolean))].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
                   </select>
                   <input type="date" value={financeStartDate} onChange={(e) => setFinanceStartDate(e.target.value)} className="glass-input" title="Start date from" style={{ width: 135, padding: "8px 10px", fontSize: "0.8rem" }} />
                   <input type="date" value={financeEndDate} onChange={(e) => setFinanceEndDate(e.target.value)} className="glass-input" title="Start date to" style={{ width: 135, padding: "8px 10px", fontSize: "0.8rem" }} />
@@ -1228,30 +940,36 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="glass-table" style={{ width: "100%", minWidth: "1400px", borderCollapse: "collapse" }}>
+              <div style={{ overflowX: "auto", flex: 1, display: "flex", flexDirection: "column" }}>
+                <table className="glass-table" style={{ width: "100%", minWidth: "2200px", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.78rem", color: "var(--text-dim)" }}>
-                      <th style={{ padding: "12px 14px" }}>Batch ID</th>
-                      <th style={{ padding: "12px 14px" }}>Client</th>
-                      <th style={{ padding: "12px 14px" }}>Program</th>
-                      <th style={{ padding: "12px 14px" }}>Domain</th>
-                      <th style={{ padding: "12px 14px" }}>Mode</th>
-                      <th style={{ padding: "12px 14px" }}>Enrollments</th>
-                      <th style={{ padding: "12px 14px" }}>Training Days</th>
-                      <th style={{ padding: "12px 14px" }}>Total Hours</th>
-                      <th style={{ padding: "12px 14px" }}>SOW Ref</th>
-                      <th style={{ padding: "12px 14px" }}>Finance Status</th>
-                      <th style={{ padding: "12px 14px" }}>Check Date</th>
-                      <th style={{ padding: "12px 14px" }}>Invoice / PO Ref.</th>
-                      <th style={{ padding: "12px 14px" }}>Status</th>
-                      <th style={{ padding: "12px 14px" }}>Action</th>
+                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.78rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Batch ID</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Client</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Program</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Category</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Technology</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Domain</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Mode</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Location</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Start Date</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>End Date</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Enrollments</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Training Days</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Total Hours</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>SOW Ref</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Faculty</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Finance Status</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Check Date</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Remarks</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Status</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredFinanceBatches.length === 0 ? (
                       <tr>
-                        <td colSpan={14} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                        <td colSpan={20} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
                           No batch data available for finance review.
                         </td>
                       </tr>
@@ -1269,15 +987,21 @@ export default function DashboardPage() {
                             fontSize: "0.82rem",
                             background: dirtyFinanceIds.has(b.id) ? "rgba(251, 191, 36, 0.07)" : undefined,
                           }}>
-                            <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.client_name || "—"}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.program_name}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.domain || "—"}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.delivery_mode}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.total_enrollments}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.training_days || 0}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.total_hours || 0}</td>
-                            <td style={{ padding: "12px 14px" }}>{b.approval_id || b.sow_number || "—"}</td>
+                            <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--accent-primary)", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.batch_id}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", minWidth: 180 }}>{b.program_name}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.category || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.technology || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.delivery_mode || "Online"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.location_city || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.start_date ? formatDate(b.start_date) : "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.end_date ? formatDate(b.end_date) : "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.total_enrollments}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.training_days || 0}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.total_hours || 0}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.approval_id || b.sow_number || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.faculty_assigned_text || ""}>{b.faculty_assigned_text || "—"}</td>
                             <td style={{ padding: "12px 14px" }}>
                               <select
                                 value={draft.finance_status}
@@ -1286,7 +1010,6 @@ export default function DashboardPage() {
                               >
                                 <option value="Pending">Pending</option>
                                 <option value="Cleared">Cleared</option>
-                                <option value="Invoiced">Invoiced</option>
                               </select>
                             </td>
                             <td style={{ padding: "12px 14px" }}>
@@ -1297,15 +1020,7 @@ export default function DashboardPage() {
                                 style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
                               />
                             </td>
-                            <td style={{ padding: "12px 14px" }}>
-                              <input
-                                type="number"
-                                min={0}
-                                value={draft.finance_check ?? ""}
-                                onChange={(e) => updateFinanceDraft(b.id, "finance_check", e.target.value === "" ? null : Number(e.target.value))}
-                                style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
-                              />
-                            </td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.remarks || ""}>{b.remarks || "—"}</td>
                             <td style={{ padding: "12px 14px" }}>{getStatusBadge(b.status)}</td>
                             <td style={{ padding: "12px 14px" }}>
                               <button
@@ -1328,225 +1043,14 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* VIEW 4: EXECUTIVE ANALYTICS & MBR */}
+        {/* VIEW 4: ENTERPRISE DASHBOARD */}
         {activeView === "analytics" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-                  Executive Operations Analytics & MBR Insights
-                </h2>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Real-time visibility across vertical delivery pipelines, quality gates, and faculty utilization.
-                </p>
-              </div>
-
-              <button
-                onClick={handleExportMbr}
-                disabled={isExportingMbr}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 8 }}
-              >
-                <Download size={16} />
-                <span>{isExportingMbr ? "Generating..." : "Download Full MBR Report (.xlsx)"}</span>
-              </button>
-            </div>
-
-            {isLoadingAnalytics || !dashboardSummary ? (
-              <div style={{ textAlign: "center", padding: "48px 0" }}>
-                <RefreshCw className="animate-spin" size={28} color="#0b5cab" style={{ margin: "0 auto 10px" }} />
-                <div style={{ color: "var(--text-muted)" }}>Calculating real-time analytics...</div>
-              </div>
-            ) : (
-              <>
-                {/* KPI Cards */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-                  <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                      Active Operating Batches
-                    </div>
-                    <div style={{ fontSize: "2rem", fontWeight: 800, color: "#0b5cab", marginTop: 4 }}>
-                      {dashboardSummary.total_active_batches}
-                    </div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                      Approved, Upcoming & Ongoing
-                    </div>
-                  </div>
-
-                  <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                      Overall Net Promoter Score
-                    </div>
-                    <div style={{ fontSize: "2rem", fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
-                      {dashboardSummary.overall_avg_nps !== null ? `${dashboardSummary.overall_avg_nps} / 10` : "—"}
-                    </div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                      Gate 2 Executive NPS Score
-                    </div>
-                  </div>
-
-                  <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                      Quality Gate 1 Average
-                    </div>
-                    <div style={{ fontSize: "2rem", fontWeight: 800, color: "#b45309", marginTop: 4 }}>
-                      {dashboardSummary.overall_avg_feedback !== null ? `${dashboardSummary.overall_avg_feedback} / 5.0` : "—"}
-                    </div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                      Session feedback index
-                    </div>
-                  </div>
-
-                  <div className="glass-panel" style={{ padding: "18px 20px" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-                      Faculty Utilization Ratio
-                    </div>
-                    <div style={{ fontSize: "2rem", fontWeight: 800, color: "#7c3aed", marginTop: 4 }}>
-                      {dashboardSummary.faculty_utilization_ratio}%
-                    </div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                      Deployed trainer capacity
-                    </div>
-                  </div>
-                </div>
-
-                {/* Vertical Distribution Breakdown */}
-                <div className="glass-panel" style={{ padding: "24px" }}>
-                  <h3 style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 16px 0" }}>
-                    Vertical Performance Breakdown
-                  </h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
-                    {dashboardSummary.vertical_distribution.map((v) => (
-                      <div
-                        key={v.vertical}
-                        style={{
-                          border: "1px solid var(--border-subtle)",
-                          borderRadius: 8,
-                          padding: "16px 18px",
-                          background: "#f8fafc"
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontWeight: 800, fontSize: "1.05rem", color: "#0b5cab" }}>
-                            {v.vertical}
-                          </span>
-                          <span style={{
-                            background: "#e8f2fb",
-                            color: "#0b5cab",
-                            padding: "2px 8px",
-                            borderRadius: 4,
-                            fontSize: "0.75rem",
-                            fontWeight: 700
-                          }}>
-                            {v.active_batches} Active Batch(es)
-                          </span>
-                        </div>
-
-                        <div style={{ display: "flex", gap: 20, marginTop: 14 }}>
-                          <div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Average Feedback</div>
-                            <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
-                              ⭐ {v.average_feedback > 0 ? `${v.average_feedback} / 5.0` : "Pending"}
-                            </div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Pipeline Status</div>
-                            <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#16a34a", marginTop: 4 }}>
-                              Operational
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Supervised Personnel & Direct Reports Panel */}
-                <div className="glass-panel" style={{ padding: "22px 24px", background: "#ffffff" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                          Supervised Personnel & Reporting Team
-                        </h3>
-                        <span style={{
-                          fontSize: "0.75rem",
-                          fontWeight: 700,
-                          padding: "3px 10px",
-                          borderRadius: 12,
-                          background: "#e8f2fb",
-                          color: "#0b5cab",
-                          border: "1px solid #bae6fd"
-                        }}>
-                          {myReports.length} Direct Report(s)
-                        </span>
-                      </div>
-                      <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                        Staff reporting directly to you for batch delivery supervision, attendance, and operational coordination.
-                      </p>
-                    </div>
-                  </div>
-
-                  {myReports.length === 0 ? (
-                    <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-                      <Users size={32} color="#94a3b8" style={{ margin: "0 auto 8px" }} />
-                      <div style={{ fontWeight: 600, color: "var(--text-main)" }}>No Direct Reports Assigned</div>
-                      <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginTop: 4 }}>
-                        When administrators assign team members reporting to your leadership line, they will appear here.
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ overflowX: "auto" }}>
-                      <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                        <thead>
-                          <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.78rem", color: "var(--text-dim)" }}>
-                            <th style={{ padding: "10px 14px" }}>Employee Name</th>
-                            <th style={{ padding: "10px 14px" }}>Corporate Email</th>
-                            <th style={{ padding: "10px 14px" }}>Assigned Role</th>
-                            <th style={{ padding: "10px 14px" }}>Ops Team</th>
-                            <th style={{ padding: "10px 14px" }}>Account Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {myReports.map((r) => (
-                            <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.85rem" }}>
-                              <td style={{ padding: "12px 14px", fontWeight: 600, color: "var(--text-main)" }}>
-                                {r.full_name}
-                              </td>
-                              <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
-                                {r.email}
-                              </td>
-                              <td style={{ padding: "12px 14px" }}>
-                                <span style={{ padding: "2px 8px", borderRadius: 4, background: "#e8f2fb", color: "#0b5cab", fontSize: "0.75rem", fontWeight: 600 }}>
-                                  {r.role_detail?.name || r.role}
-                                </span>
-                              </td>
-                              <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
-                                {r.team_name || "Operations"}
-                              </td>
-                              <td style={{ padding: "12px 14px" }}>
-                                <span style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4,
-                                  color: r.is_active ? "#16a34a" : "#94a3b8",
-                                  fontSize: "0.8rem",
-                                  fontWeight: 600
-                                }}>
-                                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: r.is_active ? "#16a34a" : "#94a3b8" }} />
-                                  {r.is_active ? "Active" : "Inactive"}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          <EnterpriseDashboard
+            batches={batches}
+            users={allUsers}
+            dashboardSummary={dashboardSummary}
+            isLoading={isLoadingAnalytics}
+          />
         )}
 
         {/* VIEW 3: FACULTY DIRECTORY & UTILIZATION */}
@@ -1692,7 +1196,6 @@ export default function DashboardPage() {
           </div>
         )}
         </main>
-      </div>
 
       {/* Modals & Drawers */}
       <CreateBatchModal

@@ -43,7 +43,7 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-ops_db}
-      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://frontend:3000"]
+      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://localhost:8000","http://127.0.0.1:8000","http://frontend:3000","http://0.0.0.0:3000"]
     depends_on:
       - db
     networks:
@@ -53,6 +53,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Containerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
     container_name: ops_frontend
     restart: unless-stopped
     ports:

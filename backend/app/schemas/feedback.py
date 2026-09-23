@@ -34,6 +34,7 @@ class BatchNpsClosureCreate(BaseModel):
     passive_count: int = Field(default=0, ge=0)
     detractors_count: int = Field(default=0, ge=0)
     average_feedback_score: Optional[Decimal] = Field(None, ge=Decimal("1.0"), le=Decimal("5.0"))
+    retrospective_notes: Optional[str] = None
     client_feedback: Optional[str] = None
 
 

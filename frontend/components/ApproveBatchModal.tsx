@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { api, Batch } from "@/lib/api";
+import { formatDate } from "@/lib/dateUtils";
 import { X, Lock, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
 
 interface ApproveBatchModalProps {
@@ -144,8 +145,8 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
               ["Category", batch.category || "Not specified"],
               ["Delivery mode", batch.delivery_mode || "Not specified"],
               ["Location", batch.location_city || "Remote"],
-              ["Start date", batch.start_date ? new Date(batch.start_date).toLocaleDateString() : "Not set"],
-              ["End date", batch.end_date ? new Date(batch.end_date).toLocaleDateString() : "Not set"],
+              ["Start date", formatDate(batch.start_date, "Not set")],
+              ["End date", formatDate(batch.end_date, "Not set")],
               ["Training days", String(batch.training_days ?? 0)],
               ["Total hours", String(batch.total_hours ?? 0)],
               ["Enrollments", String(batch.total_enrollments ?? 0)],

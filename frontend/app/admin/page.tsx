@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import {
   api, Role, Team, User, UserHierarchyNode, BatchOption, FmsSyncLog, CoordinatorMappingRecord
 } from "@/lib/api";
+import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { Navbar } from "@/components/Navbar";
+import { ChangePasswordModal } from "@/components/ChangePasswordModal";
 import {
   Shield, Users, Tag, UserPlus, Plus, Trash2, CheckCircle2,
   AlertCircle, RefreshCw, GitFork, Briefcase, Layers, Building2,
-  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2, Link2
+  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2, Link2, KeyRound
 } from "lucide-react";
 
 // Recursive Org Tree Node Component
@@ -179,6 +181,13 @@ export default function AdminPortalPage() {
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
   const [isEditUserOpen, setIsEditUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [passwordTargetUser, setPasswordTargetUser] = useState<User | null>(null);
+
+  const handleOpenChangePassword = (target: User | null) => {
+    setPasswordTargetUser(target);
+    setIsChangePasswordOpen(true);
+  };
 
   // Form States for Team Creation
   const [newTeamName, setNewTeamName] = useState("");
@@ -566,7 +575,6 @@ export default function AdminPortalPage() {
       await api.updateUser(editingUser.id, {
         email: editUserEmail.trim().toLowerCase(),
         full_name: editUserFullName.trim(),
-        password: editUserPassword.trim() || undefined,
         role_id: editUserRoleId || null,
         team_id: editUserTeamId || null,
         manager_id: editUserReportsToId || null,
@@ -1008,7 +1016,7 @@ export default function AdminPortalPage() {
                           </span>
                         </td>
                         <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                          {new Date(t.created_at).toLocaleDateString()}
+                          {formatDate(t.created_at)}
                         </td>
                         <td style={{ padding: "14px 16px", textAlign: "right" }}>
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -1132,7 +1140,7 @@ export default function AdminPortalPage() {
                         </span>
                       </td>
                       <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                        {new Date(r.created_at).toLocaleDateString()}
+                        {formatDate(r.created_at)}
                       </td>
                       <td style={{ padding: "14px 16px", textAlign: "right" }}>
                         <button onClick={() => handleDeleteRole(r.id, r.name)} style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: "6px" }}>
@@ -1258,14 +1266,25 @@ export default function AdminPortalPage() {
                 </p>
               </div>
 
-              <button
-                onClick={() => setIsCreateUserOpen(true)}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <UserPlus size={16} />
-                <span>Add New User</span>
-              </button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => handleOpenChangePassword(null)}
+                  className="btn btn-secondary"
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <KeyRound size={16} color="#d97706" />
+                  <span>Change User Password</span>
+                </button>
+
+                <button
+                  onClick={() => setIsCreateUserOpen(true)}
+                  className="btn btn-primary"
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <UserPlus size={16} />
+                  <span>Add New User</span>
+                </button>
+              </div>
             </div>
 
             <div style={{ overflowX: "auto" }}>
@@ -1324,6 +1343,14 @@ export default function AdminPortalPage() {
                         </span>
                       </td>
                       <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          onClick={() => handleOpenChangePassword(u)}
+                          title="Change User Password"
+                          aria-label={`Change password for ${u.full_name}`}
+                          style={{ background: "transparent", border: "none", color: "#d97706", cursor: "pointer", padding: 6 }}
+                        >
+                          <KeyRound size={16} />
+                        </button>
                         <button
                           onClick={() => handleOpenEditUser(u)}
                           title="Edit staff member"
@@ -1464,7 +1491,7 @@ export default function AdminPortalPage() {
                             </span>
                           </td>
                           <td style={{ padding: "10px 14px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                            {new Date(log.timestamp).toLocaleString()}
+                            {formatDateTime(log.timestamp)}
                           </td>
                           <td style={{ padding: "10px 14px", color: "var(--text-dim)", fontSize: "0.8rem" }}>
                             {log.message || "—"}
@@ -1606,7 +1633,7 @@ export default function AdminPortalPage() {
                             <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{m.manager_email || ""}</div>
                           </td>
                           <td style={{ padding: "14px 16px", color: "var(--text-dim)", fontSize: "0.82rem" }}>
-                            {new Date(m.assigned_at).toLocaleDateString()}
+                            {formatDate(m.assigned_at)}
                           </td>
                           <td style={{ padding: "14px 16px", textAlign: "right" }}>
                             <button
@@ -2147,10 +2174,6 @@ export default function AdminPortalPage() {
                 <input type="email" value={editUserEmail} onChange={(e) => setEditUserEmail(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
               </div>
               <div>
-                <label className="form-label">New Password (optional)</label>
-                <input type="password" value={editUserPassword} onChange={(e) => setEditUserPassword(e.target.value)} placeholder="Leave blank to keep current password" className="glass-input" style={{ width: "100%" }} minLength={8} />
-              </div>
-              <div>
                 <label className="form-label">Assigned Position Title / Role *</label>
                 <select value={editUserRoleId} onChange={(e) => setEditUserRoleId(e.target.value)} className="glass-input" style={{ width: "100%" }} required>
                   {roles.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.system_role})</option>)}
@@ -2184,6 +2207,21 @@ export default function AdminPortalPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Change Password for All Users */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => {
+          setIsChangePasswordOpen(false);
+          setPasswordTargetUser(null);
+        }}
+        targetUser={passwordTargetUser}
+        allUsers={users}
+        onSuccess={() => {
+          fetchData();
+        }}
+      />
     </div>
   );
 }
+

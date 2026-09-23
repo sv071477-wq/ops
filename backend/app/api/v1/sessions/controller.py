@@ -6,13 +6,26 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
-from app.schemas.session import SessionCreate, SessionUpdate, SessionDetailResponse, SessionOutcomeRequest, SessionRescheduleRequest
+from app.schemas.session import (
+    SessionCreate, SessionUpdate, SessionDetailResponse,
+    SessionOutcomeRequest, SessionRescheduleRequest, TrainingSessionResponse
+)
 from app.api.deps import get_current_user, require_coordinator_or_above
 from app.api.deps_services import get_session_service
 from app.api.v1.sessions.service import SessionService
 from app.api.v1.notifications.service import NotificationService
 
 router = APIRouter()
+
+
+@router.get("/scheduled", response_model=List[TrainingSessionResponse])
+def list_scheduled_sessions(
+    batch_id: UUID,
+    service: SessionService = Depends(get_session_service),
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """Lists the ingested curriculum training schedule days for a batch."""
+    return service.list_scheduled(batch_id, current_user.id)
 
 
 @router.get("", response_model=List[SessionDetailResponse])

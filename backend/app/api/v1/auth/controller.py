@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token,
-    CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode
+    CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode,
+    ChangePasswordRequest, AdminResetPasswordRequest
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
@@ -27,6 +28,17 @@ def get_me(current_user: User = Depends(get_current_user), service: AuthService 
     return service._enrich_user(current_user)
 
 
+@router.post("/change-password")
+def change_my_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    service: AuthService = Depends(get_auth_service),
+) -> Any:
+    """Authenticated User: Change own account password."""
+    return service.change_my_password(current_user, data)
+
+
+
 @router.get("/my-reports", response_model=List[UserResponse])
 def get_my_reports(current_user: User = Depends(get_current_user), service: AuthService = Depends(get_auth_service)) -> Any:
     """Fetch list of active users reporting directly to the authenticated user."""
@@ -34,7 +46,7 @@ def get_my_reports(current_user: User = Depends(get_current_user), service: Auth
     return [service._enrich_user(u) for u in reports]
 
 
-@router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
+@router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_manager_or_admin)])
 def list_users(service: AuthService = Depends(get_auth_service)) -> Any:
     """Admin Only: List all organization users with their assigned roles."""
     return service.list_all_users()
@@ -69,6 +81,17 @@ def update_user(
 ) -> Any:
     """Admin Only: Update a staff member's account and organization assignments."""
     return service.update_user(id, user_in)
+
+
+@router.post("/users/{id}/change-password", dependencies=[Depends(require_admin)])
+def admin_change_user_password(
+    id: UUID,
+    data: AdminResetPasswordRequest,
+    service: AuthService = Depends(get_auth_service),
+) -> Any:
+    """Admin Only: Reset or change password for any user in the organization."""
+    return service.admin_reset_user_password(id, data.new_password)
+
 
 
 @router.delete("/users/{id}", dependencies=[Depends(require_admin)])

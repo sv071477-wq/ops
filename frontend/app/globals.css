@@ -202,6 +202,13 @@ body {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
+.badge-onhold {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  color: #b45309;
+  border: 1px solid #fcd34d;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
 /* Modal Overlay */
 .modal-overlay {
   position: fixed;

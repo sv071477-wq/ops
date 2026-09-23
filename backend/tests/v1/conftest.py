@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.core.security import get_password_hash, create_access_token
 from app.models.user import User, UserManagerMapping, Team
-from app.models.batch import Batch
+from app.models.batch import Batch, ApprovalConfiguration
 from app.main import app
 
 # In-memory SQLite database for fast isolated unit tests
@@ -61,6 +61,12 @@ def db_session():
 
         mapping = UserManagerMapping(coordinator_id=coord.id, manager_id=manager.id)
         db.add(mapping)
+
+        approval_config = ApprovalConfiguration(
+            approver_1_id=manager.id,
+            approver_2_id=admin.id
+        )
+        db.add(approval_config)
 
         batch = Batch(
             batch_id="TEST_BATCH_PYTHON_001",

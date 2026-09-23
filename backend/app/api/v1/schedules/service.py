@@ -70,9 +70,9 @@ class ExcelIngestionService:
             value = str(val).strip()
             if not value:
                 return None
-            parsed = pd.to_datetime(value, errors="coerce")
+            parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
             if pd.isna(parsed):
-                parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
+                parsed = pd.to_datetime(value, errors="coerce")
         if pd.isna(parsed):
             return None
         return parsed.to_pydatetime() if hasattr(parsed, "to_pydatetime") else parsed
@@ -159,25 +159,24 @@ class ExcelIngestionService:
             columns = cls._column_map(list(df.columns))
             if "date_of_training" not in columns or "topic" not in columns:
                 try:
-                    raw_sheet = pd.read_excel(io.BytesIO(file_contents), sheet_name=sheet_name, header=None)
+                    if filename.lower().endswith(".csv"):
+                        raw_sheet = pd.read_csv(io.BytesIO(file_contents), header=None)
+                    else:
+                        raw_sheet = pd.read_excel(io.BytesIO(file_contents), sheet_name=sheet_name, header=None)
                     header_row = cls._find_header_row(raw_sheet)
                     if header_row is not None:
                         df = raw_sheet.iloc[header_row + 1:].copy()
                         df.columns = raw_sheet.iloc[header_row].tolist()
                         df = df.reset_index(drop=True)
                         columns = cls._column_map(list(df.columns))
-                except Exception as exc:
-                    errors.append(ScheduleExtractionError(
-                        source_sheet=str(sheet_name),
-                        source_row=1,
-                        message=f"Could not inspect worksheet headers: {exc}",
-                    ))
+                except Exception:
+                    pass
             total_rows += len(df)
             if "date_of_training" not in columns or "topic" not in columns:
                 errors.append(ScheduleExtractionError(
                     source_sheet=str(sheet_name),
                     source_row=1,
-                    message="Missing schedule headers. Expected a training date and topic/module column."
+                    message="Missing schedule headers. Expected a training date column and topic/module column."
                 ))
                 continue
 
@@ -291,16 +290,17 @@ class ExcelIngestionService:
                 errors.append({"source_row": item.source_row, "message": "Faculty name is required"})
                 continue
 
+            s_date = item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
             existing = db.query(TrainingSession).filter(
                 TrainingSession.batch_id == batch.id,
-                TrainingSession.date_of_training == item.date_of_training,
-                TrainingSession.topic.ilike(item.topic.strip()),
+                TrainingSession.session_date == s_date,
+                TrainingSession.module.ilike(item.topic.strip()),
             ).first()
             if existing:
                 errors.append({"source_row": item.source_row, "message": "Matching session already exists for this batch"})
                 continue
 
-            day_key = (faculty_name.lower(), item.date_of_training.date())
+            day_key = (faculty_name.lower(), s_date)
             prior_hours = running_hours.get(day_key, Decimal("0"))
             conflicts = ConflictEngine.check_session_conflict(
                 db=db,
@@ -312,7 +312,7 @@ class ExcelIngestionService:
                 end_time=item.end_time,
                 faculty_id=None,
             )
-            slot_key = (faculty_name.lower(), item.date_of_training.date())
+            slot_key = (faculty_name.lower(), s_date)
             for previous_start, previous_end, previous_row in running_slots.get(slot_key, []):
                 if item.start_time and item.end_time and previous_start and previous_end and previous_start < item.end_time and previous_end > item.start_time:
                     errors.append({"source_row": item.source_row, "message": f"Overlaps another uploaded session from row {previous_row}"})
@@ -329,15 +329,16 @@ class ExcelIngestionService:
             scheduled_dates = {item.date_of_training.date() for item, _ in prepared}
             missing_count = max(0, batch.training_days - len(scheduled_dates))
             if missing_count:
-                faculty_name = (batch.faculty_assigned_text or "").strip()
+                faculty_name = (batch.faculty_assigned_text or getattr(batch, "faculty_name", None) or "").strip()
                 if not faculty_name:
                     errors.append({"source_row": 0, "message": "A faculty assignment is required to generate missing training days"})
                 else:
                     candidate = batch.start_date.date()
-                    while candidate <= batch.end_date.date() and len(generated) < missing_count:
+                    end_candidate = batch.end_date.date() if batch.end_date else candidate + timedelta(days=30)
+                    while candidate <= end_candidate and len(generated) < missing_count:
                         if candidate.weekday() < 5 and candidate not in scheduled_dates:
                             generated.append((
-                                datetime.combine(candidate, time(9, 0)),
+                                candidate,
                                 faculty_name,
                             ))
                             scheduled_dates.add(candidate)
@@ -351,33 +352,33 @@ class ExcelIngestionService:
 
         try:
             sessions = []
-            for item, faculty_name in prepared:
+            for idx, (item, faculty_name) in enumerate(prepared, start=1):
+                s_date = item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
                 session = TrainingSession(
                     batch_id=batch.id,
-                    faculty_name=faculty_name,
-                    date_of_training=item.date_of_training,
+                    sequence_number=idx,
+                    session_date=s_date,
+                    day_name=s_date.strftime("%A") if hasattr(s_date, "strftime") else None,
                     start_time=item.start_time,
                     end_time=item.end_time,
-                    topic=item.topic,
-                    no_of_hours=item.no_of_hours,
-                    venue=item.venue,
-                    location_city=item.location_city or batch.location_city,
-                    mode_of_delivery=item.mode_of_delivery or (batch.delivery_mode_detail.name if batch.delivery_mode_detail else "Online"),
+                    duration_hours=item.no_of_hours,
+                    module=item.topic,
+                    trainer_name=faculty_name,
                     status="Scheduled",
                 )
                 db.add(session)
                 sessions.append(session)
-            for generated_date, faculty_name in generated:
+            for gen_idx, (generated_date, faculty_name) in enumerate(generated, start=len(prepared) + 1):
                 session = TrainingSession(
                     batch_id=batch.id,
-                    faculty_name=faculty_name,
-                    date_of_training=generated_date,
+                    sequence_number=gen_idx,
+                    session_date=generated_date,
+                    day_name=generated_date.strftime("%A") if hasattr(generated_date, "strftime") else None,
                     start_time=time(9, 0),
                     end_time=time(17, 0),
-                    topic="Generated training day - details required",
-                    no_of_hours=Decimal("8.0"),
-                    location_city=batch.location_city,
-                    mode_of_delivery=batch.delivery_mode_detail.name if batch.delivery_mode_detail else "Online",
+                    duration_hours=Decimal("8.0"),
+                    module="Generated training day - details required",
+                    trainer_name=faculty_name,
                     status="Scheduled",
                 )
                 db.add(session)

@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User, UserManagerMapping, Role, Team
 from app.models.batch import ApprovalConfiguration
-from app.schemas.user import CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate
+from app.schemas.user import (
+    CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate,
+    ChangePasswordRequest, AdminResetPasswordRequest
+)
 
 
 class AuthService:
@@ -159,6 +162,26 @@ class AuthService:
         self.db.delete(user)
         self.db.commit()
         return {"detail": f"User '{user.email}' successfully deleted"}
+
+    def change_my_password(self, user: User, data: ChangePasswordRequest) -> dict:
+        if not verify_password(data.current_password, user.hashed_password):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+        if len(data.new_password) < 8:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must contain at least 8 characters")
+        user.hashed_password = get_password_hash(data.new_password)
+        self.db.commit()
+        return {"detail": "Password successfully updated"}
+
+    def admin_reset_user_password(self, user_id: UUID, new_password: str) -> dict:
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        if len(new_password) < 8:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must contain at least 8 characters")
+        user.hashed_password = get_password_hash(new_password)
+        self.db.commit()
+        return {"detail": f"Password for '{user.email}' successfully updated"}
+
 
     def list_all_users(self) -> List[UserResponse]:
         users = self.db.query(User).order_by(User.created_at.desc()).all()

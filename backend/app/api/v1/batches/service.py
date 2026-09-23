@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import io
 import pandas as pd
 from decimal import Decimal
@@ -17,6 +17,7 @@ from app.models.batch import (
     DeliveryMode,
     Entity,
 )
+from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User
 from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreate, BatchUpdate
 from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
@@ -35,10 +36,13 @@ class BatchService:
         batch_data.pop("batch_request_date", None)
         batch_data["calendar_days"] = self._calendar_days(batch_data.get("start_date"), batch_data.get("end_date"))
         batch_data["category_id"] = self._option_id(BatchCategory, batch_data.get("category_id"), batch_data.get("category", "Bootcamp"))
-        batch_data["delivery_mode_id"] = self._option_id(DeliveryMode, batch_data.get("delivery_mode_id"), batch_data.get("delivery_mode", "Online"))
+        delivery_mode_str = batch_data.get("delivery_mode", "Online")
+        if delivery_mode_str == "Online":
+            batch_data["location_city"] = None
+        batch_data["delivery_mode_id"] = self._option_id(DeliveryMode, batch_data.get("delivery_mode_id"), delivery_mode_str)
         if batch_data.get("accommodation_id"):
             batch_data["accommodation_id"] = self._option_id(Accommodation, batch_data["accommodation_id"], "")
-        batch_data["entity_id"] = self._option_id(Entity, batch_data.get("entity_id"), "Default")
+        batch_data["entity_id"] = self._option_id(Entity, batch_data.get("entity_id"), "Unext")
         batch_data["batch_request_date"] = datetime.now(timezone.utc)
         config = self.db.query(ApprovalConfiguration).first()
         if not config or not config.approver_1_id or not config.approver_2_id:
@@ -274,6 +278,11 @@ class BatchService:
                 update_data.get("start_date", batch.start_date),
                 update_data.get("end_date", batch.end_date),
             )
+        if "delivery_mode" in update_data or "delivery_mode_id" in update_data:
+            delivery_mode_val = update_data.pop("delivery_mode", None)
+            delivery_mode_id = update_data.get("delivery_mode_id")
+            if delivery_mode_id or delivery_mode_val:
+                update_data["delivery_mode_id"] = self._option_id(DeliveryMode, delivery_mode_id, delivery_mode_val or "Online")
         if batch.is_schema_locked and (current_user.role or "").lower() not in ["admin", "manager", "coordinator"]:
             restricted = {"client_name", "category", "program_name", "technology", "domain"}
             for field in restricted.intersection(update_data):
@@ -281,6 +290,87 @@ class BatchService:
         for field, value in update_data.items():
             setattr(batch, field, value)
         batch.updated_at = datetime.now(timezone.utc)
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def update_lifecycle_status(self, batch_id: UUID, new_status: str, reason: str, current_user: User) -> Batch:
+        batch = self.get(batch_id, current_user)
+        self._require_operational_scope(batch, current_user)
+
+        target_status = new_status
+        # If resuming from OnHold or target is 'Resume', resume into the rightful approval status
+        if new_status == "Resume" or (batch.status == "OnHold" and new_status in ["Upcoming", "Approved", "Resume"]):
+            if batch.approver_1_status == "Pending":
+                target_status = "Approval 1 Pending"
+            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
+                target_status = "Approval 2 Pending"
+            elif batch.approver_1_status == "Rejected" or batch.approver_2_status == "Rejected":
+                target_status = "Requested"
+            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Approved":
+                target_status = "Upcoming"
+            else:
+                target_status = "Approval 1 Pending"
+
+        # Prevent non-approved batches from jumping straight into Upcoming or Ongoing without approvals
+        if target_status in ["Upcoming", "Ongoing"] and (batch.approver_1_status != "Approved" or batch.approver_2_status != "Approved"):
+            if batch.approver_1_status == "Pending":
+                target_status = "Approval 1 Pending"
+            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
+                target_status = "Approval 2 Pending"
+            else:
+                target_status = "Requested"
+
+        allowed_statuses = {
+            "OnHold",
+            "Cancelled",
+            "Upcoming",
+            "Ongoing",
+            "Approved",
+            "Requested",
+            "Approval 1 Pending",
+            "Approval 2 Pending",
+        }
+        if target_status not in allowed_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid target status '{target_status}'. Allowed: {', '.join(sorted(allowed_statuses))}"
+            )
+
+        if not reason or len(reason.strip()) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A valid reason (minimum 3 characters) is required to update the batch lifecycle status."
+            )
+
+        ist_tz = timezone(timedelta(hours=5, minutes=30))
+        timestamp = datetime.now(ist_tz).strftime("%d-%m-%Y %H:%M IST")
+        actor_name = current_user.full_name or current_user.email
+        audit_entry = f"[{timestamp} - Status changed from '{batch.status}' to '{target_status}' by {actor_name} ({current_user.role or 'User'})]: {reason.strip()}"
+
+        batch.remarks = f"{batch.remarks}\n{audit_entry}" if batch.remarks else audit_entry
+        batch.status = target_status
+        batch.updated_at = datetime.now(timezone.utc)
+
+        # Cascade cancellation to all sessions so the conflict engine frees faculty availability
+        if target_status == "Cancelled":
+            terminal_states = {"Completed", "Cancelled"}
+            faculty_sessions = self.db.query(FacultyUtilization).filter(
+                FacultyUtilization.batch_id == batch.id,
+                FacultyUtilization.status.notin_(terminal_states),
+            ).all()
+            for fs in faculty_sessions:
+                fs.status = "Cancelled"
+                fs.updated_at = datetime.now(timezone.utc)
+
+            training_sessions = self.db.query(TrainingSession).filter(
+                TrainingSession.batch_id == batch.id,
+                TrainingSession.status.notin_(terminal_states),
+            ).all()
+            for ts in training_sessions:
+                ts.status = "Cancelled"
+                ts.updated_at = datetime.now(timezone.utc)
+
         self.db.commit()
         self.db.refresh(batch)
         return batch

@@ -16,6 +16,7 @@ router = APIRouter()
 OPTION_MODELS = {
     "categories": BatchCategory,
     "delivery-modes": DeliveryMode,
+    "delivery_modes": DeliveryMode,
     "accommodations": Accommodation,
     "entities": Entity,
 }

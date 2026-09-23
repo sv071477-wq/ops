@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.models.user import User
-from app.models.session import TrainingSession
+from app.models.session import FacultyUtilization
 from app.models.batch import Batch
 from app.schemas.faculty import (
     FacultyResponse,
@@ -45,8 +45,8 @@ class FacultyService:
         ).all()
         total_faculty = len(faculty_users)
 
-        deployed_rows = self.db.query(TrainingSession.faculty_name).filter(
-            TrainingSession.status.notin_(["Cancelled"])
+        deployed_rows = self.db.query(FacultyUtilization.faculty_name).filter(
+            FacultyUtilization.status.notin_(["Cancelled"])
         ).distinct().all()
         deployed_names = {row[0].strip().lower() for row in deployed_rows if row[0]}
         active_deployed = len(deployed_names.intersection({f.full_name.strip().lower() for f in faculty_users}))
@@ -54,17 +54,17 @@ class FacultyService:
         if total_faculty > 0:
             utilization_pct = Decimal(str(round((active_deployed / total_faculty) * 100, 1)))
         else:
-            utilization_pct = Decimal("100.0")
+            utilization_pct = Decimal("0.0")
 
         # Compute breakdown by domain across batches and sessions
         domains = ["IT/ITES", "Cloud", "DS/ML", "CyberSecurity", "FullStack"]
         breakdown = []
         for d in domains:
-            domain_sessions = self.db.query(TrainingSession).join(
-                Batch, TrainingSession.batch_id == Batch.id
+            domain_sessions = self.db.query(FacultyUtilization).join(
+                Batch, FacultyUtilization.batch_id == Batch.id
             ).filter(
                 Batch.domain.ilike(f"%{d}%"),
-                TrainingSession.status.notin_(["Cancelled"])
+                FacultyUtilization.status.notin_(["Cancelled"])
             ).all()
 
             fac_in_domain = len({s.faculty_name.strip().lower() for s in domain_sessions if s.faculty_name})

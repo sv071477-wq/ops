@@ -5,11 +5,11 @@ from typing import Optional
 
 import pandas as pd
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, cast, Date
+from sqlalchemy import func, or_, and_, cast, Date
 from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
-from app.models.session import TrainingSession
+from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User, UserManagerMapping
 from app.schemas.analytics import ManagerDashboardSummary, VerticalBreakdown
 
@@ -89,26 +89,26 @@ class AnalyticsService:
         ).count()
 
         # Sessions query scoped to batches
-        session_query = self.db.query(TrainingSession)
+        session_query = self.db.query(FacultyUtilization)
         if scoped_ids is not None:
-            session_query = session_query.filter(TrainingSession.batch_id.in_(scoped_ids))
+            session_query = session_query.filter(FacultyUtilization.batch_id.in_(scoped_ids))
 
         # Real ongoing sessions
         today = date.today()
         total_ongoing_sessions = session_query.filter(
             or_(
-                TrainingSession.status == "InProgress",
-                and_filter := (
-                    TrainingSession.status != "Cancelled",
-                    cast(TrainingSession.date_of_training, Date) == today
+                FacultyUtilization.status == "InProgress",
+                and_(
+                    FacultyUtilization.status != "Cancelled",
+                    cast(FacultyUtilization.date_of_training, Date) == today
                 )
             )
         ).count()
 
         # Total hours delivered from completed sessions
         delivered_hours_sum = session_query.filter(
-            TrainingSession.status == "Completed"
-        ).with_entities(func.sum(TrainingSession.no_of_hours)).scalar()
+            FacultyUtilization.status == "Completed"
+        ).with_entities(func.sum(FacultyUtilization.no_of_hours)).scalar()
 
         if delivered_hours_sum is not None:
             total_hours_delivered = Decimal(str(round(float(delivered_hours_sum), 2)))
@@ -122,13 +122,13 @@ class AnalyticsService:
         # Pending Gate 1 Feedbacks (sessions completed or past date without rating)
         pending_gate1 = session_query.filter(
             or_(
-                TrainingSession.status == "Completed",
-                TrainingSession.date_of_training <= now_utc
+                FacultyUtilization.status == "Completed",
+                FacultyUtilization.date_of_training <= now_utc
             ),
-            TrainingSession.status != "Cancelled",
+            FacultyUtilization.status != "Cancelled",
             or_(
-                TrainingSession.feedback_rating.is_(None),
-                TrainingSession.feedback_submitted == False
+                FacultyUtilization.feedback_rating.is_(None),
+                FacultyUtilization.feedback_submitted == False
             )
         ).count()
 
@@ -138,8 +138,8 @@ class AnalyticsService:
             User.is_active == True
         ).count()
 
-        deployed_fac_count = self.db.query(TrainingSession.faculty_name).filter(
-            TrainingSession.status.in_(["Scheduled", "InProgress", "Completed"])
+        deployed_fac_count = self.db.query(FacultyUtilization.faculty_name).filter(
+            FacultyUtilization.status.in_(["Scheduled", "InProgress", "Completed"])
         ).distinct().count()
 
         if total_fac_count > 0:

@@ -14,6 +14,7 @@ from app.schemas.batch import (
     BatchApprove,
     BatchResponse,
     BatchDetailResponse,
+    BatchLifecycleStatusUpdate,
 )
 from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
 from app.api.deps import (
@@ -161,6 +162,17 @@ def update_batch(
 ) -> Any:
     """Updates batch fields. Schema locked batches restrict modification to non-governed fields."""
     return service.update(id, batch_in, current_user)
+
+
+@router.post("/{id}/lifecycle-status", response_model=BatchResponse)
+def update_batch_lifecycle_status(
+    id: UUID,
+    payload: BatchLifecycleStatusUpdate,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_coordinator_or_above),
+) -> Any:
+    """Transition batch lifecycle status (e.g. OnHold, Cancelled, Upcoming, Ongoing) with mandatory reason."""
+    return service.update_lifecycle_status(id, payload.status, payload.reason, current_user)
 
 
 @router.post("/{id}/close", response_model=BatchResponse)

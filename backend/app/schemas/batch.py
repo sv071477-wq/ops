@@ -14,6 +14,7 @@ class BatchBase(BaseModel):
     entity_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     delivery_mode_id: Optional[UUID] = None
+    delivery_mode: Optional[str] = "Online"
     accommodation_id: Optional[UUID] = None
     program_name: str = Field(..., min_length=2, max_length=255)
     technology: Optional[str] = Field(None, max_length=255)
@@ -32,7 +33,7 @@ class BatchBase(BaseModel):
     coordinator_id: Optional[UUID] = None
     sales_spoc_id: Optional[UUID] = None
     faculty_assigned_text: Optional[str] = None
-    finance_status: str = Field("Pending", max_length=50)
+    finance_status: str = Field("Pending", pattern="^(Pending|Cleared)$", max_length=50)
     finance_status_check_date: Optional[date] = None
     finance_check: Optional[int] = None
     remarks: Optional[str] = None
@@ -96,6 +97,11 @@ class ApprovalConfigurationResponse(ApprovalConfigurationBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BatchLifecycleStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(OnHold|Cancelled|Upcoming|Ongoing|Approved|Requested|Approval 1 Pending|Approval 2 Pending|Resume)$", description="Target lifecycle status")
+    reason: str = Field(..., min_length=3, max_length=1000, description="Mandatory reason/justification for status change")
+
+
 class BatchUpdate(BaseModel):
     sow_number: Optional[str] = None
     approval_id: Optional[str] = None
@@ -103,6 +109,7 @@ class BatchUpdate(BaseModel):
     entity_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     delivery_mode_id: Optional[UUID] = None
+    delivery_mode: Optional[str] = None
     accommodation_id: Optional[UUID] = None
     program_name: Optional[str] = None
     technology: Optional[str] = None
@@ -121,7 +128,7 @@ class BatchUpdate(BaseModel):
     coordinator_id: Optional[UUID] = None
     sales_spoc_id: Optional[UUID] = None
     faculty_assigned_text: Optional[str] = None
-    finance_status: Optional[str] = None
+    finance_status: Optional[str] = Field(None, pattern="^(Pending|Cleared)$")
     finance_status_check_date: Optional[date] = None
     finance_check: Optional[int] = None
     remarks: Optional[str] = None

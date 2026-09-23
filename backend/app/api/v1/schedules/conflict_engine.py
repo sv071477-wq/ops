@@ -5,7 +5,8 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.schemas.schedule import ConflictDetail
-from app.models.session import TrainingSession
+from app.models.session import FacultyUtilization
+from app.models.batch import Batch
 from app.models.user import User
 
 
@@ -38,13 +39,16 @@ class ConflictEngine:
             try:
                 start_of_day = date_of_training.replace(hour=0, minute=0, second=0, microsecond=0)
                 end_of_day = start_of_day + timedelta(days=1)
-                query = db.query(TrainingSession).filter(
-                    TrainingSession.date_of_training >= start_of_day,
-                    TrainingSession.date_of_training < end_of_day,
-                    TrainingSession.status.notin_(["Cancelled"])
+                query = db.query(FacultyUtilization).join(
+                    Batch, Batch.id == FacultyUtilization.batch_id
+                ).filter(
+                    FacultyUtilization.date_of_training >= start_of_day,
+                    FacultyUtilization.date_of_training < end_of_day,
+                    FacultyUtilization.status.notin_(["Cancelled"]),
+                    Batch.status != "Cancelled",
                 )
                 if faculty_name and faculty_name.strip():
-                    query = query.filter(TrainingSession.faculty_name.ilike(faculty_name.strip()))
+                    query = query.filter(FacultyUtilization.faculty_name.ilike(faculty_name.strip()))
                 sessions_on_date = query.all()
                 db_hours = sum((s.no_of_hours for s in sessions_on_date), Decimal("0"))
                 existing_hours = max(existing_hours, db_hours)

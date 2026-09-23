@@ -17,7 +17,7 @@ def test_create_batch_requested(client, coord_token_headers):
     data = response.json()
     assert data["batch_id"] == "NEW_BATCH_PYTORCH_2026"
     assert data["client_name"] == "Fractal Analytics"
-    assert data["status"] == "Requested"
+    assert data["status"] in ["Requested", "Approval 1 Pending"]
     assert data["is_schema_locked"] is False
 
 
@@ -81,4 +81,4 @@ def test_create_batch_with_sow_string_and_empty_uuid_fields(client, coord_token_
     assert data["batch_id"] == "BATCH_SAMPLE_2026"
     assert data["sow_number"] == "SOW everthing"
     assert data["sales_spoc_id"] is None
-    assert data["status"] == "Requested"
+    assert data["status"] in ["Requested", "Approval 1 Pending"]

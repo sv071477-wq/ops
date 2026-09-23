@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api, BatchOption, CreateBatchPayload, User } from "@/lib/api";
+import { formatDate } from "@/lib/dateUtils";
 import {
   X,
   AlertCircle,
@@ -297,7 +298,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
 
     if (step === 4) {
       if (!formData.sow_number || !String(formData.sow_number).trim()) {
-        setError("Client SOW Number is mandatory for commercial tracking");
+        setError("Client SOW / PO Number is mandatory for commercial tracking");
         return false;
       }
       return true;
@@ -371,7 +372,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     { num: 1, title: "Program & Client", icon: Building },
     { num: 2, title: "Schedule & Delivery", icon: Calendar },
     { num: 3, title: "Headcount & Faculty", icon: Users },
-    { num: 4, title: "Review & SOW", icon: ShieldCheck },
+    { num: 4, title: "Review & SOW / PO", icon: ShieldCheck },
   ];
 
   const getEntityName = (id?: string) => (options.entities || []).find((e) => e.id === id)?.name || "Not specified";
@@ -708,7 +709,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                   <option value="">Select faculty accommodation requirement</option>
                   {(options.accommodations || []).map((acc) => (
                     <option key={acc.id} value={acc.id}>
-                      {acc.name} — {acc.name.toLowerCase().includes("non") ? "Trainer local / self-arranged" : "Hotel / Guest house arranged"}
+                      {acc.name}
                     </option>
                   ))}
                 </select>
@@ -965,19 +966,19 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
                 <div>
                   <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 6 }}>
-                    Client SOW Number <span style={{ color: "#f43f5e" }}>*</span>
+                    Client SOW / PO Number <span style={{ color: "#f43f5e" }}>*</span>
                   </label>
                   <input
                     type="text"
                     name="sow_number"
                     value={formData.sow_number || ""}
                     onChange={handleChange}
-                    placeholder="e.g. SOW-2026-DEL-089"
+                    placeholder="e.g. SOW-2026-DEL-089 or PO-98421"
                     className="glass-input"
                     required
                   />
                   <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 4 }}>
-                    Official client agreement / statement of work reference
+                    Official client agreement, statement of work, or PO reference
                   </p>
                 </div>
 
@@ -1031,7 +1032,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                       {selectedDeliveryMode} {requiresLocation ? `(${formData.location_city})` : ""}
                     </div>
                     <div style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                      {formData.start_date} to {formData.end_date} ({calendarDays} Days)
+                      {formatDate(formData.start_date)} to {formatDate(formData.end_date)} ({calendarDays} Days)
                     </div>
                     <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
                       Training: {formData.training_days} Days / {formData.total_hours} Hours • Faculty Acc: {getAccommodationName(formData.accommodation_id)}
@@ -1054,7 +1055,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                   <div style={{ borderLeft: "3px solid #f59e0b", paddingLeft: 10 }}>
                     <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700 }}>Commercial & Status</div>
                     <div style={{ fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
-                      SOW: {formData.sow_number}
+                      SOW / PO: {formData.sow_number}
                     </div>
                     <div style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
                       Initial Status: <strong style={{ color: "var(--amber)" }}>Requested</strong>

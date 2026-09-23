@@ -62,7 +62,7 @@ class Batch(Base):
     faculty_assigned_text = Column(String(500), nullable=True)  # Legacy faculty string
 
     # Financial Milestone Status
-    finance_status = Column(String(50), default="Pending", nullable=False)  # Pending, Cleared, Invoiced
+    finance_status = Column(String(50), default="Pending", nullable=False)  # Pending, Cleared
     finance_status_check_date = Column(Date, nullable=True)
     finance_check = Column(Integer, nullable=True)
 
@@ -90,8 +90,20 @@ class Batch(Base):
     primary_manager = relationship("User", foreign_keys=[primary_manager_id], back_populates="primary_managed_batches")
     coordinator = relationship("User", foreign_keys=[coordinator_id], back_populates="coordinated_batches")
     sales_spoc = relationship("User", foreign_keys=[sales_spoc_id], back_populates="sales_batches")
-    delivery_mode_detail = relationship("DeliveryMode", foreign_keys=[delivery_mode_id])
-    sessions = relationship("TrainingSession", back_populates="batch", cascade="all, delete-orphan")
+    delivery_mode_detail = relationship("DeliveryMode", foreign_keys=[delivery_mode_id], lazy="joined")
+    scheduled_sessions = relationship("TrainingSession", back_populates="batch", cascade="all, delete-orphan")
+    faculty_utilizations = relationship("FacultyUtilization", back_populates="batch", cascade="all, delete-orphan")
+    sessions = relationship("FacultyUtilization", back_populates="batch", overlaps="faculty_utilizations")
+
+    @property
+    def delivery_mode(self) -> str:
+        if getattr(self, "delivery_mode_detail", None) and getattr(self.delivery_mode_detail, "name", None):
+            return self.delivery_mode_detail.name
+        return getattr(self, "_delivery_mode_name", None) or "Online"
+
+    @delivery_mode.setter
+    def delivery_mode(self, value: str):
+        self._delivery_mode_name = value
 
 
 class BatchOptionMixin:

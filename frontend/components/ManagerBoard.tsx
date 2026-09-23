@@ -6,6 +6,7 @@ import {
   ManagerDashboardSummary,
   User,
 } from "@/lib/api";
+import { formatDate } from "@/lib/dateUtils";
 import {
   Kanban,
   BarChart3,
@@ -135,6 +136,16 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
         const isPastEnd = b.end_date ? new Date(b.end_date).getTime() < Date.now() : false;
         return (b.status === "Ongoing" || b.status === "Approved" || isPastEnd) && b.batch_nps === null;
       },
+    },
+    {
+      id: "on_hold",
+      title: "On Hold",
+      subtitle: "Paused delivery",
+      badgeBg: "#fef3c7",
+      badgeColor: "#b45309",
+      borderColor: "#fcd34d",
+      icon: Clock,
+      filterFn: (b) => b.status === "OnHold",
     },
     {
       id: "completed",
@@ -422,7 +433,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       {viewMode === "kanban" && (
         <div style={{
           display: "grid",
-          gridTemplateColumns: "repeat(6, minmax(280px, 1fr))",
+          gridTemplateColumns: `repeat(${stages.length}, minmax(280px, 1fr))`,
           gap: 16,
           overflowX: "auto",
           paddingBottom: 16,
@@ -585,7 +596,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                               fontSize: "0.7rem",
                               color: "var(--text-dim)",
                             }}>
-                              {batch.delivery_mode} {batch.location_city ? `• ${batch.location_city}` : ""}
+                              {batch.delivery_mode || "Online"} {batch.location_city ? `• ${batch.location_city}` : ""}
                             </span>
                           </div>
 
@@ -624,7 +635,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                             borderTop: "1px solid var(--border-subtle)",
                           }}>
                             <span style={{ fontSize: "0.72rem", color: "var(--text-dim)" }}>
-                              {batch.start_date ? new Date(batch.start_date).toLocaleDateString() : "No date"}
+                              {batch.start_date ? formatDate(batch.start_date) : "No date"}
                             </span>
 
                             {batch.status === "Approval 2 Pending"
