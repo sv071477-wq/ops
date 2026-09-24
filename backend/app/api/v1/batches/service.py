@@ -299,7 +299,7 @@ class BatchService:
         finance_fields = {"finance_status", "finance_status_check_date", "finance_check"}
         if finance_fields.intersection(update_data):
             team_name = current_user.team_detail.name if current_user.team_detail else ""
-            if team_name.strip().lower() != "finance":
+            if team_name.strip().lower() != "finance" and (current_user.role or "").lower() != "admin":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Only Finance team members can update finance fields."

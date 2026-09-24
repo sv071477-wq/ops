@@ -38,6 +38,7 @@ export default function DashboardPage() {
   // Batches state
   const [batches, setBatches] = useState<Batch[]>([]);
   const [financeDrafts, setFinanceDrafts] = useState<Record<string, {
+    approval_id: string;
     finance_status: string;
     finance_status_check_date: string;
     finance_check: number | null;
@@ -122,10 +123,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setFinanceDrafts((prev) => {
-      const next: Record<string, { finance_status: string; finance_status_check_date: string; finance_check: number | null }> = {};
+      const next: Record<string, { approval_id: string; finance_status: string; finance_status_check_date: string; finance_check: number | null }> = {};
       batches.forEach((batch) => {
         const previous = prev[batch.id];
         next[batch.id] = {
+          approval_id: previous?.approval_id !== undefined ? previous.approval_id : (batch.approval_id || ""),
           finance_status: previous?.finance_status || batch.finance_status || "Pending",
           finance_status_check_date: previous?.finance_status_check_date || batch.finance_status_check_date || "",
           finance_check: previous?.finance_check ?? batch.finance_check ?? null,
@@ -137,12 +139,13 @@ export default function DashboardPage() {
 
   const updateFinanceDraft = (
     batchId: string,
-    field: "finance_status" | "finance_status_check_date" | "finance_check",
+    field: "approval_id" | "finance_status" | "finance_status_check_date" | "finance_check",
     value: string | number | null,
   ) => {
     setFinanceDrafts((prev) => ({
       ...prev,
       [batchId]: {
+        approval_id: prev[batchId]?.approval_id ?? "",
         finance_status: prev[batchId]?.finance_status || "Pending",
         finance_status_check_date: prev[batchId]?.finance_status_check_date || "",
         finance_check: prev[batchId]?.finance_check ?? null,
@@ -158,11 +161,12 @@ export default function DashboardPage() {
     setSavingFinanceBatchId(batch.id);
     try {
       await api.updateBatch(batch.id, {
+        approval_id: draft.approval_id?.trim() || null,
         finance_status: draft.finance_status || "Pending",
         finance_status_check_date: draft.finance_status_check_date || null,
         finance_check: draft.finance_check ?? null,
       });
-      await fetchBatches();
+      await fetchBatches(true);
     } catch (err: any) {
       alert(err.message || "Failed to save finance details");
     } finally {
@@ -175,6 +179,7 @@ export default function DashboardPage() {
       const draft = financeDrafts[b.id];
       if (!draft) return false;
       return (
+        (draft.approval_id?.trim() || "") !== (b.approval_id || "") ||
         draft.finance_status !== (b.finance_status || "Pending") ||
         draft.finance_status_check_date !== (b.finance_status_check_date || "") ||
         (draft.finance_check ?? null) !== (b.finance_check ?? null)
@@ -187,13 +192,14 @@ export default function DashboardPage() {
         dirtyBatches.map((b) => {
           const draft = financeDrafts[b.id];
           return api.updateBatch(b.id, {
+            approval_id: draft.approval_id?.trim() || null,
             finance_status: draft.finance_status || "Pending",
             finance_status_check_date: draft.finance_status_check_date || null,
             finance_check: draft.finance_check ?? null,
           });
         })
       );
-      await fetchBatches();
+      await fetchBatches(true);
     } catch (err: any) {
       alert(err.message || "Failed to save some finance records");
     } finally {
@@ -429,6 +435,7 @@ export default function DashboardPage() {
       const draft = financeDrafts[b.id];
       if (!draft) continue;
       if (
+        (draft.approval_id?.trim() || "") !== (b.approval_id || "") ||
         draft.finance_status !== (b.finance_status || "Pending") ||
         draft.finance_status_check_date !== (b.finance_status_check_date || "") ||
         (draft.finance_check ?? null) !== (b.finance_check ?? null)
@@ -442,7 +449,7 @@ export default function DashboardPage() {
   const dirtyFinanceCount = dirtyFinanceIds.size;
 
   const exportFinanceSheet = () => {
-    const headers = ["Batch ID", "Client", "Program", "Domain", "Mode", "Location", "Enrollments", "Training Days", "Total Hours", "SOW Ref", "Finance Status", "Check Date", "Finance Check", "Status"];
+    const headers = ["Batch ID", "Client", "Program", "Category", "Domain", "Mode", "Location", "Enrollments", "Training Days", "Total Hours", "SOW Number", "Approval ID", "Finance Status", "Check Date", "Finance Check", "Status"];
     const escapeCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
     const rows = filteredFinanceBatches.map((batch) => {
       const draft = financeDrafts[batch.id] || {};
@@ -450,13 +457,15 @@ export default function DashboardPage() {
         batch.batch_id,
         batch.client_name || "",
         batch.program_name,
+        batch.category || "",
         batch.domain || "",
         batch.delivery_mode,
         batch.location_city || "",
         batch.total_enrollments,
         batch.training_days,
         batch.total_hours,
-        batch.approval_id || batch.sow_number || "",
+        batch.sow_number || "",
+        draft.approval_id !== undefined ? draft.approval_id : (batch.approval_id || ""),
         draft.finance_status || batch.finance_status || "Pending",
         draft.finance_status_check_date || batch.finance_status_check_date || "",
         draft.finance_check ?? batch.finance_check ?? "",
@@ -1102,25 +1111,27 @@ export default function DashboardPage() {
                       <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Enrollments</th>
                       <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Training Days</th>
                       <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Total Hours</th>
-                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>SOW Ref</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>SOW Number</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap", minWidth: 160 }}>Approval ID</th>
                       <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Faculty</th>
-                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Finance Status</th>
-                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Check Date</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap", minWidth: 130 }}>Finance Status</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap", minWidth: 150 }}>Check Date</th>
                       <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Remarks</th>
                       <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Status</th>
-                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>Action</th>
+                      <th style={{ padding: "12px 14px", whiteSpace: "nowrap", textAlign: "center" }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredFinanceBatches.length === 0 ? (
                       <tr>
-                        <td colSpan={20} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
+                        <td colSpan={21} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
                           No batch data available for finance review.
                         </td>
                       </tr>
                     ) : (
                       paginatedFinanceBatches.map((b) => {
                         const draft = financeDrafts[b.id] || {
+                          approval_id: b.approval_id || "",
                           finance_status: b.finance_status || "Pending",
                           finance_status_check_date: b.finance_status_check_date || "",
                           finance_check: b.finance_check ?? null,
@@ -1145,34 +1156,69 @@ export default function DashboardPage() {
                             <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.total_enrollments}</td>
                             <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.training_days || 0}</td>
                             <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.total_hours || 0}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.approval_id || b.sow_number || "—"}</td>
+                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.sow_number || "—"}</td>
+                            <td style={{ padding: "12px 14px", minWidth: 160 }}>
+                              <input
+                                type="text"
+                                value={draft.approval_id}
+                                onChange={(e) => updateFinanceDraft(b.id, "approval_id", e.target.value)}
+                                placeholder="Approval ID..."
+                                style={{
+                                  width: "100%",
+                                  padding: "7px 10px",
+                                  borderRadius: 6,
+                                  border: "1px solid #dbe7f3",
+                                  background: "#fff",
+                                  fontSize: "0.82rem",
+                                  fontWeight: 600,
+                                  color: "var(--text-main)",
+                                  outline: "none",
+                                }}
+                              />
+                            </td>
                             <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.faculty_assigned_text || ""}>{b.faculty_assigned_text || "—"}</td>
-                            <td style={{ padding: "12px 14px" }}>
+                            <td style={{ padding: "12px 14px", minWidth: 130 }}>
                               <select
                                 value={draft.finance_status}
                                 onChange={(e) => updateFinanceDraft(b.id, "finance_status", e.target.value)}
-                                style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
+                                style={{
+                                  width: "100%",
+                                  padding: "7px 8px",
+                                  borderRadius: 6,
+                                  border: "1px solid #dbe7f3",
+                                  background: "#fff",
+                                  fontSize: "0.82rem",
+                                  fontWeight: 600,
+                                  color: draft.finance_status === "Cleared" ? "#16a34a" : "#d97706",
+                                }}
                               >
                                 <option value="Pending">Pending</option>
                                 <option value="Cleared">Cleared</option>
                               </select>
                             </td>
-                            <td style={{ padding: "12px 14px" }}>
+                            <td style={{ padding: "12px 14px", minWidth: 150 }}>
                               <input
                                 type="date"
                                 value={draft.finance_status_check_date}
                                 onChange={(e) => updateFinanceDraft(b.id, "finance_status_check_date", e.target.value)}
-                                style={{ width: "100%", padding: "7px 8px", borderRadius: 6, border: "1px solid #dbe7f3", background: "#fff" }}
+                                style={{
+                                  width: "100%",
+                                  padding: "7px 8px",
+                                  borderRadius: 6,
+                                  border: "1px solid #dbe7f3",
+                                  background: "#fff",
+                                  fontSize: "0.82rem",
+                                }}
                               />
                             </td>
                             <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.remarks || ""}>{b.remarks || "—"}</td>
                             <td style={{ padding: "12px 14px" }}>{getStatusBadge(b.status)}</td>
-                            <td style={{ padding: "12px 14px" }}>
+                            <td style={{ padding: "12px 14px", textAlign: "center" }}>
                               <button
                                 onClick={() => saveFinanceBatch(b)}
                                 disabled={savingFinanceBatchId === b.id}
                                 className="btn btn-primary"
-                                style={{ padding: "5px 10px", fontSize: "0.75rem", opacity: savingFinanceBatchId === b.id ? 0.7 : 1 }}
+                                style={{ padding: "5px 12px", fontSize: "0.75rem", opacity: savingFinanceBatchId === b.id ? 0.7 : 1 }}
                               >
                                 {savingFinanceBatchId === b.id ? "Saving..." : "Save"}
                               </button>
