@@ -1,33 +1,130 @@
 from typing import List, Optional, Dict, Any
 from uuid import UUID
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models.user import User, UserManagerMapping, Role, Team
+from app.core.security import (
+    create_access_token, create_refresh_token, get_password_hash, verify_password, validate_password_strength,
+    decode_refresh_token
+)
+from app.core.config import settings
+from app.core.email import generate_random_password, email_service
+from app.models.user import User, UserManagerMapping, Role, Team, AuditLog, AuditEventType
 from app.models.batch import ApprovalConfiguration
 from app.schemas.user import (
     CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate,
-    ChangePasswordRequest, AdminResetPasswordRequest
+    ChangePasswordRequest, AdminResetPasswordRequest, TokenPair, AdminUserCreate
 )
+
+
+def log_audit_event(
+    db: Session,
+    event_type: AuditEventType,
+    user_id: Optional[UUID] = None,
+    user_email: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    details: Optional[str] = None
+) -> None:
+    """Log security audit event."""
+    try:
+        audit = AuditLog(
+            event_type=event_type,
+            user_id=user_id,
+            user_email=user_email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details=details
+        )
+        db.add(audit)
+        db.commit()
+    except Exception:
+        # Don't let audit logging failures break the main flow
+        db.rollback()
 
 
 class AuthService:
     def __init__(self, db: Session):
         self.db = db
 
-    def authenticate(self, login_data: UserLogin) -> dict:
+    def authenticate(self, login_data: UserLogin, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
         user = self.db.query(User).filter(User.email == login_data.email).first()
+        
+        # Check account lockout
+        if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
+            log_audit_event(
+                self.db, AuditEventType.LOGIN_FAILED,
+                user_id=user.id, user_email=user.email,
+                ip_address=ip_address, user_agent=user_agent,
+                details="Account locked"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=f"Account temporarily locked. Try again after {user.locked_until.strftime('%H:%M:%S UTC')}"
+            )
+        
         if not user or not verify_password(login_data.password, user.hashed_password):
+            # Increment failed attempts
+            if user:
+                user.failed_login_attempts += 1
+                was_locked = False
+                if user.failed_login_attempts >= settings.MAX_FAILED_LOGIN_ATTEMPTS:
+                    user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=settings.LOCKOUT_DURATION_MINUTES)
+                    was_locked = True
+                    log_audit_event(
+                        self.db, AuditEventType.ACCOUNT_LOCKED,
+                        user_id=user.id, user_email=user.email,
+                        ip_address=ip_address, user_agent=user_agent,
+                        details=f"Account locked after {user.failed_login_attempts} failed attempts"
+                    )
+                self.db.commit()
+            
+            log_audit_event(
+                self.db, AuditEventType.LOGIN_FAILED,
+                user_id=user.id if user else None, user_email=login_data.email,
+                ip_address=ip_address, user_agent=user_agent,
+                details=f"Invalid password (attempt {user.failed_login_attempts if user else 1})"
+            )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+        
         if not user.is_active:
+            log_audit_event(
+                self.db, AuditEventType.LOGIN_FAILED,
+                user_id=user.id, user_email=user.email,
+                ip_address=ip_address, user_agent=user_agent,
+                details="Inactive account"
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user account")
+        
+        # Reset failed attempts on successful login
+        was_locked = user.locked_until is not None
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.last_login_at = datetime.now(timezone.utc)
+        self.db.commit()
+        
+        if was_locked:
+            log_audit_event(
+                self.db, AuditEventType.ACCOUNT_UNLOCKED,
+                user_id=user.id, user_email=user.email,
+                ip_address=ip_address, user_agent=user_agent,
+                details="Account unlocked by successful login"
+            )
+        
+        log_audit_event(
+            self.db, AuditEventType.LOGIN_SUCCESS,
+            user_id=user.id, user_email=user.email,
+            ip_address=ip_address, user_agent=user_agent,
+            details="User logged in successfully"
+        )
         
         # Enrich user response
         user_resp = self._enrich_user(user)
         return {
             "access_token": create_access_token(subject=str(user.id), role=user.role),
+            "refresh_token": create_refresh_token(subject=str(user.id)),
             "token_type": "bearer",
             "user": user_resp,
         }
@@ -54,6 +151,11 @@ class AuthService:
         return resp
 
     def create_user(self, user_in: UserCreate) -> UserResponse:
+        # Validate password strength
+        password_errors = validate_password_strength(user_in.password)
+        if password_errors:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(password_errors))
+        
         if self.db.query(User).filter(User.email == user_in.email).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
 
@@ -96,6 +198,83 @@ class AuthService:
         self.db.commit()
         self.db.refresh(user)
         return self._enrich_user(user)
+
+    def create_user_by_admin(self, user_in: AdminUserCreate, admin_user: User, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
+        """Admin creates a new user with auto-generated password and sends welcome email."""
+        if self.db.query(User).filter(User.email == user_in.email).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
+
+        role_id = user_in.role_id
+        resolved_system_role = user_in.role
+
+        if role_id:
+            role_obj = self.db.query(Role).filter(Role.id == role_id).first()
+            if not role_obj:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected role not found")
+            resolved_system_role = role_obj.system_role
+        else:
+            role_obj = self.db.query(Role).filter(Role.name.ilike(user_in.role)).first()
+            if role_obj:
+                role_id = role_obj.id
+                resolved_system_role = role_obj.system_role
+
+        team_id = user_in.team_id
+        if team_id:
+            team_obj = self.db.query(Team).filter(Team.id == team_id).first()
+            if not team_obj:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Selected team not found")
+
+        if user_in.manager_id:
+            manager_obj = self.db.query(User).filter(User.id == user_in.manager_id).first()
+            if not manager_obj:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned manager not found")
+
+        # Generate random password
+        plain_password = generate_random_password()
+        
+        user = User(
+            email=user_in.email,
+            hashed_password=get_password_hash(plain_password),
+            full_name=user_in.full_name,
+            role=resolved_system_role,
+            role_id=role_id,
+            team_id=team_id,
+            manager_id=user_in.manager_id,
+            is_active=user_in.is_active,
+        )
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+
+        # Log audit event
+        log_audit_event(
+            self.db, AuditEventType.USER_CREATED,
+            user_id=user.id, user_email=user.email,
+            ip_address=ip_address, user_agent=user_agent,
+            details=f"User created by admin {admin_user.email}"
+        )
+
+        # Send welcome email if requested
+        email_sent = False
+        if user_in.send_welcome_email:
+            import asyncio
+            try:
+                email_sent = asyncio.run(email_service.send_welcome_email(
+                    to_email=user.email,
+                    full_name=user.full_name,
+                    password=plain_password
+                ))
+            except Exception as e:
+                print(f"[EMAIL] Failed to send welcome email: {e}")
+                email_sent = False
+
+        user_resp = self._enrich_user(user)
+        
+        return {
+            "user": user_resp,
+            "password": plain_password,
+            "email_sent": email_sent
+        }
 
     def update_user(self, user_id: UUID, user_in: UserUpdate) -> UserResponse:
         user = self.db.query(User).filter(User.id == user_id).first()
@@ -146,8 +325,9 @@ class AuthService:
         if "is_active" in update_data and update_data["is_active"] is not None:
             user.is_active = update_data["is_active"]
         if "password" in update_data and update_data["password"]:
-            if len(update_data["password"]) < 8:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must contain at least 8 characters")
+            password_errors = validate_password_strength(update_data["password"])
+            if password_errors:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(password_errors))
             user.hashed_password = get_password_hash(update_data["password"])
 
         self.db.commit()
@@ -163,24 +343,99 @@ class AuthService:
         self.db.commit()
         return {"detail": f"User '{user.email}' successfully deleted"}
 
-    def change_my_password(self, user: User, data: ChangePasswordRequest) -> dict:
+    def change_my_password(self, user: User, data: ChangePasswordRequest, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
         if not verify_password(data.current_password, user.hashed_password):
+            log_audit_event(
+                self.db, AuditEventType.PASSWORD_CHANGE,
+                user_id=user.id, user_email=user.email,
+                ip_address=ip_address, user_agent=user_agent,
+                details="Failed: incorrect current password"
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
-        if len(data.new_password) < 8:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must contain at least 8 characters")
+        
+        password_errors = validate_password_strength(data.new_password)
+        if password_errors:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(password_errors))
+        
         user.hashed_password = get_password_hash(data.new_password)
         self.db.commit()
+        
+        log_audit_event(
+            self.db, AuditEventType.PASSWORD_CHANGE,
+            user_id=user.id, user_email=user.email,
+            ip_address=ip_address, user_agent=user_agent,
+            details="Password changed by user"
+        )
         return {"detail": "Password successfully updated"}
 
-    def admin_reset_user_password(self, user_id: UUID, new_password: str) -> dict:
+    def admin_reset_user_password(self, user_id: UUID, new_password: str, admin_user: Optional[User] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        if len(new_password) < 8:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must contain at least 8 characters")
+        
+        password_errors = validate_password_strength(new_password)
+        if password_errors:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(password_errors))
+        
         user.hashed_password = get_password_hash(new_password)
+        # Also unlock account if locked
+        was_locked = user.locked_until is not None
+        user.failed_login_attempts = 0
+        user.locked_until = None
         self.db.commit()
+        
+        log_audit_event(
+            self.db, AuditEventType.PASSWORD_RESET_ADMIN,
+            user_id=user.id, user_email=user.email,
+            ip_address=ip_address, user_agent=user_agent,
+            details=f"Password reset by admin {admin_user.email if admin_user else 'unknown'}" + (" (account unlocked)" if was_locked else "")
+        )
         return {"detail": f"Password for '{user.email}' successfully updated"}
+
+    def refresh_tokens(self, refresh_token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> TokenPair:
+        """Generate new access token from refresh token."""
+        payload = decode_refresh_token(refresh_token)
+        if not payload:
+            log_audit_event(
+                self.db, AuditEventType.REFRESH_TOKEN_FAILED,
+                ip_address=ip_address, user_agent=user_agent,
+                details="Invalid or expired refresh token"
+            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+        
+        user_id = payload.get("sub")
+        if not user_id:
+            log_audit_event(
+                self.db, AuditEventType.REFRESH_TOKEN_FAILED,
+                ip_address=ip_address, user_agent=user_agent,
+                details="Invalid token payload"
+            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        
+        user = self.db.query(User).filter(User.id == UUID(user_id), User.is_active == True).first()
+        if not user:
+            log_audit_event(
+                self.db, AuditEventType.REFRESH_TOKEN_FAILED,
+                ip_address=ip_address, user_agent=user_agent,
+                details="User not found or inactive"
+            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found or inactive")
+        
+        user_resp = self._enrich_user(user)
+        
+        log_audit_event(
+            self.db, AuditEventType.REFRESH_TOKEN_USED,
+            user_id=user.id, user_email=user.email,
+            ip_address=ip_address, user_agent=user_agent,
+            details="Access token refreshed"
+        )
+        
+        return TokenPair(
+            access_token=create_access_token(subject=str(user.id), role=user.role),
+            refresh_token=create_refresh_token(subject=str(user.id)),
+            token_type="bearer",
+            user=user_resp,
+        )
 
 
     def list_all_users(self) -> List[UserResponse]:

@@ -243,6 +243,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
+      // Reset filters when switching views
+      setSearchQuery("");
+      setStatusFilter("ALL");
+      setDomainFilter("ALL");
+      setCategoryFilter("ALL");
+      setBatchPage(1);
+      
       if (activeView === "batches") {
         fetchBatches();
       } else if (activeView === "manager_board") {
@@ -260,7 +267,7 @@ export default function DashboardPage() {
         fetchFaculty();
       }
     }
-  }, [user, activeView, statusFilter, domainFilter, categoryFilter, facultyDomainFilter]);
+  }, [user, activeView]);
 
   // Auto-switch to manager_board on initial login for managers
   useEffect(() => {
@@ -448,38 +455,31 @@ export default function DashboardPage() {
 
   const dirtyFinanceCount = dirtyFinanceIds.size;
 
-  const exportFinanceSheet = () => {
-    const headers = ["Batch ID", "Client", "Program", "Category", "Domain", "Mode", "Location", "Enrollments", "Training Days", "Total Hours", "SOW Number", "Approval ID", "Finance Status", "Check Date", "Finance Check", "Status"];
-    const escapeCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const rows = filteredFinanceBatches.map((batch) => {
-      const draft = financeDrafts[batch.id] || {};
-      return [
-        batch.batch_id,
-        batch.client_name || "",
-        batch.program_name,
-        batch.category || "",
-        batch.domain || "",
-        batch.delivery_mode,
-        batch.location_city || "",
-        batch.total_enrollments,
-        batch.training_days,
-        batch.total_hours,
-        batch.sow_number || "",
-        draft.approval_id !== undefined ? draft.approval_id : (batch.approval_id || ""),
-        draft.finance_status || batch.finance_status || "Pending",
-        draft.finance_status_check_date || batch.finance_status_check_date || "",
-        draft.finance_check ?? batch.finance_check ?? "",
-        batch.status,
-      ].map(escapeCell).join(",");
-    });
-    const csv = `\uFEFF${headers.map(escapeCell).join(",")}\n${rows.join("\n")}`;
-    const blob = new Blob([csv], { type: "application/vnd.ms-excel;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `finance-review-${new Date().toISOString().slice(0, 10)}.xls`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const exportFinanceSheet = async () => {
+    try {
+      await api.exportFinance({
+        status_filter: financeStatusFilter === "ACTIVE" ? undefined : financeStatusFilter,
+        finance_status: financeCheckStatusFilter === "ALL" ? undefined : financeCheckStatusFilter,
+        domain: financeDomainFilter === "ALL" ? undefined : financeDomainFilter,
+        delivery_mode: financeModeFilter === "ALL" ? undefined : financeModeFilter,
+        start_date: financeStartDate || undefined,
+        end_date: financeEndDate || undefined,
+      });
+    } catch (err: any) {
+      alert(err.message || "Failed to export finance data");
+    }
+  };
+
+  const exportFacultyUtilization = async () => {
+    try {
+      await api.exportFacultyUtilization({
+        domain: facultyDomainFilter === "ALL" ? undefined : facultyDomainFilter,
+        start_date: undefined,
+        end_date: undefined,
+      });
+    } catch (err: any) {
+      alert(err.message || "Failed to export faculty utilization");
+    }
   };
 
   const isApprover = user?.is_configured_approver === true;
@@ -524,6 +524,17 @@ export default function DashboardPage() {
     if (s === "onhold") return <span className="badge badge-onhold">On Hold</span>;
     if (s === "cancelled") return <span className="badge badge-cancelled">Cancelled</span>;
     return <span className="badge badge-cancelled">{status}</span>;
+  };
+
+  const getStatusBadgeColor = (status: string) => {
+    const s = (status || "").toLowerCase();
+    if (s === "requested" || s.includes("pending")) return "#d97706";
+    if (s === "approved" || s === "upcoming") return "#0b5cab";
+    if (s === "ongoing") return "#06b6d4";
+    if (s === "completed") return "#16a34a";
+    if (s === "onhold") return "#b45309";
+    if (s === "cancelled") return "#e11d48";
+    return "#94a3b8";
   };
 
   return (
@@ -1282,6 +1293,15 @@ export default function DashboardPage() {
                   <option value="DS/ITES">DS/ITES</option>
                   <option value="BFSI">BFSI</option>
                 </select>
+                <button
+                  onClick={exportFacultyUtilization}
+                  className="btn btn-secondary"
+                  style={{ padding: "6px 12px", fontSize: "0.8rem" }}
+                  title="Export utilization ledger to CSV"
+                >
+                  <FileSpreadsheet size={16} />
+                  <span>Export CSV</span>
+                </button>
               </div>
             </div>
 

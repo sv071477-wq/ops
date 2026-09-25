@@ -267,6 +267,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
 
+  // Computed session stats
+  const completedSessions = sessions.filter((s) => s.status === "Completed").length;
+  const allSessionsCompleted = sessions.length > 0 && completedSessions === sessions.length;
+
   // Log Faculty Utilization on Session Day Modal
   const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<ScheduledSession | null>(null);
@@ -280,10 +284,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [utilVenue, setUtilVenue] = useState("");
   const [utilCity, setUtilCity] = useState("");
   const [utilStatus, setUtilStatus] = useState("Completed");
+  const [utilFeedbackCollected, setUtilFeedbackCollected] = useState<"yes" | "no" | null>(null);
   const [utilFeedbackRating, setUtilFeedbackRating] = useState(4.5);
   const [utilFeedbackNotes, setUtilFeedbackNotes] = useState("");
-  const [utilOutcomeReason, setUtilOutcomeReason] = useState("");
-  const [utilReplacementSessionId, setUtilReplacementSessionId] = useState("");
   const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
   const [utilError, setUtilError] = useState<string | null>(null);
 
@@ -301,10 +304,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setUtilVenue(target?.location_city ? `${target.location_city} Center` : "Virtual MS Teams");
     setUtilCity(target?.location_city || "");
     setUtilStatus("Completed");
+    setUtilFeedbackCollected(null);
     setUtilFeedbackRating(4.5);
     setUtilFeedbackNotes("");
-    setUtilOutcomeReason("");
-    setUtilReplacementSessionId("");
     setUtilError(null);
     setIsLogUtilizationOpen(true);
   };
@@ -313,11 +315,15 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     e.preventDefault();
     const target = currentBatch || batch;
     if (!selectedScheduleDay || !target) return;
+    if (utilFeedbackCollected === null) {
+      setUtilError("Please select whether feedback was collected");
+      return;
+    }
     setIsSubmittingUtil(true);
     setUtilError(null);
     try {
       const dateOfTrainingIso = new Date(`${utilDate}T${utilStartTime || "09:00"}:00`).toISOString();
-      const feedbackEntered = utilFeedbackNotes.trim().length > 0 || Number(utilFeedbackRating) > 0;
+      const feedbackEntered = utilFeedbackCollected === "yes" && (utilFeedbackNotes.trim().length > 0 || Number(utilFeedbackRating) > 0);
       await api.createSession({
         batch_id: target.id,
         training_session_id: selectedScheduleDay.id,
@@ -334,8 +340,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         feedback_submitted: feedbackEntered,
         feedback_rating: feedbackEntered ? Number(utilFeedbackRating) || undefined : undefined,
         feedback_notes: feedbackEntered ? utilFeedbackNotes.trim() || undefined : undefined,
-        outcome_reason: utilOutcomeReason.trim() || undefined,
-        replacement_session_id: utilReplacementSessionId.trim() || undefined,
       });
       setIsLogUtilizationOpen(false);
       await loadSessions();
@@ -524,6 +528,17 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     if (s === "onhold") return <span className="badge badge-onhold">On Hold</span>;
     if (s === "cancelled") return <span className="badge badge-cancelled">Cancelled</span>;
     return <span className="badge badge-cancelled">{status}</span>;
+  };
+
+  const getStatusColor = (status: string) => {
+    const s = (status || "").toLowerCase();
+    if (s === "requested" || s.includes("pending")) return "#d97706";
+    if (s === "approved" || s === "upcoming") return "#0b5cab";
+    if (s === "ongoing") return "#06b6d4";
+    if (s === "completed") return "#16a34a";
+    if (s === "onhold") return "#b45309";
+    if (s === "cancelled") return "#e11d48";
+    return "#94a3b8";
   };
 
   // Handle Add Single Session
@@ -1799,10 +1814,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             </div>
           )}
 
-          {/* TAB 3: QUALITY GATES & CLOSURE */}
+          {/* TAB 3: QUALITY CHECKPOINTS */}
           {activeTab === "quality_gates" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Gate 1 Summary */}
+              {/* Average Batch Feedback Summary */}
               <div className="glass-panel" style={{ padding: "18px 20px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <div style={{
@@ -1820,7 +1835,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     1
                   </div>
                   <h4 style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                    Quality Gate 1: Module & Session Feedback
+                    Average Batch Feedback: Module & Session Feedback
                   </h4>
                 </div>
                 <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "0 0 12px 0" }}>
@@ -1829,21 +1844,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
                 <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
                   <div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Average Gate 1 Rating</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: batch.batch_avg_feedback ? "#b45309" : "var(--text-dim)", marginTop: 2 }}>
-                      {batch.batch_avg_feedback ? `${batch.batch_avg_feedback} / 5.0` : "Pending Session Feedbacks"}
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Average Batch Feedback Rating</div>
+                    <div style={{ fontSize: "1.3rem", fontWeight: 800, marginTop: 2 }}>
+                      {allSessionsCompleted
+                        ? (batch.batch_avg_feedback ? (
+                            <span style={{ color: "#b45309" }}>{batch.batch_avg_feedback} / 5.0</span>
+                          ) : (
+                            <span style={{ color: "var(--text-dim)" }}>No feedback submitted</span>
+                          ))
+                        : (
+                          <span style={{ color: "#0b5cab" }}>Awaiting all sessions to complete</span>
+                        )}
                     </div>
                   </div>
                   <div>
                     <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Completed Sessions</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "#16a34a", marginTop: 2 }}>
-                      {sessions.filter((s) => s.status === "Completed").length} / {sessions.length}
+                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: allSessionsCompleted ? "#16a34a" : "#0b5cab", marginTop: 2 }}>
+                      {completedSessions} / {sessions.length}
+                      {allSessionsCompleted && <span style={{ fontSize: "0.7rem", marginLeft: 6, color: "#16a34a", fontWeight: 700 }}>✓ All Complete</span>}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Gate 2 Summary & Closure Action */}
+              {/* NPS Closure Summary & Closure Action */}
               <div className="glass-panel" style={{ padding: "18px 20px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <div style={{
@@ -1861,7 +1885,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     2
                   </div>
                   <h4 style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                    Quality Gate 2: Final Batch NPS & Retrospective Closure
+                    NPS Closure: Final Batch NPS & Retrospective Closure
                   </h4>
                 </div>
                 <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "0 0 14px 0" }}>
@@ -1929,7 +1953,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#16a34a", fontWeight: 700 }}>
                       <CheckCircle2 size={16} />
-                      <span>Gate 2 Completed & Batch Formally Closed</span>
+                      <span>NPS Closure Completed & Batch Formally Closed</span>
                     </div>
                     <div style={{ display: "flex", gap: 24, marginTop: 10 }}>
                       <div>
@@ -1956,7 +1980,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       style={{ display: "flex", alignItems: "center", gap: 6 }}
                     >
                       <Sparkles size={16} />
-                      <span>Execute Quality Gate 2 (Close Batch)</span>
+                      <span>Execute NPS Closure (Close Batch)</span>
                     </button>
                   </div>
                 )}
@@ -2105,10 +2129,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
-        }} onClick={(e) => {
-          e.stopPropagation();
-          setIsAddSessionOpen(false);
-        }}>
+        }} onClick={() => setIsAddSessionOpen(false)}>
           <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
               Schedule Session
@@ -2262,7 +2283,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         </div>
       )}
 
-      {/* Modal: Gate 1 Feedback Completion */}
+      {/* Modal: Average Batch Feedback Completion */}
       {completingSession && (
         <div style={{
           position: "fixed",
@@ -2277,13 +2298,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
-        }} onClick={(e) => {
-          e.stopPropagation();
-          setCompletingSession(null);
-        }}>
+        }} onClick={() => setCompletingSession(null)}>
           <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
-              Quality Gate 1: Complete Session
+              Average Batch Feedback: Complete Session
             </h3>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px 0" }}>
               Submit verified module feedback for <strong>{completingSession.topic}</strong>.
@@ -2361,7 +2379,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   Cancel
                 </button>
                 <button type="submit" disabled={isSubmittingGate1 || gate1Feedback.trim().length < 3} className="btn btn-primary" style={{ padding: "8px 14px" }}>
-                  {isSubmittingGate1 ? "Completing..." : "Submit Gate 1 & Complete"}
+                  {isSubmittingGate1 ? "Completing..." : "Submit Average Batch Feedback & Complete"}
                 </button>
               </div>
             </form>
@@ -2369,7 +2387,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         </div>
       )}
 
-      {/* Modal: Gate 2 Batch NPS Closure */}
+      {/* Modal: NPS Closure */}
       {isGate2ModalOpen && (
         <div style={{
           position: "fixed",
@@ -2384,13 +2402,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
-        }} onClick={(e) => {
-          e.stopPropagation();
-          setIsGate2ModalOpen(false);
-        }}>
+        }} onClick={() => setIsGate2ModalOpen(false)}>
           <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 500, padding: 24, background: "#ffffff" }}>
             <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
-              Quality Gate 2: Batch NPS Closure
+              NPS Closure: Batch NPS Closure
             </h3>
             <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px 0" }}>
               Finalize batch performance metrics and close <strong>{batch.batch_id}</strong>.
@@ -2466,7 +2481,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   Cancel
                 </button>
                 <button type="submit" disabled={isSubmittingGate2} className="btn btn-primary" style={{ padding: "8px 14px", background: "#16a34a" }}>
-                  {isSubmittingGate2 ? "Closing Batch..." : "Formally Close Batch (Gate 2)"}
+                  {isSubmittingGate2 ? "Closing Batch..." : "Formally Close Batch (NPS Closure)"}
                 </button>
               </div>
             </form>
@@ -2489,8 +2504,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
-        }} onClick={(event) => event.stopPropagation()}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
+        }} onClick={() => setIsIngestModalOpen(false)}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div>
                 <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
@@ -2757,10 +2772,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           justifyContent: "center",
           zIndex: 1050,
           padding: 16
-        }} onClick={(e) => {
-          e.stopPropagation();
-          setIsEditModalOpen(false);
-        }}>
+        }} onClick={() => setIsEditModalOpen(false)}>
           <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 660, maxHeight: "90vh", overflowY: "auto", padding: 24, background: "#ffffff", borderRadius: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
               <div>
@@ -3036,10 +3048,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             padding: 16,
             overflowY: "auto",
           }}
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsStatusModalOpen(false);
-          }}
+          onClick={() => setIsStatusModalOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3228,10 +3237,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             zIndex: 1100,
             padding: 16,
           }}
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsLogUtilizationOpen(false);
-          }}
+          onClick={() => setIsLogUtilizationOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3454,62 +3460,66 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Feedback Rating
+                  Was Feedback Collected? *
                 </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="5"
-                  step="0.5"
-                  value={utilFeedbackRating}
-                  onChange={(e) => setUtilFeedbackRating(Number(e.target.value) || 0)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Feedback Notes
-                </label>
-                <textarea
-                  value={utilFeedbackNotes}
-                  onChange={(e) => setUtilFeedbackNotes(e.target.value)}
-                  placeholder="Session summary, observations, learner uptake, or notes for later audit review"
-                  className="glass-input"
-                  style={{ width: "100%", minHeight: 72, resize: "vertical" }}
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Outcome Reason
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      value="yes"
+                      checked={utilFeedbackCollected === "yes"}
+                      onChange={(e) => setUtilFeedbackCollected("yes")}
+                      style={{ accentColor: "#0b5cab" }}
+                    />
+                    <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>Yes</span>
                   </label>
-                  <input
-                    type="text"
-                    value={utilOutcomeReason}
-                    onChange={(e) => setUtilOutcomeReason(e.target.value)}
-                    placeholder="e.g. Completed successfully / rescheduled / client request"
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Replacement Session ID
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      value="no"
+                      checked={utilFeedbackCollected === "no"}
+                      onChange={(e) => setUtilFeedbackCollected("no")}
+                      style={{ accentColor: "#0b5cab" }}
+                    />
+                    <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>No</span>
                   </label>
-                  <input
-                    type="text"
-                    value={utilReplacementSessionId}
-                    onChange={(e) => setUtilReplacementSessionId(e.target.value)}
-                    placeholder="Optional linked replacement session UUID"
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                  />
                 </div>
               </div>
+
+              {utilFeedbackCollected === "yes" && (
+                <>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                      Feedback Rating (1-5) *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="5"
+                      step="0.5"
+                      value={utilFeedbackRating}
+                      onChange={(e) => setUtilFeedbackRating(Number(e.target.value) || 0)}
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                      Feedback Notes *
+                    </label>
+                    <textarea
+                      value={utilFeedbackNotes}
+                      onChange={(e) => setUtilFeedbackNotes(e.target.value)}
+                      placeholder="Session summary, observations, learner uptake, or notes for later audit review"
+                      className="glass-input"
+                      style={{ width: "100%", minHeight: 72, resize: "vertical" }}
+                      required
+                    />
+                  </div>
+                </>
+              )}
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
                 <button

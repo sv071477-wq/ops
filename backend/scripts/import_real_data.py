@@ -28,6 +28,7 @@ import openpyxl
 from sqlalchemy import text
 from app.core.database import SessionLocal
 from app.core.security import get_password_hash
+from app.core.config import settings
 from app.models.user import User, Role, Team, UserManagerMapping
 from app.models.batch import (
     Batch, BatchCategory, DeliveryMode, Accommodation, Entity, ApprovalConfiguration
@@ -36,6 +37,9 @@ from app.models.session import TrainingSession, FacultyUtilization
 
 MBR_FILE = Path("/app/project_data/1.MBR_Active Batches.xlsx")
 FACULTY_FILE = Path("/app/project_data/Faculty_Utilisation - Ver 2.0.xlsx")
+
+# Use strong password from environment
+IMPORT_PASSWORD = os.getenv("IMPORT_DATA_PASSWORD") or "Import@SecurePass2024!"
 
 def uid():
     return uuid.uuid4()
@@ -163,7 +167,7 @@ def main():
 
         # ── 2. Create Real Operations Staff & Hierarchy ─────────────────────
         print("\n[2/6] Setting up real operations management hierarchy...")
-        pwd_hash = get_password_hash("Demo@1234")
+        pwd_hash = get_password_hash(IMPORT_PASSWORD)
 
         # Top Executive Manager
         ravish = db.query(User).filter(User.email == "ravish@enterprise-ops.com").first()
@@ -255,7 +259,7 @@ def main():
             admin = User(
                 id=uid(), email="admin@enterprise-ops.com", full_name="System Administrator",
                 role="Admin", role_id=admin_role.id, team_id=delivery_team.id,
-                is_active=True, hashed_password=get_password_hash("AdminPassword123!")
+                is_active=True, hashed_password=get_password_hash(IMPORT_PASSWORD)
             )
             db.add(admin)
             db.flush()

@@ -2,7 +2,8 @@ from app.schemas.user import (
     UserBase, UserCreate, UserUpdate, UserResponse, UserLogin, Token, TokenPayload,
     CoordinatorMappingCreate, CoordinatorMappingResponse,
     TeamBase, TeamCreate, TeamUpdate, TeamResponse,
-    RoleBase, RoleCreate, RoleUpdate, RoleResponse
+    RoleBase, RoleCreate, RoleUpdate, RoleResponse,
+    AdminUserCreate
 )
 from app.schemas.client import ClientBase, ClientCreate, ClientUpdate, ClientResponse
 from app.schemas.faculty import FacultyBase, FacultyCreate, FacultyUpdate, FacultyResponse, FacultyUtilizationSummary
@@ -18,6 +19,7 @@ from app.schemas.analytics import ManagerDashboardSummary, MetricCard, VerticalB
 __all__ = [
     "UserBase", "UserCreate", "UserUpdate", "UserResponse", "UserLogin", "Token", "TokenPayload",
     "CoordinatorMappingCreate", "CoordinatorMappingResponse",
+    "AdminUserCreate",
     "ClientBase", "ClientCreate", "ClientUpdate", "ClientResponse",
     "FacultyBase", "FacultyCreate", "FacultyUpdate", "FacultyResponse", "FacultyUtilizationSummary",
     "BatchBase", "BatchCreate", "BatchUpdate", "BatchApprove", "BatchResponse", "BatchDetailResponse",

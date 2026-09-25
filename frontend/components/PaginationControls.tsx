@@ -27,7 +27,7 @@ export function PaginationControls({
 
   if (totalItems === 0) return null;
 
-  const startItem = (validPage - 1) * pageSize + 1;
+  const startItem = totalItems > 0 ? (validPage - 1) * pageSize + 1 : 0;
   const endItem = Math.min(validPage * pageSize, totalItems);
 
   // Generate page numbers with ellipsis
@@ -46,6 +46,12 @@ export function PaginationControls({
     }
     return pages;
   };
+
+  // Reset to first page if current page is invalid
+  if (currentPage !== validPage) {
+    // Use a timeout to avoid state update during render
+    setTimeout(() => onPageChange(validPage), 0);
+  }
 
   return (
     <div

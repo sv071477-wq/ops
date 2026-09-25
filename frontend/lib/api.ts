@@ -64,6 +64,23 @@ export interface CreateUserPayload {
   is_active?: boolean;
 }
 
+export interface AdminUserCreatePayload {
+  email: string;
+  full_name: string;
+  role?: string;
+  role_id?: string;
+  team_id?: string;
+  manager_id?: string;
+  is_active?: boolean;
+  send_welcome_email?: boolean;
+}
+
+export interface AdminUserCreateResponse {
+  user: User;
+  password: string;
+  email_sent: boolean;
+}
+
 export interface UpdateUserPayload {
   email?: string;
   full_name?: string;
@@ -101,6 +118,13 @@ export interface CoordinatorMappingRecord {
   manager_id: string;
   manager_name: string | null;
   manager_email: string | null;
+  assigned_at: string;
+}
+
+export interface CoordinatorMappingResponse {
+  id: string;
+  coordinator_id: string;
+  manager_id: string;
   assigned_at: string;
 }
 
@@ -313,6 +337,22 @@ export interface BatchFeedbackImportResponse {
   average_feedback_score?: number | null;
 }
 
+export interface Gate1CompleteResponse {
+  id: string;
+  status: string;
+  feedback_rating: number;
+  feedback_notes: string;
+  total_students_present: number;
+  completed_at: string;
+}
+
+export interface FmsSyncResponse {
+  success: boolean;
+  message: string;
+  faculty_id: string;
+  event_type: string;
+}
+
 // Analytics Types
 export interface VerticalBreakdown {
   vertical: string;
@@ -436,7 +476,7 @@ class ApiService {
     return null;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
     const token = this.getToken();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -464,17 +504,53 @@ class ApiService {
       } catch {
         // use default error message
       }
+
+      // Handle token expiration with auto-refresh
+      if (response.status === 401 && retryCount < 1) {
+        try {
+          const refreshToken = localStorage.getItem("refresh_token");
+          if (refreshToken) {
+            const refreshRes = await fetch(`${API_BASE.replace("/api/v1", "")}/api/v1/auth/refresh`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            if (refreshRes.ok) {
+              const refreshData = await refreshRes.json();
+              localStorage.setItem("auth_token", refreshData.access_token);
+              localStorage.setItem("refresh_token", refreshData.refresh_token);
+              // Retry the original request once
+              return this.request<T>(endpoint, options, retryCount + 1);
+            }
+          }
+        } catch {
+          // Refresh failed, fall through to error
+        }
+      }
+
       throw new Error(errorMsg);
+    }
+
+    // Handle empty responses (204 No Content)
+    if (response.status === 204) {
+      return undefined as T;
     }
 
     return response.json();
   }
 
   // Auth & Users APIs
-  async login(email: string, password: string): Promise<{ access_token: string; user: User }> {
-    return this.request<{ access_token: string; user: User }>("/auth/login", {
+  async login(email: string, password: string): Promise<{ access_token: string; refresh_token: string; user: User }> {
+    return this.request<{ access_token: string; refresh_token: string; user: User }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    });
+  }
+
+  async refreshToken(refreshToken: string): Promise<{ access_token: string; refresh_token: string; user: User }> {
+    return this.request<{ access_token: string; refresh_token: string; user: User }>("/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
     });
   }
 
@@ -496,6 +572,13 @@ class ApiService {
 
   async createUser(payload: CreateUserPayload): Promise<User> {
     return this.request<User>("/auth/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async adminCreateUser(payload: AdminUserCreatePayload): Promise<AdminUserCreateResponse> {
+    return this.request<AdminUserCreateResponse>("/auth/users/admin-create", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -533,8 +616,8 @@ class ApiService {
     return this.request<User[]>("/auth/users/coordinators");
   }
 
-  async assignCoordinator(payload: CoordinatorMappingPayload): Promise<any> {
-    return this.request<any>("/auth/users/coordinator-mapping", {
+  async assignCoordinator(payload: CoordinatorMappingPayload): Promise<CoordinatorMappingResponse> {
+    return this.request<CoordinatorMappingResponse>("/auth/users/coordinator-mapping", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -798,8 +881,8 @@ class ApiService {
     });
   }
 
-  async completeSessionGate1(sessionId: string, payload: SessionFeedbackPayload): Promise<any> {
-    return this.request<any>(`/sessions/${sessionId}/complete`, {
+  async completeSessionGate1(sessionId: string, payload: SessionFeedbackPayload): Promise<Gate1CompleteResponse> {
+    return this.request<Gate1CompleteResponse>(`/sessions/${sessionId}/complete`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
@@ -894,13 +977,58 @@ class ApiService {
     return this.request<FacultyUtilizationSummary>("/faculty/utilization");
   }
 
+  async exportFacultyUtilization(params?: { faculty_type?: string; domain?: string; start_date?: string; end_date?: string }): Promise<void> {
+    const query = new URLSearchParams();
+    if (params?.faculty_type) query.append("faculty_type", params.faculty_type);
+    if (params?.domain) query.append("domain", params.domain);
+    if (params?.start_date) query.append("start_date", params.start_date);
+    if (params?.end_date) query.append("end_date", params.end_date);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    await this.downloadFile(`/faculty/utilization/export${qs}`, `faculty-utilization-${new Date().toISOString().split("T")[0]}.csv`);
+  }
+
+  // Finance Export
+  async exportFinance(params?: { status_filter?: string; finance_status?: string; domain?: string; delivery_mode?: string; start_date?: string; end_date?: string }): Promise<void> {
+    const query = new URLSearchParams();
+    if (params?.status_filter) query.append("status_filter", params.status_filter);
+    if (params?.finance_status) query.append("finance_status", params.finance_status);
+    if (params?.domain) query.append("domain", params.domain);
+    if (params?.delivery_mode) query.append("delivery_mode", params.delivery_mode);
+    if (params?.start_date) query.append("start_date", params.start_date);
+    if (params?.end_date) query.append("end_date", params.end_date);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    await this.downloadFile(`/batches/finance/export${qs}`, `finance-review-${new Date().toISOString().split("T")[0]}.csv`);
+  }
+
+  private async downloadFile(endpoint: string, filename: string): Promise<void> {
+    const token = this.getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const url = `${API_BASE}${endpoint}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      throw new Error(`Export failed: ${res.statusText}`);
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
   // FMS Sync APIs
-  async syncFacultyFms(facultyId: string, eventType: string = "HOURS_UPDATE"): Promise<any> {
+  async syncFacultyFms(facultyId: string, eventType: string = "HOURS_UPDATE"): Promise<FmsSyncResponse> {
     const query = new URLSearchParams({
       faculty_id: facultyId,
       event_type: eventType,
     });
-    return this.request<any>(`/integrations/fms/sync?${query.toString()}`, {
+    return this.request<FmsSyncResponse>(`/integrations/fms/sync?${query.toString()}`, {
       method: "POST",
     });
   }

@@ -599,7 +599,7 @@ function QualityBubble({
             <text x={pL + ((v - 1) / 4) * cW} y={pT + cH + 14} textAnchor="middle" fontSize={9} fill="#94a3b8">{v}</text>
           </g>
         ))}
-        <text x={pL + cW / 2} y={h - 2} textAnchor="middle" fontSize={9} fill="#64748b">Avg Feedback (Gate 1)</text>
+        <text x={pL + cW / 2} y={h - 2} textAnchor="middle" fontSize={9} fill="#64748b">Average Batch Feedback</text>
         {/* Y axis labels: NPS -100 to 100 */}
         {[-100, -50, 0, 50, 100].map((v) => {
           const y = pT + cH - ((v + 100) / 200) * cH;
@@ -2126,11 +2126,11 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                   {dashboardSummary.overall_avg_nps !== null ? Number(dashboardSummary.overall_avg_nps).toFixed(1) : "—"}
                   <span style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--text-muted)" }}> / 10</span>
                 </div>
-                <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginTop: 2 }}>Gate 2 Executive Score</div>
+                <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginTop: 2 }}>NPS Closure Executive Score</div>
               </div>
               <div className="glass-panel" style={{ padding: "18px 20px", borderLeft: "4px solid #f59e0b" }}>
                 <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>
-                  Avg Feedback (Gate 1)
+                  Average Batch Feedback
                 </div>
                 <div style={{ fontSize: "2.2rem", fontWeight: 800, color: "#f59e0b" }}>
                   {dashboardSummary.overall_avg_feedback !== null ? Number(dashboardSummary.overall_avg_feedback).toFixed(2) : "—"}

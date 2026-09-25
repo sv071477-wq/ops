@@ -596,14 +596,14 @@ export default function AdminPortalPage() {
     setIsSubmittingUser(true);
 
     try {
-      await api.createUser({
+      await api.adminCreateUser({
         email: newUserEmail.trim().toLowerCase(),
         full_name: newUserFullName.trim(),
-        password: "",
         role_id: newUserRoleId || undefined,
         team_id: newUserTeamId || undefined,
         manager_id: newUserReportsToId || undefined,
         is_active: true,
+        send_welcome_email: true,
       });
       setNewUserEmail("");
       setNewUserFullName("");

@@ -1,7 +1,9 @@
 from typing import List, Optional, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.models.batch import Batch
 from app.models.user import User
@@ -218,4 +220,94 @@ async def import_batch_feedback(
         filename=filename,
         user_id=current_user.id,
         current_user=current_user,
+    )
+
+
+@router.get("/finance/export")
+def export_finance_csv(
+    status_filter: Optional[str] = Query(None),
+    finance_status: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    delivery_mode: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_coordinator_or_above),
+    db: Session = Depends(get_db)
+) -> Response:
+    """Export finance review data as CSV."""
+    from app.api.deps import get_manager_scope_user_ids
+    import csv
+    from io import StringIO
+    from fastapi.responses import StreamingResponse
+    
+    # Build query similar to list endpoint
+    query = db.query(Batch)
+    user_role_lower = (current_user.role or "").lower()
+    team_name_lower = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
+    
+    if user_role_lower != "admin" and team_name_lower != "finance":
+        team_user_ids = get_manager_scope_user_ids(current_user, db)
+        query = query.filter(or_(
+            Batch.primary_manager_id == current_user.id,
+            Batch.coordinator_id.in_(team_user_ids),
+            ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
+            ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
+        ))
+    
+    if status_filter:
+        query = query.filter(Batch.status == status_filter)
+    if finance_status:
+        query = query.filter(Batch.finance_status == finance_status)
+    if domain:
+        query = query.filter(Batch.domain == domain)
+    if delivery_mode:
+        query = query.filter(Batch.delivery_mode == delivery_mode)
+    if start_date:
+        query = query.filter(Batch.start_date >= start_date)
+    if end_date:
+        query = query.filter(Batch.start_date <= end_date)
+    
+    batches = query.order_by(Batch.created_at.desc()).all()
+    
+    # Generate CSV
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Batch ID", "SOW Number", "Approval ID", "Client", "Program", "Category",
+        "Technology", "Domain", "Delivery Mode", "Location", "Start Date", "End Date",
+        "Total Enrollments", "Training Days", "Total Hours", "Finance Status",
+        "Finance Check Date", "Finance Check", "Batch Avg Feedback", "Batch NPS", "Status"
+    ])
+    
+    for b in batches:
+        writer.writerow([
+            b.batch_id,
+            b.sow_number or "",
+            b.approval_id or "",
+            b.client_name or "",
+            b.program_name,
+            b.category or "",
+            b.technology or "",
+            b.domain or "",
+            b.delivery_mode or "",
+            b.location_city or "",
+            b.start_date.isoformat() if b.start_date else "",
+            b.end_date.isoformat() if b.end_date else "",
+            b.total_enrollments,
+            b.training_days or 0,
+            b.total_hours or 0,
+            b.finance_status or "Pending",
+            b.finance_status_check_date.isoformat() if b.finance_status_check_date else "",
+            b.finance_check or "",
+            float(b.batch_avg_feedback) if b.batch_avg_feedback else "",
+            b.batch_nps or "",
+            b.status
+        ])
+    
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=finance-review-{datetime.now().strftime('%Y%m%d')}.csv"}
     )

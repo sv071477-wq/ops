@@ -84,9 +84,9 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
   // Kanban Stage Definitions
   const stages: KanbanStage[] = useMemo(() => [
     {
-      id: "draft",
-      title: "Draft & Requested",
-      subtitle: "New intake awaiting setup",
+      id: "requested",
+      title: "Requested",
+      subtitle: "Awaiting submission for approval",
       badgeBg: "#f1f5f9",
       badgeColor: "#475569",
       borderColor: "#cbd5e1",
@@ -124,8 +124,8 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       filterFn: (b) => b.status === "Approved" || b.status === "Upcoming" || (b.status === "Ongoing" && (!b.batch_nps)),
     },
     {
-      id: "gate2_closure",
-      title: "Gate 2 NPS Closure",
+      id: "nps_closure",
+      title: "NPS Closure",
       subtitle: "Delivery done • Needs NPS",
       badgeBg: "#fff1f2",
       badgeColor: "#e11d48",
@@ -326,7 +326,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
         <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #16a34a" }}>
           <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            Gate 2 NPS Rating
+            NPS Closure Rating
           </div>
           <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
             {summary?.overall_avg_nps !== null && summary?.overall_avg_nps !== undefined ? `${summary.overall_avg_nps} / 10` : "—"}
@@ -338,7 +338,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
         <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #d97706" }}>
           <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            Gate 1 Session Quality
+            Average Batch Feedback
           </div>
           <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#d97706", marginTop: 4 }}>
             {summary?.overall_avg_feedback !== null && summary?.overall_avg_feedback !== undefined ? `⭐ ${summary.overall_avg_feedback} / 5` : "—"}
@@ -659,7 +659,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                                 className="btn btn-secondary"
                                 style={{ padding: "3px 8px", fontSize: "0.72rem", color: "#e11d48", borderColor: "#fecdd3" }}
                               >
-                                Log Gate 2
+                                Log NPS Closure
                               </button>
                             ) : (
                               <span style={{ fontSize: "0.72rem", color: "#0b5cab", fontWeight: 700, display: "flex", alignItems: "center" }}>

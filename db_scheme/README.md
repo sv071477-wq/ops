@@ -207,3 +207,208 @@ The schema above is derived from the SQLAlchemy model files in the backend:
 - backend/app/models/batch.py
 - backend/app/models/user.py
 - backend/app/models/session.py
+
+---
+
+## DBML Schema
+
+```dbml
+Table users {
+  id uuid [pk]
+  email varchar(255) [not null, unique]
+  hashed_password varchar(255) [not null]
+  full_name varchar(255) [not null]
+  role varchar(50) [not null]
+  role_id uuid [null]
+  team_id uuid [null]
+  manager_id uuid [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+
+  indexes {
+    (email) [unique]
+    (role_id)
+    (team_id)
+    (manager_id)
+  }
+}
+
+Table roles {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  system_role varchar(50) [not null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+}
+
+Table teams {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  department varchar(100) [not null, default: 'Ops']
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+}
+
+Table user_manager_mappings {
+  id uuid [pk]
+  coordinator_id uuid [not null]
+  manager_id uuid [not null]
+  assigned_at timestamptz [not null]
+}
+
+Table batch_categories {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table delivery_modes {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table accommodations {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table entities {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table batches {
+  id uuid [pk]
+  batch_id varchar(255) [not null, unique]
+  sow_number varchar(100) [null]
+  approval_id varchar(100) [null]
+  category varchar(100) [not null, default: 'Bootcamp']
+  entity_id uuid [null]
+  category_id uuid [null]
+  delivery_mode_id uuid [null]
+  accommodation_id uuid [null]
+  program_name varchar(255) [not null]
+  technology varchar(255) [null]
+  domain varchar(100) [null]
+  client_name varchar(255) [null]
+  location_city varchar(100) [null]
+  start_date timestamptz [null]
+  end_date timestamptz [null]
+  batch_request_date timestamptz [not null]
+  training_days integer [not null, default: 0]
+  calendar_days integer [null]
+  total_hours numeric(8,2) [not null, default: 0.00]
+  total_enrollments integer [not null, default: 0]
+  status varchar(50) [not null, default: 'Requested']
+  is_schema_locked boolean [not null, default: false]
+  approver_1_id uuid [null]
+  approver_2_id uuid [null]
+  approver_1_status varchar(20) [not null, default: 'Pending']
+  approver_2_status varchar(20) [not null, default: 'Pending']
+  approver_1_approved_at timestamptz [null]
+  approver_2_approved_at timestamptz [null]
+  primary_manager_id uuid [null]
+  coordinator_id uuid [null]
+  sales_spoc_id uuid [null]
+  faculty_assigned_text varchar(500) [null]
+  finance_status varchar(50) [not null, default: 'Pending']
+  finance_status_check_date date [null]
+  finance_check integer [null]
+  batch_avg_feedback numeric(3,2) [null]
+  batch_nps numeric(6,2) [null]
+  nps_total_responses integer [null]
+  nps_promoters integer [null]
+  nps_passives integer [null]
+  nps_detractors integer [null]
+  remarks text [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table approval_configurations {
+  id uuid [pk]
+  approver_1_id uuid [null]
+  approver_2_id uuid [null]
+  updated_at timestamptz [not null]
+}
+
+Table training_sessions {
+  id uuid [pk]
+  batch_id uuid [not null]
+  sequence_number integer [null]
+  week varchar(50) [null]
+  session_date date [not null]
+  day_name varchar(20) [null]
+  start_time time [null]
+  end_time time [null]
+  duration_hours numeric(5,2) [not null, default: 8.00]
+  module varchar(255) [not null]
+  trainer_name varchar(255) [null]
+  status varchar(30) [not null, default: 'Scheduled']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table faculty_utilization {
+  id uuid [pk]
+  batch_id uuid [not null]
+  training_session_id uuid [null]
+  faculty_name varchar(255) [not null]
+  date_of_training timestamptz [not null]
+  start_time time [null]
+  end_time time [null]
+  topic varchar(255) [not null]
+  no_of_hours numeric(5,2) [not null, default: 8.00]
+  venue varchar(255) [null]
+  location_city varchar(100) [null]
+  mode_of_delivery varchar(50) [not null, default: 'Online']
+  status varchar(30) [not null, default: 'Scheduled']
+  feedback_submitted boolean [not null, default: false]
+  feedback_rating numeric(3,2) [null]
+  feedback_notes text [null]
+  outcome_reason text [null]
+  outcome_at timestamptz [null]
+  outcome_by uuid [null]
+  replacement_session_id uuid [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Ref: users.role_id > roles.id
+Ref: users.team_id > teams.id
+Ref: users.manager_id > users.id
+Ref: user_manager_mappings.coordinator_id > users.id
+Ref: user_manager_mappings.manager_id > users.id
+Ref: batches.entity_id > entities.id
+Ref: batches.category_id > batch_categories.id
+Ref: batches.delivery_mode_id > delivery_modes.id
+Ref: batches.accommodation_id > accommodations.id
+Ref: batches.primary_manager_id > users.id
+Ref: batches.coordinator_id > users.id
+Ref: batches.sales_spoc_id > users.id
+Ref: batches.approver_1_id > users.id
+Ref: batches.approver_2_id > users.id
+Ref: approval_configurations.approver_1_id > users.id
+Ref: approval_configurations.approver_2_id > users.id
+Ref: training_sessions.batch_id > batches.id
+Ref: faculty_utilization.batch_id > batches.id
+Ref: faculty_utilization.training_session_id > training_sessions.id
+Ref: faculty_utilization.outcome_by > users.id
+Ref: faculty_utilization.replacement_session_id > faculty_utilization.id
+```

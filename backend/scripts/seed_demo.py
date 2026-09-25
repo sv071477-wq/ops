@@ -32,6 +32,7 @@ sys.path.insert(0, "/app")
 
 from app.core.database import SessionLocal
 from app.core.security import get_password_hash
+from app.core.config import settings
 from app.models.user import User, Role, Team, UserManagerMapping
 from app.models.batch import (
     Batch, BatchCategory, DeliveryMode, Accommodation, Entity, ApprovalConfiguration
@@ -67,6 +68,9 @@ def week_days_between(start: date, end: date):
             result.append(current)
         current += timedelta(days=1)
     return result
+
+# Use strong password from environment or generate one
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD") or "Demo@SecurePass2024!"
 
 # ── Seed Data Definitions ─────────────────────────────────────────────────────
 
@@ -171,7 +175,7 @@ def main():
 
         # ── 2. Create users ───────────────────────────────────────────
         print("[2/6] Creating managers, coordinators & faculty...")
-        password = get_password_hash("Demo@1234")
+        password = get_password_hash(DEMO_PASSWORD)
 
         def get_or_create_user(email, full_name, role_str, role_obj):
             u = db.query(User).filter(User.email == email).first()

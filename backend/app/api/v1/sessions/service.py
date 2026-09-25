@@ -1,4 +1,6 @@
 import re
+import secrets
+import string
 from datetime import datetime, timedelta, timezone, date
 from decimal import Decimal
 from typing import Any, Optional, List
@@ -20,6 +22,42 @@ from app.schemas.session import (
 from app.api.v1.gates.service import GatekeeperService
 from app.api.v1.schedules.conflict_engine import ConflictEngine
 from app.api.deps import get_manager_scope_user_ids
+
+
+def _recalculate_batch_feedback(db: Session, batch_id: UUID) -> None:
+    """Recalculate batch average feedback from completed sessions with ratings."""
+    completed = db.query(FacultyUtilization).filter(
+        FacultyUtilization.batch_id == batch_id,
+        FacultyUtilization.feedback_rating.isnot(None),
+        FacultyUtilization.status == "Completed",
+    ).all()
+
+    if completed:
+        total = sum((s.feedback_rating for s in completed), Decimal("0"))
+        avg = round(total / Decimal(str(len(completed))), 2)
+        batch = db.query(Batch).filter(Batch.id == batch_id).first()
+        if batch:
+            batch.batch_avg_feedback = Decimal(str(avg))
+            batch.updated_at = datetime.now(timezone.utc)
+            db.commit()
+
+
+def _check_and_update_batch_completion(db: Session, batch_id: UUID) -> None:
+    """Check if all sessions for a batch are in terminal state and update batch if needed."""
+    sessions = db.query(TrainingSession).filter(TrainingSession.batch_id == batch_id).all()
+    util_sessions = db.query(FacultyUtilization).filter(FacultyUtilization.batch_id == batch_id).all()
+    all_sessions = list(sessions) + list(util_sessions)
+    
+    if all_sessions:
+        terminal_statuses = {"Completed", "Cancelled", "Not Conducted"}
+        all_terminal = all(session.status in terminal_statuses for session in all_sessions)
+        if all_terminal:
+            _recalculate_batch_feedback(db, batch_id)
+            batch = db.query(Batch).filter(Batch.id == batch_id).first()
+            if batch and batch.status not in ["Completed", "Cancelled"]:
+                batch.status = "Completed"
+                batch.updated_at = datetime.now(timezone.utc)
+                db.commit()
 
 
 class SessionService:
@@ -156,9 +194,12 @@ class SessionService:
                 counter += 1
 
             fac_role = self.db.query(Role).filter(Role.system_role == "Faculty").first()
+            # Generate a secure random password for auto-provisioned faculty
+            alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+            random_password = "".join(secrets.choice(alphabet) for _ in range(16))
             new_faculty = User(
                 email=email,
-                hashed_password=get_password_hash("Faculty@123"),
+                hashed_password=get_password_hash(random_password),
                 full_name=clean_name,
                 role="Faculty",
                 role_id=fac_role.id if fac_role else None,
@@ -276,6 +317,10 @@ class SessionService:
         session.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(session)
+
+        # Recalculate batch feedback if all sessions are terminal
+        _check_and_update_batch_completion(self.db, session.batch_id)
+
         return session
 
     def _require_batch_scope(self, batch: Batch, user_id: UUID) -> None:

@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
 from app.core.database import SessionLocal, Base, engine
-from app.models.user import User, UserManagerMapping, Role, Team
+from app.models.user import User, UserManagerMapping, Role, Team, AuditLog
 from app.models.batch import (
     Accommodation,
     ApprovalConfiguration,
@@ -25,6 +25,9 @@ def init_db(db: Session = None) -> None:
                     "role_id": "UUID REFERENCES roles(id) ON DELETE SET NULL",
                     "team_id": "UUID REFERENCES teams(id) ON DELETE SET NULL",
                     "manager_id": "UUID REFERENCES users(id) ON DELETE SET NULL",
+                    "failed_login_attempts": "INTEGER DEFAULT 0 NOT NULL",
+                    "locked_until": "TIMESTAMPTZ",
+                    "last_login_at": "TIMESTAMPTZ",
                 },
                 "batches": {
                     "nps_total_responses": "INTEGER",

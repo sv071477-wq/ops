@@ -64,7 +64,12 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = "Sample@123"
+    password: str
+
+
+class AdminUserCreate(UserBase):
+    """Schema for admin creating a new user - password is auto-generated and emailed."""
+    send_welcome_email: bool = True
 
 
 class UserUpdate(BaseModel):
@@ -124,6 +129,13 @@ class AdminResetPasswordRequest(BaseModel):
 
 class Token(BaseModel):
     access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+
+class TokenPair(BaseModel):
+    access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user: UserResponse
 

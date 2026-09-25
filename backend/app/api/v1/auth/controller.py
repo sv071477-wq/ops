@@ -1,25 +1,54 @@
 from typing import List, Any
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from uuid import UUID
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.models.user import User
 from app.schemas.user import (
-    UserCreate, UserUpdate, UserResponse, UserLogin, Token,
+    UserUpdate, UserResponse, UserLogin, Token, TokenPair,
     CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode,
-    ChangePasswordRequest, AdminResetPasswordRequest
+    ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
 from app.api.v1.auth.service import AuthService
 from app.core.database import get_db
+from app.core.security import decode_refresh_token
 
 router = APIRouter()
 
 
-@router.post("/login", response_model=Token)
-def login(login_data: UserLogin, service: AuthService = Depends(get_auth_service)) -> Any:
-    return service.authenticate(login_data)
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+def get_client_info(request: Request) -> dict:
+    return {
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent")
+    }
+
+
+@router.post("/login", response_model=TokenPair)
+def login(
+    login_data: UserLogin, 
+    request: Request,
+    service: AuthService = Depends(get_auth_service)
+) -> Any:
+    client = get_client_info(request)
+    return service.authenticate(login_data, ip_address=client["ip_address"], user_agent=client["user_agent"])
+
+
+@router.post("/refresh", response_model=TokenPair)
+def refresh_token(
+    data: RefreshTokenRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service)
+) -> Any:
+    """Generate new access token using refresh token."""
+    client = get_client_info(request)
+    return service.refresh_tokens(data.refresh_token, ip_address=client["ip_address"], user_agent=client["user_agent"])
 
 
 @router.get("/me", response_model=UserResponse)
@@ -31,11 +60,13 @@ def get_me(current_user: User = Depends(get_current_user), service: AuthService 
 @router.post("/change-password")
 def change_my_password(
     data: ChangePasswordRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     service: AuthService = Depends(get_auth_service),
 ) -> Any:
     """Authenticated User: Change own account password."""
-    return service.change_my_password(current_user, data)
+    client = get_client_info(request)
+    return service.change_my_password(current_user, data, ip_address=client["ip_address"], user_agent=client["user_agent"])
 
 
 
@@ -67,9 +98,16 @@ def get_organization_hierarchy(service: AuthService = Depends(get_auth_service))
     return service.get_organization_hierarchy()
 
 
-@router.post("/users", response_model=UserResponse, dependencies=[Depends(require_admin)])
-def create_user(user_in: UserCreate, service: AuthService = Depends(get_auth_service)) -> Any:
-    return service.create_user(user_in)
+@router.post("/users/admin-create", dependencies=[Depends(require_admin)])
+def create_user_by_admin(
+    user_in: AdminUserCreate,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    """Admin Only: Create a new user with auto-generated password and send welcome email."""
+    client = get_client_info(request)
+    return service.create_user_by_admin(user_in, admin_user=current_user, ip_address=client["ip_address"], user_agent=client["user_agent"])
 
 
 @router.patch("/users/{id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
@@ -87,10 +125,13 @@ def update_user(
 def admin_change_user_password(
     id: UUID,
     data: AdminResetPasswordRequest,
+    request: Request,
     service: AuthService = Depends(get_auth_service),
+    current_user: User = Depends(require_admin),
 ) -> Any:
     """Admin Only: Reset or change password for any user in the organization."""
-    return service.admin_reset_user_password(id, data.new_password)
+    client = get_client_info(request)
+    return service.admin_reset_user_password(id, data.new_password, admin_user=current_user, ip_address=client["ip_address"], user_agent=client["user_agent"])
 
 
 

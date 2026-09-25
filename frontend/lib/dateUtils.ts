@@ -20,9 +20,23 @@ export function formatDate(
       return `${dd}-${mm}-${yyyy}`;
     }
 
-    // Already formatted as DD-MM-YYYY
+    // Match DD-MM-YYYY
     if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) {
       return trimmed;
+    }
+
+    // Match DD/MM/YYYY
+    const slashMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (slashMatch) {
+      const [, dd, mm, yyyy] = slashMatch;
+      return `${dd}-${mm}-${yyyy}`;
+    }
+
+    // Match MM/DD/YYYY (US format)
+    const usMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (usMatch && parseInt(usMatch[1], 10) <= 12) {
+      const [, mm, dd, yyyy] = usMatch;
+      return `${dd}-${mm}-${yyyy}`;
     }
   }
 
@@ -51,4 +65,28 @@ export function formatDateTime(
   const minutes = String(d.getMinutes()).padStart(2, "0");
 
   return `${datePart} ${hours}:${minutes}`;
+}
+
+export function parseToISO(dateValue?: string | Date | null): string | null {
+  if (!dateValue) return null;
+  if (typeof dateValue === "string") {
+    const trimmed = dateValue.trim();
+    if (!trimmed) return null;
+    
+    // Already ISO format
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+      return trimmed;
+    }
+    
+    // DD-MM-YYYY
+    const dashMatch = trimmed.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (dashMatch) {
+      const [, dd, mm, yyyy] = dashMatch;
+      return `${yyyy}-${mm}-${dd}T00:00:00`;
+    }
+  }
+  
+  const d = new Date(dateValue);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
