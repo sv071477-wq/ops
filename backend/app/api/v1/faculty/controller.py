@@ -66,7 +66,7 @@ def export_faculty_utilization_csv(
     writer.writerow([
         "Date", "Faculty Name", "Topic", "Hours", "City", "Venue", "Mode",
         "Status", "Feedback Rating", "Feedback Notes", "Outcome Reason",
-        "Outcome At", "Replacement Session ID"
+        "Outcome At"
     ])
     
     for r in records:
@@ -82,8 +82,7 @@ def export_faculty_utilization_csv(
             float(r.feedback_rating) if r.feedback_rating else "",
             r.feedback_notes or "",
             r.outcome_reason or "",
-            r.outcome_at.isoformat() if r.outcome_at else "",
-            str(r.replacement_session_id) if r.replacement_session_id else ""
+            r.outcome_at.isoformat() if r.outcome_at else ""
         ])
     
     output.seek(0)

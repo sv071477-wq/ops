@@ -134,6 +134,7 @@ export interface Batch {
   sow_number?: string | null;
   approval_id?: string | null;
   entity_id?: string | null;
+  entity?: BatchOption | null;
   category: string;
   residential_type: string;
   category_id?: string | null;
@@ -263,10 +264,19 @@ export interface TrainingSession {
   outcome_reason?: string | null;
   outcome_at?: string | null;
   outcome_by?: string | null;
-  replacement_session_id?: string | null;
+  vertical?: string | null;
+  program_type_id?: string | null;
   rating?: number | null;
   topic_feedback?: string | null;
   created_at: string;
+  // Batch-related fields for display
+  entity?: string | null;
+  category?: string | null;
+  client?: string | null;
+  program?: string | null;
+  batch_id_display?: string | null;
+  coordinator?: string | null;
+  module_feedback?: string | null;
 }
 
 export interface ScheduledSession {
@@ -310,7 +320,8 @@ export interface CreateSessionPayload {
   outcome_reason?: string;
   outcome_at?: string;
   outcome_by?: string;
-  replacement_session_id?: string;
+  vertical?: string;
+  program_type_id?: string;
 }
 
 export interface SessionFeedbackPayload {
@@ -436,6 +447,15 @@ export interface ScheduleApplyResponse {
 }
 
 // Faculty Types
+export interface FacultyType extends BatchOption {
+}
+
+export interface Vertical extends BatchOption {
+}
+
+export interface ProgramType extends BatchOption {
+}
+
 export interface FacultyMember {
   id: string;
   full_name: string;
@@ -794,6 +814,81 @@ class ApiService {
 
   async deleteBatchOption(type: string, id: string): Promise<{ detail: string }> {
     return this.request<{ detail: string }>(`/batch-options/${type}/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Faculty Types APIs
+  async getFacultyTypes(): Promise<FacultyType[]> {
+    return this.request<FacultyType[]>("/batch-options/faculty-types");
+  }
+
+  async createFacultyType(payload: CreateBatchOptionPayload): Promise<FacultyType> {
+    return this.request<FacultyType>("/batch-options/faculty-types", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateFacultyType(id: string, payload: CreateBatchOptionPayload): Promise<FacultyType> {
+    return this.request<FacultyType>(`/batch-options/faculty-types/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteFacultyType(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/batch-options/faculty-types/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Verticals APIs
+  async getVerticals(): Promise<Vertical[]> {
+    return this.request<Vertical[]>("/batch-options/verticals");
+  }
+
+  async createVertical(payload: CreateBatchOptionPayload): Promise<Vertical> {
+    return this.request<Vertical>("/batch-options/verticals", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateVertical(id: string, payload: CreateBatchOptionPayload): Promise<Vertical> {
+    return this.request<Vertical>(`/batch-options/verticals/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteVertical(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/batch-options/verticals/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Program Types APIs
+  async getProgramTypes(): Promise<ProgramType[]> {
+    return this.request<ProgramType[]>("/batch-options/program-types");
+  }
+
+  async createProgramType(payload: CreateBatchOptionPayload): Promise<ProgramType> {
+    return this.request<ProgramType>("/batch-options/program-types", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateProgramType(id: string, payload: CreateBatchOptionPayload): Promise<ProgramType> {
+    return this.request<ProgramType>(`/batch-options/program-types/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteProgramType(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/batch-options/program-types/${id}`, {
       method: "DELETE",
     });
   }

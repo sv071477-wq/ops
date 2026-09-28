@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.core.security import (
     create_access_token, create_refresh_token, get_password_hash, verify_password, validate_password_strength,
@@ -50,7 +51,7 @@ class AuthService:
         self.db = db
 
     def authenticate(self, login_data: UserLogin, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
-        user = self.db.query(User).filter(User.email == login_data.email).first()
+        user = self.db.query(User).filter(func.lower(User.email) == func.lower(login_data.email)).first()
         
         # Check account lockout
         if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
@@ -156,7 +157,7 @@ class AuthService:
         if password_errors:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(password_errors))
         
-        if self.db.query(User).filter(User.email == user_in.email).first():
+        if self.db.query(User).filter(func.lower(User.email) == func.lower(user_in.email)).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
 
         role_id = user_in.role_id
@@ -201,7 +202,7 @@ class AuthService:
 
     def create_user_by_admin(self, user_in: AdminUserCreate, admin_user: User, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> dict:
         """Admin creates a new user with auto-generated password and sends welcome email."""
-        if self.db.query(User).filter(User.email == user_in.email).first():
+        if self.db.query(User).filter(func.lower(User.email) == func.lower(user_in.email)).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
 
         role_id = user_in.role_id
@@ -285,7 +286,7 @@ class AuthService:
 
         if "email" in update_data:
             email = str(update_data["email"]).lower().strip()
-            existing = self.db.query(User).filter(User.email == email, User.id != user_id).first()
+            existing = self.db.query(User).filter(func.lower(User.email) == email, User.id != user_id).first()
             if existing:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User with this email already exists")
             user.email = email

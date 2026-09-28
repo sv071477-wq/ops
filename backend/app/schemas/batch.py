@@ -192,3 +192,31 @@ class BatchDetailResponse(BatchResponse):
     sales_spoc: Optional[UserResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================================
+# Program Type Schemas (Admin-editable options for Faculty Utilization)
+# ============================================================================
+
+class ProgramTypeBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=255)
+    is_active: bool = True
+
+
+class ProgramTypeCreate(ProgramTypeBase):
+    pass
+
+
+class ProgramTypeUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=255)
+    is_active: Optional[bool] = None
+
+
+class ProgramTypeResponse(ProgramTypeBase):
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

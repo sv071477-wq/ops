@@ -2,6 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.models.user import User, UserManagerMapping
 
@@ -11,7 +12,7 @@ class AuthRepository:
         self.db = db
 
     def find_user_by_email(self, email: str) -> Optional[User]:
-        return self.db.query(User).filter(User.email == email).first()
+        return self.db.query(User).filter(func.lower(User.email) == func.lower(email)).first()
 
     def find_user(self, user_id: UUID) -> Optional[User]:
         return self.db.query(User).filter(User.id == user_id).first()

@@ -7,7 +7,7 @@ from typing import Any, Optional, List
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.batch import Batch
 from app.models.session import FacultyUtilization, TrainingSession
@@ -70,7 +70,10 @@ class SessionService:
             batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
             if batch:
                 self._require_batch_scope(batch, user_id)
-        query = self.db.query(FacultyUtilization)
+        query = self.db.query(FacultyUtilization).options(
+            joinedload(FacultyUtilization.batch).joinedload(Batch.entity),
+            joinedload(FacultyUtilization.batch).joinedload(Batch.coordinator)
+        ).join(Batch, FacultyUtilization.batch_id == Batch.id)
         if batch_id:
             query = query.filter(FacultyUtilization.batch_id == batch_id)
         if faculty_name:
@@ -229,6 +232,16 @@ class SessionService:
         faculty = self._resolve_faculty(None, session_dict.get("faculty_name"))
         session_dict["faculty_name"] = faculty.full_name
 
+        # Require outcome_reason when status is Cancelled or Not Conducted
+        if session_dict.get("status") in ["Cancelled", "Not Conducted"] and not session_dict.get("outcome_reason"):
+            raise HTTPException(status_code=422, detail="Outcome reason is required when status is Cancelled or Not Conducted")
+
+        # Auto-set outcome_by to current user if outcome_reason is provided but outcome_by is not
+        if session_dict.get("outcome_reason") and not session_dict.get("outcome_by"):
+            session_dict["outcome_by"] = user_id
+            if not session_dict.get("outcome_at"):
+                session_dict["outcome_at"] = datetime.now(timezone.utc)
+
         daily_hours = self.db.query(FacultyUtilization).filter(
             FacultyUtilization.faculty_name.ilike(faculty.full_name),
             FacultyUtilization.date_of_training >= session_in.date_of_training.replace(hour=0, minute=0, second=0, microsecond=0),
@@ -295,6 +308,18 @@ class SessionService:
             existing_hours = sum((row.no_of_hours for row in existing), Decimal("0"))
             if existing_hours + requested_hours > ConflictEngine.MAX_DAILY_FACULTY_HOURS:
                 raise HTTPException(status_code=409, detail="Faculty daily capacity would be exceeded")
+
+        # Require outcome_reason when status is changed to Cancelled or Not Conducted
+        new_status = update_dict.get("status", session.status)
+        if new_status in ["Cancelled", "Not Conducted"] and not update_dict.get("outcome_reason") and not session.outcome_reason:
+            raise HTTPException(status_code=422, detail="Outcome reason is required when status is Cancelled or Not Conducted")
+
+        # Auto-set outcome_by and outcome_at when outcome_reason is provided
+        if update_dict.get("outcome_reason") and not update_dict.get("outcome_by"):
+            update_dict["outcome_by"] = user_id
+            if not update_dict.get("outcome_at"):
+                update_dict["outcome_at"] = datetime.now(timezone.utc)
+
         for field, value in update_dict.items():
             setattr(session, field, value)
         session.updated_at = datetime.now(timezone.utc)

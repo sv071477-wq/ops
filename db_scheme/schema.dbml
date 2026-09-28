@@ -78,6 +78,24 @@ Table entities {
   updated_at timestamptz [not null]
 }
 
+Table faculty_types {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table verticals {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
 Table batches {
   id uuid [pk]
   batch_id varchar(255) [not null, unique]
@@ -171,6 +189,7 @@ Table faculty_utilization {
   outcome_at timestamptz [null]
   outcome_by uuid [null]
   replacement_session_id uuid [null]
+  vertical varchar(50) [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }

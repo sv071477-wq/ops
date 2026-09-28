@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail,
-  api, BatchOption, ScheduledSession
+  api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
 import {
@@ -118,7 +118,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     categories: BatchOption[];
     accommodations: BatchOption[];
     delivery_modes: BatchOption[];
-  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [] });
+    faculty_types: FacultyType[];
+    verticals: Vertical[];
+    program_types: ProgramType[];
+  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], verticals: [], program_types: [] });
 
   useEffect(() => {
     setCurrentBatch(batch);
@@ -138,8 +141,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         api.getBatchOptions("categories").catch(() => []),
         api.getBatchOptions("accommodations").catch(() => []),
         api.getBatchOptions("delivery-modes").catch(() => []),
-      ]).then(([entities, categories, accommodations, delivery_modes]) => {
-        setOptions({ entities, categories, accommodations, delivery_modes });
+        api.getFacultyTypes().catch(() => []),
+        api.getVerticals().catch(() => []),
+        api.getProgramTypes().catch(() => []),
+      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, verticals, program_types]) => {
+        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, verticals, program_types });
       });
     }
   }, [isOpen]);
@@ -287,6 +293,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [utilFeedbackCollected, setUtilFeedbackCollected] = useState<"yes" | "no" | null>(null);
   const [utilFeedbackRating, setUtilFeedbackRating] = useState(4.5);
   const [utilFeedbackNotes, setUtilFeedbackNotes] = useState("");
+  const [utilOutcomeReason, setUtilOutcomeReason] = useState("");
+  const [utilVertical, setUtilVertical] = useState("");
+  const [utilProgramTypeId, setUtilProgramTypeId] = useState("");
   const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
   const [utilError, setUtilError] = useState<string | null>(null);
 
@@ -307,6 +316,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setUtilFeedbackCollected(null);
     setUtilFeedbackRating(4.5);
     setUtilFeedbackNotes("");
+    setUtilOutcomeReason("");
+    setUtilVertical("");
+    setUtilProgramTypeId("");
     setUtilError(null);
     setIsLogUtilizationOpen(true);
   };
@@ -319,12 +331,18 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       setUtilError("Please select whether feedback was collected");
       return;
     }
+    if (utilStatus === "Cancelled" || utilStatus === "Not Conducted") {
+      if (!utilOutcomeReason.trim() || utilOutcomeReason.trim().length < 3) {
+        setUtilError("Outcome reason is required when status is Cancelled or Not Conducted (minimum 3 characters)");
+        return;
+      }
+    }
     setIsSubmittingUtil(true);
     setUtilError(null);
     try {
       const dateOfTrainingIso = new Date(`${utilDate}T${utilStartTime || "09:00"}:00`).toISOString();
       const feedbackEntered = utilFeedbackCollected === "yes" && (utilFeedbackNotes.trim().length > 0 || Number(utilFeedbackRating) > 0);
-      await api.createSession({
+      const payload: any = {
         batch_id: target.id,
         training_session_id: selectedScheduleDay.id,
         date_of_training: dateOfTrainingIso,
@@ -339,8 +357,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         status: utilStatus,
         feedback_submitted: feedbackEntered,
         feedback_rating: feedbackEntered ? Number(utilFeedbackRating) || undefined : undefined,
-        feedback_notes: feedbackEntered ? utilFeedbackNotes.trim() || undefined : undefined,
-      });
+        feedback_notes: feedbackEntered && utilFeedbackNotes.trim() ? utilFeedbackNotes.trim() : undefined,
+        vertical: utilVertical.trim() || undefined,
+        program_type_id: utilProgramTypeId.trim() || undefined,
+      };
+      if (utilStatus === "Cancelled" || utilStatus === "Not Conducted") {
+        payload.outcome_reason = utilOutcomeReason.trim();
+      }
+      await api.createSession(payload);
       setIsLogUtilizationOpen(false);
       await loadSessions();
       if (onBatchUpdated) onBatchUpdated();
@@ -1702,111 +1726,164 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                           Faculty Utilization & Delivery Ledger ({sessions.length} Recorded)
                         </span>
                       </div>
-                  {sessions.map((s, idx) => (
-                    <div
-                      key={s.id}
-                      className="glass-panel"
-                      style={{
-                        padding: "14px 16px",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                        gap: 12
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 6,
-                          background: s.status === "Completed" ? "#f0fdf4" : "#e8f2fb",
-                          color: s.status === "Completed" ? "#16a34a" : "#0b5cab",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontWeight: 700,
-                          fontSize: "0.85rem"
-                        }}>
-                          #{idx + 1}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: "0.925rem", color: "var(--text-main)" }}>
-                            {s.topic}
-                          </div>
-                          <div style={{ fontSize: "0.775rem", color: "var(--text-muted)", marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
-                            <span>📅 {formatDate(s.date_of_training)}</span>
-                            <span>•</span>
-                            <span>⏱️ {s.start_time || "09:00"} - {s.end_time || "17:00"} ({s.no_of_hours} hrs)</span>
-                            <span>•</span>
-                            <span>👨‍🏫 {s.faculty_name || "Assigned Faculty"}</span>
-                          </div>
-                        </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.775rem" }}>
+                          <thead>
+                            <tr style={{ background: "#f8fafc", textAlign: "left", borderBottom: "2px solid var(--border-subtle)" }}>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>#</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Entity</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Category</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Vertical</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Client</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Program</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Batch ID</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Date of Training</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Topic</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Faculty Full Name</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Faculty Vertical</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Internal/External</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>No. of Hours</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Module Feedback</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Venue</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Location/City</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Mode of Delivery</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Coordinator</th>
+                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sessions.map((s, idx) => (
+                              <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                                <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{idx + 1}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.entity?.name || activeBatch.entity_id || "—"}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.category || "—"}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    padding: "2px 8px",
+                                    borderRadius: 4,
+                                    fontSize: "0.7rem",
+                                    fontWeight: 600,
+                                    background: s.vertical ? "#e8f2fb" : "#f1f5f9",
+                                    color: s.vertical ? "#0b5cab" : "var(--text-dim)",
+                                    border: s.vertical ? "1px solid #bfdbfe" : "1px solid var(--border-subtle)"
+                                  }}>
+                                    {s.vertical || "—"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.client_name || "—"}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.program_name || "—"}</td>
+                                <td style={{ padding: "8px 10px", fontWeight: 600, color: "#0b5cab", fontFamily: "monospace", fontSize: "0.75rem" }}>{activeBatch.batch_id}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)", whiteSpace: "nowrap" }}>{formatDate(s.date_of_training)}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{s.topic}</td>
+                                <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{s.faculty_name}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    padding: "2px 8px",
+                                    borderRadius: 4,
+                                    fontSize: "0.7rem",
+                                    fontWeight: 600,
+                                    background: "#fff7ed",
+                                    color: "#9a3412",
+                                    border: "1px solid #fed7aa"
+                                  }}>
+                                    {s.vertical || "—"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center" }}>
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    padding: "2px 8px",
+                                    borderRadius: 4,
+                                    fontSize: "0.7rem",
+                                    fontWeight: 600,
+                                    background: s.vertical?.includes("External") ? "#fef2f2" : "#f0fdf4",
+                                    color: s.vertical?.includes("External") ? "#b91c1c" : "#166534",
+                                    border: s.vertical?.includes("External") ? "1px solid #fecaca" : "1px solid #bbf7d0"
+                                  }}>
+                                    {s.vertical?.includes("Internal") && !s.vertical?.includes("External") ? "Internal" : s.vertical?.includes("External") && !s.vertical?.includes("Internal") ? "External" : s.vertical?.includes("HOP") ? "HOP" : "Mixed"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center", fontWeight: 600 }}>{s.no_of_hours} hrs</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                                  {s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : "—")}
+                                </td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.venue || "—"}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.location_city || activeBatch.location_city || "—"}</td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
+                                  <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    padding: "2px 8px",
+                                    borderRadius: 4,
+                                    fontSize: "0.7rem",
+                                    fontWeight: 600,
+                                    background: "#f8fafc",
+                                    color: "var(--text-main)",
+                                    border: "1px solid var(--border-subtle)"
+                                  }}>
+                                    {s.mode_of_delivery}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.coordinator?.full_name || activeBatch.coordinator_id || "—"}</td>
+                                <td style={{ padding: "8px 10px" }}>
+                                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                    {!(["Completed", "Cancelled", "Not Conducted"].includes(s.status)) && (
+                                      <>
+                                        <button onClick={() => handleEditSession(s)} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Edit">
+                                          Edit
+                                        </button>
+                                        <button onClick={() => handleSessionOutcome(s, "not-conducted")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Not Conducted">
+                                          Not Conducted
+                                        </button>
+                                        <button onClick={() => handleSessionOutcome(s, "cancel")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Cancel">
+                                          Cancel
+                                        </button>
+                                      </>
+                                    )}
+                                    {s.status === "Completed" ? (
+                                      <span style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 4,
+                                        background: "#f0fdf4",
+                                        color: "#16a34a",
+                                        border: "1px solid #bbf7d0",
+                                        borderRadius: 4,
+                                        padding: "3px 8px",
+                                        fontSize: "0.7rem",
+                                        fontWeight: 700
+                                      }}>
+                                        <CheckCircle2 size={11} /> Completed
+                                      </span>
+                                    ) : (
+                                      <button
+                                        onClick={() => {
+                                          setCompletingSession(s);
+                                          setGate1Rating(4.5);
+                                          setGate1Feedback("");
+                                        }}
+                                        className="btn btn-primary"
+                                        style={{ padding: "4px 8px", fontSize: "0.7rem" }}
+                                      >
+                                        Gate 1 Complete
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                        {!(["Completed", "Cancelled", "Not Conducted"].includes(s.status)) && (
-                          <>
-                            <button onClick={() => handleEditSession(s)} className="btn btn-secondary" style={{ padding: "5px 8px", fontSize: "0.72rem" }}>
-                              Edit
-                            </button>
-                            <button onClick={() => handleSessionOutcome(s, "not-conducted")} className="btn btn-secondary" style={{ padding: "5px 8px", fontSize: "0.72rem" }}>
-                              Not conducted
-                            </button>
-                            <button onClick={() => handleSessionOutcome(s, "cancel")} className="btn btn-secondary" style={{ padding: "5px 8px", fontSize: "0.72rem" }}>
-                              Cancel
-                            </button>
-                          </>
-                        )}
-                        {s.status === "Completed" ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 4,
-                              background: "#f0fdf4",
-                              color: "#16a34a",
-                              border: "1px solid #bbf7d0",
-                              borderRadius: 4,
-                              padding: "3px 8px",
-                              fontSize: "0.75rem",
-                              fontWeight: 700
-                            }}>
-                              <CheckCircle2 size={13} /> Completed
-                            </span>
-                            {s.rating && (
-                              <span style={{
-                                background: "#fef3c7",
-                                color: "#b45309",
-                                border: "1px solid #fde68a",
-                                borderRadius: 4,
-                                padding: "3px 8px",
-                                fontSize: "0.75rem",
-                                fontWeight: 700,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 3
-                              }}>
-                                <Star size={12} fill="#b45309" /> {s.rating}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setCompletingSession(s);
-                              setGate1Rating(4.5);
-                              setGate1Feedback("");
-                            }}
-                            className="btn btn-primary"
-                            style={{ padding: "5px 10px", fontSize: "0.775rem" }}
-                          >
-                            Gate 1 Complete
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
                     </div>
                   )}
                 </div>
@@ -3423,6 +3500,46 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     )}
                   </select>
                 </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Vertical *
+                  </label>
+                  <select
+                    value={utilVertical}
+                    onChange={(e) => setUtilVertical(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  >
+                    <option value="">Select Vertical</option>
+                    {options.verticals.map((v) => (
+                      <option key={v.id} value={v.name}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Program Type *
+                  </label>
+                  <select
+                    value={utilProgramTypeId}
+                    onChange={(e) => setUtilProgramTypeId(e.target.value)}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  >
+                    <option value="">Select Program Type</option>
+                    {options.program_types?.map((p: any) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -3454,9 +3571,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <option value="Completed">Completed / Delivered</option>
                     <option value="InProgress">In Progress</option>
                     <option value="Scheduled">Scheduled</option>
+                    <option value="Cancelled">Cancelled</option>
+                    <option value="Not Conducted">Not Conducted</option>
                   </select>
                 </div>
               </div>
+
+              {(utilStatus === "Cancelled" || utilStatus === "Not Conducted") && (
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Outcome Reason *
+                  </label>
+                  <textarea
+                    value={utilOutcomeReason}
+                    onChange={(e) => setUtilOutcomeReason(e.target.value)}
+                    placeholder="Reason for cancellation or non-conduct (e.g. Faculty unavailable, client cancelled, rescheduled to another date)"
+                    className="glass-input"
+                    style={{ width: "100%", minHeight: 72, resize: "vertical" }}
+                    required
+                  />
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
+                    Required when status is Cancelled or Not Conducted (minimum 3 characters)
+                  </span>
+                </div>
+              )}
 
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
@@ -3507,7 +3645,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
                   <div>
                     <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                      Feedback Notes *
+                      Feedback Notes
                     </label>
                     <textarea
                       value={utilFeedbackNotes}
@@ -3515,7 +3653,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       placeholder="Session summary, observations, learner uptake, or notes for later audit review"
                       className="glass-input"
                       style={{ width: "100%", minHeight: 72, resize: "vertical" }}
-                      required
                     />
                   </div>
                 </>

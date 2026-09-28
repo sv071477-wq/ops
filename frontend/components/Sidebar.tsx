@@ -6,9 +6,13 @@ import { useRouter, usePathname } from "next/navigation";
 import {
   Search, Bell, Calendar, Zap, Layers, Settings, HelpCircle,
   Plus, ChevronsUpDown, Shield, LogOut, KeyRound, Check, X,
-  ExternalLink, Sparkles
+  ExternalLink, Sparkles, ChevronLeft, Menu, X as XIcon
 } from "lucide-react";
 import { ChangePasswordModal } from "./ChangePasswordModal";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
 
 interface SidebarProps {
   activeView: "batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty";
@@ -35,13 +39,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const router = useRouter();
   const pathname = usePathname();
 
+  const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLAsideElement>(null);
 
   const isAdmin = user?.role?.toLowerCase() === "admin";
   const isFinance = user?.team_name?.trim().toLowerCase() === "finance" || user?.role?.toLowerCase() === "finance";
@@ -51,7 +60,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const canSeeManagerBoard = !isFinance && isManager;
   const canSeeAnalytics = !isFinance && isManager;
 
-  // Keyboard shortcut listener (⌘1, ⌘2, ⌘3, ⌘4 or Ctrl+1, 2, 3, 4)
+  // Handle responsive behavior
+  useEffect(() => {
+    if (isMobile) {
+      setIsSidebarOpen(false);
+      setIsCollapsed(false);
+    } else if (isTablet) {
+      setIsCollapsed(true);
+    } else {
+      setIsCollapsed(false);
+    }
+  }, [isMobile, isTablet]);
+
+  // Keyboard shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
@@ -105,694 +126,366 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const teamLabel = user?.team_name ? `${user.team_name} Team` : "Operations";
   const roleLabel = user?.role_detail?.name || user?.role || "Staff";
 
+  const navItems = [
+    ...(isFinance ? [{
+      id: "finance",
+      label: "Finance Review",
+      icon: Layers,
+      badge: null,
+    }] : []),
+    {
+      id: "batches",
+      label: "Active Batches",
+      icon: Layers,
+      badge: null,
+    },
+    ...(isApprover ? [{
+      id: "approvals",
+      label: "Approval Queue",
+      icon: Check,
+      badge: pendingApprovalsCount > 0 ? pendingApprovalsCount : null,
+    }] : []),
+    ...(canSeeManagerBoard ? [{
+      id: "manager_board",
+      label: "Manager Board",
+      icon: Bell,
+      badge: pendingApprovalsCount > 0 ? pendingApprovalsCount : null,
+    }] : []),
+    {
+      id: "faculty",
+      label: "Faculty Utilization",
+      icon: Calendar,
+      badge: null,
+    },
+    ...(canSeeAnalytics ? [{
+      id: "analytics",
+      label: "Team Analytics",
+      icon: Zap,
+      badge: null,
+    }] : []),
+  ];
+
+  const sidebarWidth = isMobile ? 0 : isCollapsed ? 72 : 256;
+
   return (
     <>
+      {/* Mobile Overlay */}
+      {isMobile && isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar */}
       <aside
-        style={{
-          width: 256,
-          flexShrink: 0,
-          background: "#ffffff",
-          borderRadius: 20,
-          border: "1px solid #e5e7eb",
-          boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.04), 0 2px 6px -1px rgba(0, 0, 0, 0.02)",
-          padding: "14px 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-          alignSelf: "stretch",
-          minHeight: "calc(100vh - 32px)",
-          boxSizing: "border-box",
-          fontFamily: "var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif)",
-          userSelect: "none",
-        }}
+        ref={sidebarRef}
+        className={cn(
+          "fixed left-0 top-0 z-50 h-full bg-card border-r border-border transition-all duration-300 ease-in-out flex flex-col",
+          "shadow-xl",
+          isMobile ? "w-72 transform" : isCollapsed ? "w-[72px]" : "w-[256px]",
+          isMobile && !isSidebarOpen ? "-translate-x-full" : "translate-x-0",
+          "lg:relative lg:translate-x-0"
+        )}
+        style={{ width: sidebarWidth }}
+        aria-label="Main navigation"
       >
-        {/* TOP HEADER: Brand / Team Selector */}
+        {/* Top Header: Brand / Team Selector */}
         <div style={{ position: "relative" }} ref={workspaceMenuRef}>
-          <button
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-3 p-2"
             onClick={() => setIsWorkspaceMenuOpen(!isWorkspaceMenuOpen)}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "6px 8px",
-              background: isWorkspaceMenuOpen ? "#f8fafc" : "transparent",
-              border: "none",
-              borderRadius: 10,
-              cursor: "pointer",
-              outline: "none",
-              transition: "background 0.15s ease",
-            }}
-            onMouseOver={(e) => {
-              if (!isWorkspaceMenuOpen) e.currentTarget.style.background = "#f8fafc";
-            }}
-            onMouseOut={(e) => {
-              if (!isWorkspaceMenuOpen) e.currentTarget.style.background = "transparent";
-            }}
+            aria-expanded={isWorkspaceMenuOpen}
+            aria-haspopup="true"
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {/* Logo emblem */}
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#ffffff",
-                  boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
-                  position: "relative",
-                  flexShrink: 0,
-                }}
-              >
-                <Layers size={18} strokeWidth={2.5} />
-              </div>
-
-              <div style={{ textAlign: "left" }}>
+            {!isCollapsed && (
+              <>
+                {/* Logo emblem */}
                 <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                   style={{
-                    fontSize: "0.92rem",
-                    fontWeight: 700,
-                    color: "#0f172a",
-                    lineHeight: 1.15,
-                    letterSpacing: "-0.01em",
+                    background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
+                    boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
                   }}
                 >
-                  Enterprise Ops
+                  <Layers size={18} strokeWidth={2.5} className="text-white" />
                 </div>
-                <div
-                  style={{
-                    fontSize: "0.72rem",
-                    color: "#64748b",
-                    fontWeight: 600,
-                    lineHeight: 1.15,
-                    marginTop: 2,
-                  }}
-                >
-                  {teamLabel} • {roleLabel}
+                <div className="text-left min-w-0">
+                  <div className="font-semibold text-foreground text-sm truncate">
+                    Enterprise Ops
+                  </div>
+                  <div className="text-xs text-muted-foreground font-medium truncate">
+                    {teamLabel} • {roleLabel}
+                  </div>
                 </div>
+              </>
+            )}
+            {isCollapsed && (
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto" style={{
+                background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
+                boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
+              }}>
+                <Layers size={18} strokeWidth={2.5} className="text-white" />
               </div>
-            </div>
-
-            <ChevronsUpDown size={14} color="#94a3b8" />
-          </button>
+            )}
+            {!isCollapsed && <ChevronsUpDown size={14} className="text-muted-foreground ml-auto" />}
+          </Button>
 
           {/* Workspace Menu Popover */}
-          {isWorkspaceMenuOpen && (
+          {isWorkspaceMenuOpen && !isCollapsed && (
             <div
-              style={{
-                position: "absolute",
-                top: "100%",
-                left: 0,
-                right: 0,
-                marginTop: 6,
-                background: "#ffffff",
-                borderRadius: 12,
-                border: "1px solid #e2e8f0",
-                boxShadow: "0 10px 25px rgba(0, 0, 0, 0.1)",
-                zIndex: 60,
-                padding: 6,
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-              }}
+              className="absolute top-full left-0 right-0 mt-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-fade-in"
+              role="menu"
             >
-              <div
-                style={{
-                  padding: "6px 8px",
-                  fontSize: "0.7rem",
-                  fontWeight: 700,
-                  color: "#94a3b8",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                }}
-              >
+              <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Active Workspace
               </div>
-              <div
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  background: "#f1f5f9",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  color: "#0f172a",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <span>Enterprise Ops</span>
-                <span style={{ fontSize: "0.68rem", color: "#16a34a", fontWeight: 700 }}>Active</span>
+              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-muted">
+                <span className="font-medium text-sm">Enterprise Ops</span>
+                <span className="text-xs text-success font-semibold">Active</span>
               </div>
 
               {isAdmin && (
-                <button
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm"
                   onClick={() => {
                     setIsWorkspaceMenuOpen(false);
                     router.push("/admin");
                   }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    color: "#0b5cab",
-                    fontSize: "0.8rem",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                  onMouseOver={(e) => (e.currentTarget.style.background = "#f8fafc")}
-                  onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                  role="menuitem"
                 >
-                  <Shield size={14} />
+                  <Shield size={14} className="text-primary" />
                   <span>Admin & Governance</span>
-                </button>
+                </Button>
               )}
             </div>
           )}
         </div>
 
-        {/* SEARCH BAR with ⌘1 shortcut badge - clean layout without overlap */}
-        <div
-          style={{
-            position: "relative",
-            display: "flex",
-            alignItems: "center",
-            background: "#f8fafc",
-            border: "1px solid #e5e7eb",
-            borderRadius: 10,
-            padding: "0 8px 0 10px",
-            height: 38,
-            transition: "border-color 0.15s ease, background 0.15s ease",
-          }}
-        >
-          <Search size={15} color="#94a3b8" style={{ marginRight: 8, flexShrink: 0 }} />
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Search batches..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery?.(e.target.value)}
-            style={{
-              width: "100%",
-              minWidth: 0,
-              background: "transparent",
-              border: "none",
-              outline: "none",
-              fontSize: "0.82rem",
-              color: "#0f172a",
-              padding: "0 6px 0 0",
-            }}
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery?.("")}
-              style={{
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "#94a3b8",
-                cursor: "pointer",
-                padding: 2,
-                display: "flex",
-                alignItems: "center",
-                flexShrink: 0,
-              }}
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-
-        {/* TOP ACTION: Add New Batch */}
-        <button
-          onClick={onOpenCreateBatch}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            width: "100%",
-            height: 36,
-            borderRadius: 10,
-            border: "1px solid #bfdbfe",
-            outline: "none",
-            background: "#eff6ff",
-            color: "#0b5cab",
-            fontWeight: 600,
-            fontSize: "0.84rem",
-            cursor: "pointer",
-            transition: "all 0.15s ease",
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.background = "#0b5cab";
-            e.currentTarget.style.color = "#ffffff";
-            e.currentTarget.style.borderColor = "#0b5cab";
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.background = "#eff6ff";
-            e.currentTarget.style.color = "#0b5cab";
-            e.currentTarget.style.borderColor = "#bfdbfe";
-          }}
-        >
-          <Plus size={15} strokeWidth={2.5} />
-          <span>Add New Batch</span>
-        </button>
-
-        {/* PRIMARY NAVIGATION ITEMS: Tailored to user role and backend features */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {/* FOR FINANCE TEAM: Finance Review is the primary view */}
-          {isFinance && (
-            <button
-              onClick={() => setActiveView("finance")}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "none",
-                outline: "none",
-                background: activeView === "finance" ? "#f4f4f5" : "transparent",
-                color: activeView === "finance" ? "#0f172a" : "#475569",
-                fontWeight: activeView === "finance" ? 700 : 500,
-                fontSize: "0.875rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              onMouseOver={(e) => {
-                if (activeView !== "finance") e.currentTarget.style.background = "#f8fafc";
-              }}
-              onMouseOut={(e) => {
-                if (activeView !== "finance") e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <Layers size={17} color={activeView === "finance" ? "#0f172a" : "#64748b"} />
-              <span>Finance Review</span>
-            </button>
-          )}
-
-          {/* Active Batches (Batch Operations Hub) */}
-          <button
-            onClick={() => setActiveView("batches")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "8px 10px",
-              borderRadius: 8,
-              border: "none",
-              outline: "none",
-              background: activeView === "batches" ? "#f4f4f5" : "transparent",
-              color: activeView === "batches" ? "#0f172a" : "#475569",
-              fontWeight: activeView === "batches" ? 700 : 500,
-              fontSize: "0.875rem",
-              cursor: "pointer",
-              transition: "all 0.15s ease",
-            }}
-            onMouseOver={(e) => {
-              if (activeView !== "batches") e.currentTarget.style.background = "#f8fafc";
-            }}
-            onMouseOut={(e) => {
-              if (activeView !== "batches") e.currentTarget.style.background = "transparent";
-            }}
-          >
-            <Layers size={17} color={activeView === "batches" ? "#0f172a" : "#64748b"} />
-            <span>Active Batches</span>
-          </button>
-
-          {/* Approval Queue (Multi-Level Governance Signoffs) */}
-          {isApprover && (
-            <button
-              onClick={() => setActiveView("approvals")}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "none",
-                outline: "none",
-                background: activeView === "approvals" ? "#f4f4f5" : "transparent",
-                color: activeView === "approvals" ? "#0f172a" : "#475569",
-                fontWeight: activeView === "approvals" ? 700 : 500,
-                fontSize: "0.875rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              onMouseOver={(e) => {
-                if (activeView !== "approvals") e.currentTarget.style.background = "#f8fafc";
-              }}
-              onMouseOut={(e) => {
-                if (activeView !== "approvals") e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Check size={17} color={activeView === "approvals" ? "#0f172a" : "#64748b"} />
-                <span>Approval Queue</span>
-              </div>
-              {pendingApprovalsCount > 0 && (
-                <span
-                  style={{
-                    fontSize: "0.68rem",
-                    fontWeight: 700,
-                    color: "#ffffff",
-                    background: "#0b5cab",
-                    padding: "2px 6px",
-                    borderRadius: 10,
-                  }}
-                >
-                  {pendingApprovalsCount}
-                </span>
+        {/* Search Bar */}
+        <div className={cn("p-3 border-b border-border", isCollapsed && "px-2")}>
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              ref={searchInputRef}
+              type="text"
+              placeholder={isCollapsed ? "" : "Search batches..."}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery?.(e.target.value)}
+              className={cn(
+                "pl-9 h-9 text-sm",
+                isCollapsed && "w-9",
               )}
-            </button>
-          )}
-
-          {/* Manager Level Control Board (For non-finance managers & leadership) */}
-          {canSeeManagerBoard && (
-            <button
-              onClick={() => setActiveView("manager_board")}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "none",
-                outline: "none",
-                background: activeView === "manager_board" ? "#f4f4f5" : "transparent",
-                color: activeView === "manager_board" ? "#0f172a" : "#475569",
-                fontWeight: activeView === "manager_board" ? 700 : 500,
-                fontSize: "0.875rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              onMouseOver={(e) => {
-                if (activeView !== "manager_board") e.currentTarget.style.background = "#f8fafc";
-              }}
-              onMouseOut={(e) => {
-                if (activeView !== "manager_board") e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                <Bell size={17} color={activeView === "manager_board" ? "#0f172a" : "#64748b"} />
-                {/* Show alert dot only when there are actual pending approvals/alerts */}
-                {pendingApprovalsCount > 0 && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      bottom: -2,
-                      right: -3,
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: "#ef4444",
-                      boxShadow: "0 0 0 1.5px #ffffff",
-                    }}
-                  />
-                )}
-              </div>
-              <span>Manager Board</span>
-            </button>
-          )}
-
-          {/* Faculty Directory & Utilization */}
-          <button
-            onClick={() => setActiveView("faculty")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "8px 10px",
-              borderRadius: 8,
-              border: "none",
-              outline: "none",
-              background: activeView === "faculty" ? "#f4f4f5" : "transparent",
-              color: activeView === "faculty" ? "#0f172a" : "#475569",
-              fontWeight: activeView === "faculty" ? 700 : 500,
-              fontSize: "0.875rem",
-              cursor: "pointer",
-              transition: "all 0.15s ease",
-            }}
-            onMouseOver={(e) => {
-              if (activeView !== "faculty") e.currentTarget.style.background = "#f8fafc";
-            }}
-            onMouseOut={(e) => {
-              if (activeView !== "faculty") e.currentTarget.style.background = "transparent";
-            }}
-          >
-            <Calendar size={17} color={activeView === "faculty" ? "#0f172a" : "#64748b"} />
-            <span>Faculty Utilization</span>
-          </button>
-
-          {/* Team Analytics & MBR (For managers and leadership) */}
-          {canSeeAnalytics && (
-            <button
-              onClick={() => setActiveView("analytics")}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "none",
-                outline: "none",
-                background: activeView === "analytics" ? "#f4f4f5" : "transparent",
-                color: activeView === "analytics" ? "#0f172a" : "#475569",
-                fontWeight: activeView === "analytics" ? 700 : 500,
-                fontSize: "0.875rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              onMouseOver={(e) => {
-                if (activeView !== "analytics") e.currentTarget.style.background = "#f8fafc";
-              }}
-              onMouseOut={(e) => {
-                if (activeView !== "analytics") e.currentTarget.style.background = "transparent";
-              }}
-            >
-              <Zap size={17} color={activeView === "analytics" ? "#0f172a" : "#64748b"} />
-              <span>Team Analytics</span>
-            </button>
-          )}
+              aria-label="Search batches"
+            />
+            {searchQuery && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
+                onClick={() => setSearchQuery?.("")}
+                aria-label="Clear search"
+              >
+                <X size={14} className="text-muted-foreground" />
+              </Button>
+            )}
+          </div>
         </div>
 
-        {/* SPACER - Pushes user profile footer to bottom */}
-        <div style={{ flex: 1, minHeight: 24 }} />
+        {/* Add New Batch Button */}
+        {canCreateBatch && onOpenCreateBatch && (
+          <div className={cn("p-3", isCollapsed && "px-2")}>
+            <Button
+              variant="default"
+              className={cn(
+                "w-full justify-center gap-2",
+                isCollapsed && "p-2",
+                "bg-primary/10 text-primary border-primary/20 hover:bg-primary/20"
+              )}
+              onClick={onOpenCreateBatch}
+              aria-label="Add New Batch"
+            >
+              <Plus size={15} strokeWidth={2.5} />
+              {!isCollapsed && <span className="font-semibold text-sm">Add New Batch</span>}
+            </Button>
+          </div>
+        )}
 
-        {/* BOTTOM USER PROFILE CARD (Matches Sandra Marx in reference image) */}
+        {/* Primary Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto" aria-label="Main navigation">
+          {navItems.map((item) => {
+            const isActive = activeView === item.id;
+            const Icon = item.icon;
+            return (
+              <Button
+                key={item.id}
+                variant={isActive ? "default" : "ghost"}
+                className={cn(
+                  "w-full justify-start gap-3",
+                  isCollapsed && "p-2 justify-center",
+                  isActive && "bg-primary/10 text-primary border-primary/20",
+                  !isActive && "text-muted-foreground hover:text-foreground hover:bg-accent"
+                )}
+                onClick={() => {
+                  setActiveView(item.id as any);
+                  if (isMobile) setIsSidebarOpen(false);
+                }}
+                aria-current={isActive ? "page" : undefined}
+                aria-label={item.label}
+              >
+                <Icon size={17} className={cn("flex-shrink-0", isActive && "text-primary")} aria-hidden="true" />
+                {!isCollapsed && (
+                  <span className="font-medium text-sm truncate">{item.label}</span>
+                )}
+                {!isCollapsed && item.badge && (
+                  <span className="ml-auto px-2 py-0.5 text-xs font-semibold text-primary-foreground bg-primary rounded-full">
+                    {item.badge}
+                  </span>
+                )}
+              </Button>
+            );
+          })}
+        </nav>
+
+        {/* Collapse Toggle (Tablet) / Close Button (Mobile) */}
+        {(!isMobile && isTablet) || isMobile ? (
+          <div className={cn("p-3 border-t border-border", isCollapsed && "px-2")}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("w-full justify-center", !isCollapsed && "justify-end")}
+              onClick={() => {
+                if (isMobile) {
+                  setIsSidebarOpen(false);
+                } else {
+                  setIsCollapsed(!isCollapsed);
+                }
+              }}
+              aria-label={isMobile ? "Close sidebar" : isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-expanded={!isCollapsed}
+            >
+              {isMobile ? (
+                <XIcon size={18} className="text-muted-foreground" />
+              ) : isCollapsed ? (
+                <ChevronLeft size={18} className="text-muted-foreground" />
+              ) : (
+                <ChevronLeft size={18} className="text-muted-foreground" />
+              )}
+            </Button>
+          </div>
+        ) : null}
+
+        {/* Bottom User Profile Card */}
         <div
-          style={{
-            borderTop: "1px solid #f1f5f9",
-            paddingTop: 10,
-            position: "relative",
-          }}
+          className={cn("border-t border-border p-3", isCollapsed && "px-2")}
           ref={userMenuRef}
         >
-          <button
+          <Button
+            variant="ghost"
+            className={cn(
+              "w-full justify-start gap-3",
+              isCollapsed && "p-2 justify-center"
+            )}
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "6px 6px",
-              background: isUserMenuOpen ? "#f8fafc" : "transparent",
-              border: "none",
-              borderRadius: 10,
-              cursor: "pointer",
-              transition: "background 0.15s ease",
-            }}
-            onMouseOver={(e) => {
-              if (!isUserMenuOpen) e.currentTarget.style.background = "#f8fafc";
-            }}
-            onMouseOut={(e) => {
-              if (!isUserMenuOpen) e.currentTarget.style.background = "transparent";
-            }}
+            aria-expanded={isUserMenuOpen}
+            aria-haspopup="true"
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-              {/* User Avatar with soft pastel background */}
-              <div
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 10,
-                  background: "linear-gradient(135deg, #fbcfe8 0%, #f472b6 100%)",
-                  color: "#831843",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "0.88rem",
-                  fontWeight: 700,
-                  flexShrink: 0,
-                  boxShadow: "0 2px 4px rgba(244, 114, 182, 0.2)",
-                }}
-              >
-                {userInitial}
-              </div>
-
-              <div style={{ textAlign: "left", minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: "0.88rem",
-                    fontWeight: 700,
-                    color: "#0f172a",
-                    lineHeight: 1.2,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-pink-200 to-pink-400 text-pink-900 font-semibold text-sm">
+              {userInitial}
+            </div>
+            {!isCollapsed && (
+              <div className="text-left min-w-0 flex-1">
+                <div className="font-semibold text-foreground text-sm truncate">
                   {userDisplayName}
                 </div>
-                <div
-                  style={{
-                    fontSize: "0.72rem",
-                    color: "#94a3b8",
-                    lineHeight: 1.2,
-                    marginTop: 1,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
+                <div className="text-xs text-muted-foreground truncate">
                   {userDisplayEmail}
                 </div>
               </div>
-            </div>
-
-            <ChevronsUpDown size={14} color="#94a3b8" style={{ flexShrink: 0, marginLeft: 4 }} />
-          </button>
+            )}
+            {!isCollapsed && <ChevronsUpDown size={14} className="text-muted-foreground ml-auto" />}
+          </Button>
 
           {/* User Popover Dropdown */}
-          {isUserMenuOpen && (
+          {isUserMenuOpen && !isCollapsed && (
             <div
-              style={{
-                position: "absolute",
-                bottom: "100%",
-                left: 0,
-                right: 0,
-                marginBottom: 8,
-                background: "#ffffff",
-                borderRadius: 14,
-                border: "1px solid #e2e8f0",
-                boxShadow: "0 12px 30px rgba(0, 0, 0, 0.12)",
-                zIndex: 70,
-                padding: 8,
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-              }}
+              className="absolute bottom-full left-0 right-0 mb-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-slide-in-bottom"
+              role="menu"
             >
-              <div style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9" }}>
-                <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0f172a" }}>
-                  {user?.full_name}
-                </div>
-                <div style={{ fontSize: "0.72rem", color: "#64748b" }}>
+              <div className="px-2 py-2 border-b border-border">
+                <div className="font-semibold text-sm text-foreground">{user?.full_name}</div>
+                <div className="text-xs text-muted-foreground">
                   {user?.role_detail?.name || user?.role} • {user?.team_name || "Ops"}
                 </div>
               </div>
 
-              {/* Change Password option */}
-              <button
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm"
                 onClick={() => {
                   setIsUserMenuOpen(false);
                   setIsChangePasswordOpen(true);
                 }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "transparent",
-                  color: "#0f172a",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-                onMouseOver={(e) => (e.currentTarget.style.background = "#f8fafc")}
-                onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                role="menuitem"
               >
-                <KeyRound size={15} color="#0b5cab" />
+                <KeyRound size={15} className="text-primary" />
                 <span>Change My Password</span>
-              </button>
+              </Button>
 
               {isAdmin && (
-                <button
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm"
                   onClick={() => {
                     setIsUserMenuOpen(false);
                     router.push("/admin");
                   }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "transparent",
-                    color: "#0f172a",
-                    fontSize: "0.82rem",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                  onMouseOver={(e) => (e.currentTarget.style.background = "#f8fafc")}
-                  onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                  role="menuitem"
                 >
-                  <Shield size={15} color="#0b5cab" />
+                  <Shield size={15} className="text-primary" />
                   <span>Admin Portal</span>
-                </button>
+                </Button>
               )}
 
-              {/* Logout */}
-              <button
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive"
                 onClick={() => {
                   setIsUserMenuOpen(false);
                   logout();
                 }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "transparent",
-                  color: "#ef4444",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-                onMouseOver={(e) => (e.currentTarget.style.background = "#fef2f2")}
-                onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+                role="menuitem"
               >
                 <LogOut size={15} />
                 <span>Sign Out</span>
-              </button>
+              </Button>
             </div>
           )}
         </div>
       </aside>
+
+      {/* Mobile Toggle Button */}
+      {isMobile && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="fixed top-4 left-4 z-50 lg:hidden"
+          onClick={() => setIsSidebarOpen(true)}
+          aria-label="Open sidebar"
+          aria-expanded={isSidebarOpen}
+        >
+          <Menu size={24} className="text-foreground" />
+        </Button>
+      )}
 
       {/* Change Password Modal */}
       <ChangePasswordModal
         isOpen={isChangePasswordOpen}
         onClose={() => setIsChangePasswordOpen(false)}
       />
-
     </>
   );
 };

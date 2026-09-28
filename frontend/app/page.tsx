@@ -1453,19 +1453,18 @@ export default function DashboardPage() {
                       <th style={{ padding: "12px 14px" }}>Feedback</th>
                       <th style={{ padding: "12px 14px" }}>Notes</th>
                       <th style={{ padding: "12px 14px" }}>Outcome</th>
-                      <th style={{ padding: "12px 14px" }}>Replacement</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingFaculty ? (
                       <tr>
-                        <td colSpan={12} style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)" }}>
+                        <td colSpan={11} style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)" }}>
                           Loading utilization ledger...
                         </td>
                       </tr>
                     ) : facultyUtilizationLedger.length === 0 ? (
                       <tr>
-                        <td colSpan={12} style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)" }}>
+                        <td colSpan={11} style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)" }}>
                           No logged delivery records yet.
                         </td>
                       </tr>
@@ -1526,9 +1525,6 @@ export default function DashboardPage() {
                           </td>
                           <td style={{ padding: "12px 14px", color: "var(--text-muted)", maxWidth: 200 }}>
                             <div style={{ whiteSpace: "normal" }}>{row.outcome_reason || "—"}</div>
-                          </td>
-                          <td style={{ padding: "12px 14px", color: "var(--text-muted)", maxWidth: 160 }}>
-                            {row.replacement_session_id || "—"}
                           </td>
                         </tr>
                       ))

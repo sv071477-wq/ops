@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
-  api, Role, Team, User, UserHierarchyNode, BatchOption, FmsSyncLog, CoordinatorMappingRecord
+  api, Role, Team, User, UserHierarchyNode, BatchOption, FacultyType, Vertical, FmsSyncLog, CoordinatorMappingRecord
 } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { Navbar } from "@/components/Navbar";
@@ -151,7 +151,7 @@ export default function AdminPortalPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Batch Taxonomy Options state
-  const [selectedOptionType, setSelectedOptionType] = useState<"categories" | "delivery-modes" | "accommodations" | "entities">("categories");
+  const [selectedOptionType, setSelectedOptionType] = useState<"categories" | "delivery-modes" | "accommodations" | "entities" | "faculty-types" | "verticals">("categories");
   const [batchOptions, setBatchOptions] = useState<BatchOption[]>([]);
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
   const [isCreateOptionOpen, setIsCreateOptionOpen] = useState(false);
@@ -545,10 +545,22 @@ export default function AdminPortalPage() {
     setIsSubmittingOption(true);
 
     try {
-      await api.createBatchOption(selectedOptionType, {
-        name: newOptionName.trim(),
-        description: newOptionDesc.trim() || undefined,
-      });
+      if (selectedOptionType === "faculty-types") {
+        await api.createFacultyType({
+          name: newOptionName.trim(),
+          description: newOptionDesc.trim() || undefined,
+        });
+      } else if (selectedOptionType === "verticals") {
+        await api.createVertical({
+          name: newOptionName.trim(),
+          description: newOptionDesc.trim() || undefined,
+        });
+      } else {
+        await api.createBatchOption(selectedOptionType, {
+          name: newOptionName.trim(),
+          description: newOptionDesc.trim() || undefined,
+        });
+      }
       setNewOptionName("");
       setNewOptionDesc("");
       setIsCreateOptionOpen(false);
@@ -564,7 +576,13 @@ export default function AdminPortalPage() {
   const handleDeleteOption = async (optionId: string, optionName: string) => {
     if (!confirm(`Are you sure you want to deactivate "${optionName}"?`)) return;
     try {
-      await api.deleteBatchOption(selectedOptionType, optionId);
+      if (selectedOptionType === "faculty-types") {
+        await api.deleteFacultyType(optionId);
+      } else if (selectedOptionType === "verticals") {
+        await api.deleteVertical(optionId);
+      } else {
+        await api.deleteBatchOption(selectedOptionType, optionId);
+      }
       await fetchBatchOptions();
     } catch (err: any) {
       alert(err.message || "Failed to delete option");
@@ -1272,6 +1290,8 @@ export default function AdminPortalPage() {
                 { key: "delivery-modes", label: "Delivery Modes" },
                 { key: "accommodations", label: "Accommodations" },
                 { key: "entities", label: "Legal Entities" },
+                { key: "faculty-types", label: "Faculty Types" },
+                { key: "verticals", label: "Verticals" },
               ].map((tab) => (
                 <button
                   key={tab.key}

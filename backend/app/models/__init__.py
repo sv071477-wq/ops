@@ -6,6 +6,8 @@ from app.models.batch import (
     Accommodation,
     Entity,
     ApprovalConfiguration,
+    FacultyType,
+    Vertical,
 )
 from app.models.session import TrainingSession, FacultyUtilization
 
@@ -17,4 +19,6 @@ __all__ = [
     "Batch",
     "TrainingSession",
     "FacultyUtilization",
+    "FacultyType",
+    "Vertical",
 ]

@@ -179,6 +179,7 @@ Tracks actual delivery and utilization records for faculty sessions.
 | outcome_at | TIMESTAMPTZ | Yes | Outcome timestamp |
 | outcome_by | UUID | Yes | FK to users.id |
 | replacement_session_id | UUID | Yes | FK to faculty_utilization.id |
+| vertical | VARCHAR(50) | Yes | Internal/External/HOP classification |
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
@@ -386,6 +387,7 @@ Table faculty_utilization {
   outcome_at timestamptz [null]
   outcome_by uuid [null]
   replacement_session_id uuid [null]
+  vertical varchar(50) [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }

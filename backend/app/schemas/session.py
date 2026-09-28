@@ -88,14 +88,15 @@ class SessionBase(BaseModel):
     venue: Optional[str] = None
     location_city: Optional[str] = None
     mode_of_delivery: str = "Online"  # Online, Offline, F2F, Blended
-    status: str = "Scheduled"  # Scheduled, InProgress, Completed, Cancelled, Rescheduled
+    status: str = "Completed"  # Completed, InProgress, Scheduled, Cancelled, Not Conducted
     feedback_submitted: Optional[bool] = False
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
     outcome_reason: Optional[str] = None
     outcome_at: Optional[datetime] = None
     outcome_by: Optional[UUID] = None
-    replacement_session_id: Optional[UUID] = None
+    vertical: Optional[str] = None  # Internal/External/HOP, Internal/External
+    program_type_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -136,7 +137,8 @@ class SessionUpdate(BaseModel):
     outcome_reason: Optional[str] = None
     outcome_at: Optional[datetime] = None
     outcome_by: Optional[UUID] = None
-    replacement_session_id: Optional[UUID] = None
+    vertical: Optional[str] = None
+    program_type_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -171,7 +173,8 @@ class SessionResponse(SessionBase):
     outcome_reason: Optional[str] = None
     outcome_at: Optional[datetime] = None
     outcome_by: Optional[UUID] = None
-    replacement_session_id: Optional[UUID] = None
+    vertical: Optional[str] = None
+    program_type_id: Optional[UUID] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -179,6 +182,14 @@ class SessionResponse(SessionBase):
 
 class SessionDetailResponse(SessionResponse):
     feedback: Optional[SessionFeedbackResponse] = None
+    # Batch-related fields for display
+    entity: Optional[str] = None
+    category: Optional[str] = None
+    client: Optional[str] = None
+    program: Optional[str] = None
+    batch_id: Optional[str] = None
+    coordinator: Optional[str] = None
+    module_feedback: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

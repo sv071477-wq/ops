@@ -9,6 +9,8 @@ from app.models.batch import (
     BatchCategory,
     DeliveryMode,
     Entity,
+    Vertical,
+    ProgramType,
 )
 from app.models.session import TrainingSession
 
@@ -41,7 +43,9 @@ def init_db(db: Session = None) -> None:
                     "outcome_reason": "TEXT",
                     "outcome_at": "TIMESTAMPTZ",
                     "outcome_by": "UUID REFERENCES users(id) ON DELETE SET NULL",
-                    "replacement_session_id": "UUID REFERENCES faculty_utilization(id) ON DELETE SET NULL",
+                },
+                "faculty_utilization": {
+                    "vertical": "VARCHAR(50)",
                 },
             }
 
@@ -104,6 +108,8 @@ def init_db(db: Session = None) -> None:
             (DeliveryMode, ["Online", "F2F", "Blended"]),
             (Accommodation, ["Residential", "Non-Residential"]),
             (Entity, ["Unext", "Unext BSFI"]),
+            (Vertical, ["CG&O", "DS/ITES", "ET/BFSI", "ET/ITES", "ET/Merittrac", "IT/ITES"]),
+            (ProgramType, ["RBT", "Bootcamp", "RGT"]),
         ]
         for option_model, names in default_options:
             for name in names:

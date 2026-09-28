@@ -86,10 +86,11 @@ class Batch(Base):
         nullable=False
     )
 
-    # Relationships
+# Relationships
     primary_manager = relationship("User", foreign_keys=[primary_manager_id], back_populates="primary_managed_batches")
     coordinator = relationship("User", foreign_keys=[coordinator_id], back_populates="coordinated_batches")
     sales_spoc = relationship("User", foreign_keys=[sales_spoc_id], back_populates="sales_batches")
+    entity = relationship("Entity", foreign_keys=[entity_id], lazy="joined")
     delivery_mode_detail = relationship("DeliveryMode", foreign_keys=[delivery_mode_id], lazy="joined")
     scheduled_sessions = relationship("TrainingSession", back_populates="batch", cascade="all, delete-orphan")
     faculty_utilizations = relationship("FacultyUtilization", back_populates="batch", cascade="all, delete-orphan")
@@ -157,6 +158,18 @@ class Accommodation(BatchOptionMixin, Base):
 
 class Entity(BatchOptionMixin, Base):
     __tablename__ = "entities"
+
+
+class FacultyType(BatchOptionMixin, Base):
+    __tablename__ = "faculty_types"
+
+
+class Vertical(BatchOptionMixin, Base):
+    __tablename__ = "verticals"
+
+
+class ProgramType(BatchOptionMixin, Base):
+    __tablename__ = "program_types"
 
 
 class ApprovalConfiguration(Base):
