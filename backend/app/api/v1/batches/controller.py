@@ -7,6 +7,7 @@ from sqlalchemy import or_
 
 from app.models.batch import Batch
 from app.models.user import User
+from app.models.session import TrainingSession, FacultyUtilization
 from app.schemas.batch import (
     ApprovalConfigurationBase,
     ApprovalConfigurationResponse,
@@ -17,6 +18,7 @@ from app.schemas.batch import (
     BatchResponse,
     BatchDetailResponse,
     BatchLifecycleStatusUpdate,
+    ActiveBatchesResponse,
 )
 from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
 from app.api.deps import (
@@ -181,6 +183,18 @@ def list_batches(
     """List batches with RBAC scoping and multi-attribute filters."""
     skip, limit = validate_pagination(skip, limit)
     return service.list(current_user, status_filter, domain, category, client_name, search, skip, limit)
+
+
+@router.get("/active", response_model=ActiveBatchesResponse)
+def get_active_batches(
+    filter_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format, defaults to today"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """Get ongoing batches and sessions for a specific date with pagination."""
+    return service.get_active_batches(filter_date, current_user, skip, limit)
 
 
 @router.get("/{id}", response_model=BatchDetailResponse)
@@ -348,3 +362,53 @@ def export_finance_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=finance-review-{datetime.now().strftime('%Y%m%d')}.csv"}
     )
+
+
+@router.post("/{id}/sync-status", response_model=BatchResponse)
+def sync_batch_status(
+    id: UUID,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    """Manually trigger batch lifecycle status synchronization (admin only)."""
+    from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+    lifecycle_service = BatchLifecycleService(service.db)
+    result = lifecycle_service.sync_all()
+    
+    # Return the batch after sync
+    batch = service.get(id, current_user)
+    return batch
+
+
+@router.get("/{id}/lifecycle-history")
+def get_batch_lifecycle_history(
+    id: UUID,
+    service: BatchService = Depends(get_batch_service),
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """Get audit trail of status changes for a batch."""
+    batch = service.get(id, current_user)
+    
+    # Parse remarks for lifecycle history
+    history = []
+    if batch.remarks:
+        lines = batch.remarks.split('\n')
+        for line in lines:
+            if line.strip() and 'Status changed' in line:
+                history.append(line.strip())
+    
+    return {
+        "batch_id": batch.batch_id,
+        "current_status": batch.status,
+        "history": history,
+        "approval_history": {
+            "level_1": {
+                "status": batch.approver_1_status,
+                "approved_at": batch.approver_1_approved_at,
+            },
+            "level_2": {
+                "status": batch.approver_2_status,
+                "approved_at": batch.approver_2_approved_at,
+            }
+        }
+    }

@@ -46,6 +46,13 @@
 
   --spacing-unit: 4px;
 
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
@@ -63,6 +70,31 @@
   --animate-slide-in-bottom: slideInFromBottom 0.3s ease-out;
   --animate-spin: spin 0.9s linear infinite;
   --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/*
+ * Legacy semantic aliases.
+ *
+ * The inline-style layer across the older components (app/page.tsx,
+ * app/admin/page.tsx, components/BatchDetailDrawer.tsx,
+ * components/EnterpriseDashboard.tsx) references unprefixed token names.
+ * Tailwind v4 only emits the `--color-*` names declared in `@theme`, so
+ * `var(--text-main)` and friends resolved to nothing and silently
+ * invalidated the declarations that used them.
+ *
+ * These aliases map the legacy names onto the v4 theme tokens. They are
+ * intentionally outside `@theme` so they are not turned into utilities.
+ */
+:root {
+  --text-main: var(--color-foreground);
+  --text-muted: var(--color-muted-foreground);
+  --text-dim: color-mix(in srgb, var(--color-muted-foreground) 78%, transparent);
+  --border-subtle: var(--color-border);
+  --primary: var(--color-primary);
+  --primary-strong: color-mix(in srgb, var(--color-primary) 80%, black);
+  --emerald: hsl(142 76% 36%);
+  --amber: hsl(38 92% 45%);
+  --accent-primary: var(--color-primary);
 }
 
 @layer base {
@@ -83,12 +115,42 @@
 
 @layer utilities {
   .glass-panel {
-    @apply bg-white/90 border border-border/80 rounded-2xl shadow-sm transition-all duration-200;
+    @apply bg-white/90 border border-border/80 rounded-2xl shadow-sm transition-all duration-200 p-6;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
+  }
+
+  .glass-panel-sm {
+    @apply bg-white/90 border border-border/80 rounded-xl shadow-sm transition-all duration-200 p-4;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
+  }
+
+  .glass-panel-lg {
+    @apply bg-white/90 border border-border/80 rounded-2xl shadow-sm transition-all duration-200 p-8;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
   }
 
   .glass-panel:hover {
     @apply border-primary/40 shadow-md -translate-y-0.5;
+  }
+
+  .panel-padding {
+    @apply p-6;
+  }
+
+  .panel-padding-sm {
+    @apply p-4;
+  }
+
+  .panel-padding-lg {
+    @apply p-8;
+  }
+
+  .section-gap {
+    @apply gap-6;
+  }
+
+  .card-gap {
+    @apply gap-4;
   }
 
   .glass-input {
@@ -228,7 +290,7 @@
 
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border)) transparent;
+    scrollbar-color: var(--color-border) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -241,12 +303,12 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--border));
+    background-color: var(--color-border);
     border-radius: 3px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(var(--muted-foreground));
+    background-color: var(--color-muted-foreground);
   }
 }
 

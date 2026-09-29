@@ -25,18 +25,26 @@ OPTION_MODELS = {
 }
 
 
-class OptionCreate(BaseModel):
+class OptionBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=255)
 
 
-class OptionResponse(OptionCreate):
+class OptionCreate(OptionBase):
+    pass
+
+
+class OptionResponse(OptionBase):
     id: UUID
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeliveryModeResponse(OptionResponse):
+    max_hours_per_day: int = 8
 
 
 def get_model(option_type: str) -> Type:
@@ -66,7 +74,13 @@ def create_option(
     model = get_model(option_type)
     if db.query(model).filter(model.name == option_in.name.strip()).first():
         raise HTTPException(status_code=409, detail="An option with this name already exists")
-    option = model(name=option_in.name.strip(), description=option_in.description)
+    
+    # Handle delivery mode max_hours_per_day
+    extra = {}
+    if model == DeliveryMode:
+        extra["max_hours_per_day"] = 8
+    
+    option = model(name=option_in.name.strip(), description=option_in.description, **extra)
     db.add(option)
     db.commit()
     db.refresh(option)

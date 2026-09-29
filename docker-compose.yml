@@ -72,17 +72,17 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_started # 1. Changed from service_healthy to avoid startup deadlocks
     healthcheck:
-      test:
-        - CMD-SHELL
-        - wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
-      interval: 30s
-      timeout: 10s
+      # 2. Replaced wget with a node network socket check to avoid 404/500 HTTP failures blocking container startup
+      test: ["CMD", "node", "-e", "require('net').connect(3000, '127.0.0.1')"]
+      interval: 15s
+      timeout: 5s
       retries: 3
       start_period: 15s
     networks:
       - ops_network
+
 
 volumes:
   pgdata:

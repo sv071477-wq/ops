@@ -4,9 +4,11 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
-  api, Batch, ManagerDashboardSummary, FacultyMember, FacultyUtilizationSummary, TrainingSession, User
+  api, ActiveBatchesResponse, Batch, ManagerDashboardSummary, FacultyMember, FacultyUtilizationSummary, TrainingSession, User
 } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
+import { notifyError, notifySuccess } from "@/lib/notify";
+import { ActiveBatchesView } from "./dashboard/components/ActiveBatchesView";
 import { CreateBatchModal } from "@/components/CreateBatchModal";
 import { ApproveBatchModal } from "@/components/ApproveBatchModal";
 import { BatchDetailDrawer } from "@/components/BatchDetailDrawer";
@@ -22,12 +24,27 @@ import {
   Kanban
 } from "lucide-react";
 
+function toTodayIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 export default function DashboardPage() {
   const { user, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
 
   // Top-level Navigation View
-  const [activeView, setActiveView] = useState<"batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty">("batches");
+  const [activeView, setActiveView] = useState<"active_batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty">("active_batches");
+
+  // Active Batches state
+  const [activeFilterDate, setActiveFilterDate] = useState<string>(toTodayIso());
+  const [activeBatchesData, setActiveBatchesData] = useState<ActiveBatchesResponse | null>(null);
+  const [isLoadingActive, setIsLoadingActive] = useState(false);
+  const [activeError, setActiveError] = useState<string | null>(null);
+  const [activeBatchPage, setActiveBatchPage] = useState(1);
+  const [activeBatchPageSize, setActiveBatchPageSize] = useState(10);
+  const [activeSessionPage, setActiveSessionPage] = useState(1);
+  const [activeSessionPageSize, setActiveSessionPageSize] = useState(15);
 
   // Direct reports state for managerial dashboard
   const [myReports, setMyReports] = useState<User[]>([]);
@@ -74,9 +91,6 @@ export default function DashboardPage() {
   const [isLoadingFaculty, setIsLoadingFaculty] = useState(false);
 
   // Pagination states for all platform lists/tables
-  const [batchPage, setBatchPage] = useState(1);
-  const [batchPageSize, setBatchPageSize] = useState(10);
-
   const [approvalPage, setApprovalPage] = useState(1);
   const [approvalPageSize, setApprovalPageSize] = useState(10);
 
@@ -118,6 +132,21 @@ export default function DashboardPage() {
       console.error("Failed to load batches:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Fetch active batches & sessions for the selected date
+  const fetchActiveBatches = async (filterDate: string) => {
+    setIsLoadingActive(true);
+    setActiveError(null);
+    try {
+      const data = await api.getActiveBatches({ filterDate, limit: 100 });
+      setActiveBatchesData(data);
+    } catch (err: any) {
+      console.error("Failed to load active batches:", err);
+      setActiveError(err?.message || "Failed to load active batches");
+    } finally {
+      setIsLoadingActive(false);
     }
   };
 
@@ -167,8 +196,9 @@ export default function DashboardPage() {
         finance_check: draft.finance_check ?? null,
       });
       await fetchBatches(true);
+      notifySuccess("Finance details saved");
     } catch (err: any) {
-      alert(err.message || "Failed to save finance details");
+      notifyError("Failed to save finance details", err);
     } finally {
       setSavingFinanceBatchId(null);
     }
@@ -188,7 +218,9 @@ export default function DashboardPage() {
     if (dirtyBatches.length === 0) return;
     setIsSavingAllFinance(true);
     try {
-      await Promise.all(
+      // Settle every write so a single failure cannot leave the table in an
+      // indeterminate saved/unsaved state.
+      const results = await Promise.allSettled(
         dirtyBatches.map((b) => {
           const draft = financeDrafts[b.id];
           return api.updateBatch(b.id, {
@@ -199,9 +231,24 @@ export default function DashboardPage() {
           });
         })
       );
+
+      const failed = results.filter(
+        (r): r is PromiseRejectedResult => r.status === "rejected"
+      );
+
+      if (failed.length > 0) {
+        notifyError(
+          failed.length === dirtyBatches.length
+            ? `Failed to save ${failed.length} record${failed.length === 1 ? "" : "s"}`
+            : `Saved ${results.length - failed.length} of ${results.length} records — ${failed.length} failed`,
+          failed[0].reason
+        );
+      } else {
+        notifySuccess(`Saved ${results.length} record${results.length === 1 ? "" : "s"}`);
+      }
+
+      // Always resync, since some rows may have persisted before the failure.
       await fetchBatches(true);
-    } catch (err: any) {
-      alert(err.message || "Failed to save some finance records");
     } finally {
       setIsSavingAllFinance(false);
     }
@@ -248,10 +295,9 @@ export default function DashboardPage() {
       setStatusFilter("ALL");
       setDomainFilter("ALL");
       setCategoryFilter("ALL");
-      setBatchPage(1);
-      
-      if (activeView === "batches") {
-        fetchBatches();
+
+      if (activeView === "active_batches") {
+        fetchActiveBatches(activeFilterDate);
       } else if (activeView === "manager_board") {
         fetchBatches();
         fetchAnalytics();
@@ -269,9 +315,18 @@ export default function DashboardPage() {
     }
   }, [user, activeView]);
 
-  // Re-fetch batches when filter dropdowns change in batches view
+  // Re-fetch active batches when the filter date changes
   useEffect(() => {
-    if (user && activeView === "batches") {
+    if (user && activeView === "active_batches") {
+      setActiveBatchPage(1);
+      setActiveSessionPage(1);
+      fetchActiveBatches(activeFilterDate);
+    }
+  }, [activeFilterDate]);
+
+  // Re-fetch batches when filter dropdowns change in manager board / analytics views
+  useEffect(() => {
+    if (user && activeView === "manager_board") {
       fetchBatches();
     }
   }, [statusFilter, domainFilter, categoryFilter]);
@@ -279,9 +334,9 @@ export default function DashboardPage() {
   // Auto-switch to manager_board on initial login for managers
   useEffect(() => {
     const teamName = user?.team_name?.trim().toLowerCase();
-    if (user && teamName === "finance" && activeView === "batches") {
+    if (user && teamName === "finance" && activeView === "active_batches") {
       setActiveView("finance");
-    } else if (user && user.role?.toLowerCase() === "manager" && activeView === "batches") {
+    } else if (user && user.role?.toLowerCase() === "manager" && activeView === "active_batches") {
       setActiveView("manager_board");
     }
   }, [user]);
@@ -300,14 +355,9 @@ export default function DashboardPage() {
     if (isFinanceTeam && (activeView === "analytics" || activeView === "manager_board")) {
       setActiveView("finance");
     } else if (!hasReportingStaff && (activeView === "analytics" || activeView === "manager_board")) {
-      setActiveView("batches");
+      setActiveView("active_batches");
     }
   }, [hasReportingStaff, activeView, user?.team_name]);
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    fetchBatches();
-  };
 
   // Export MBR Excel Handler
   const handleExportMbr = async () => {
@@ -315,22 +365,11 @@ export default function DashboardPage() {
     try {
       await api.exportMbrReport();
     } catch (err: any) {
-      alert(err.message || "Failed to download MBR report");
+      notifyError("Failed to download MBR report", err);
     } finally {
       setIsExportingMbr(false);
     }
   };
-
-  // Compute Metrics
-  const metrics = useMemo(() => {
-    const total = batches.length;
-    const requested = batches.filter((b) => b.status === "Requested" || b.status.includes("Pending")).length;
-    const approved = batches.filter((b) => b.status === "Approved").length;
-    const ongoing = batches.filter((b) => b.status === "Ongoing").length;
-    const completed = batches.filter((b) => b.status === "Completed").length;
-
-    return { total, requested, approved, ongoing, completed };
-  }, [batches]);
 
   const approvalQueue = useMemo(
     () => batches.filter((b) => (
@@ -340,13 +379,6 @@ export default function DashboardPage() {
       )
     )),
     [batches, user?.id]
-  );
-
-  const activeBatches = useMemo(
-    () => (user?.is_configured_approver === true && statusFilter === "ALL")
-      ? batches.filter((b) => ["Approved", "Upcoming", "Ongoing"].includes(b.status))
-      : batches,
-    [batches, user?.is_configured_approver, statusFilter]
   );
 
   const FINANCE_ACTIVE_STATUSES = new Set(["Approved", "Upcoming", "Ongoing", "Completed"]);
@@ -396,11 +428,6 @@ export default function DashboardPage() {
     financeEndDate,
   ]);
 
-  // Reset pagination on filter or search changes
-  useEffect(() => {
-    setBatchPage(1);
-  }, [searchQuery, statusFilter, domainFilter, categoryFilter, batches]);
-
   useEffect(() => {
     setApprovalPage(1);
   }, [approvalQueue.length]);
@@ -416,11 +443,6 @@ export default function DashboardPage() {
   useEffect(() => {
     setFacultyUtilPage(1);
   }, [facultyUtilizationLedger.length]);
-
-  const paginatedBatches = useMemo(() => {
-    const start = (batchPage - 1) * batchPageSize;
-    return activeBatches.slice(start, start + batchPageSize);
-  }, [activeBatches, batchPage, batchPageSize]);
 
   const paginatedApprovals = useMemo(() => {
     const start = (approvalPage - 1) * approvalPageSize;
@@ -473,7 +495,7 @@ export default function DashboardPage() {
         end_date: financeEndDate || undefined,
       });
     } catch (err: any) {
-      alert(err.message || "Failed to export finance data");
+      notifyError("Failed to export finance data", err);
     }
   };
 
@@ -485,17 +507,19 @@ export default function DashboardPage() {
         end_date: undefined,
       });
     } catch (err: any) {
-      alert(err.message || "Failed to export faculty utilization");
+      notifyError("Failed to export faculty utilization", err);
     }
   };
 
   const isApprover = user?.is_configured_approver === true;
-  const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance" || user?.role?.toLowerCase() === "finance";
+  // Finance access is granted by team membership. `User.role` is a fixed union
+  // that does not include "finance", so testing it here was always false.
+  const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance";
   const canCreateBatch = user?.role?.toLowerCase() !== "admin" && user?.team_name?.trim().toLowerCase() === "delivery";
 
   useEffect(() => {
     if (!isFinanceViewAvailable && activeView === "finance") {
-      setActiveView("batches");
+      setActiveView("active_batches");
     }
   }, [isFinanceViewAvailable, activeView]);
 
@@ -515,7 +539,7 @@ export default function DashboardPage() {
       await api.submitBatch(batch.id);
       await fetchBatches();
     } catch (err: any) {
-      alert(err.message || "Failed to submit batch for approval");
+      notifyError("Failed to submit batch for approval", err);
     }
   };
 
@@ -548,7 +572,7 @@ export default function DashboardPage() {
     <div className="dashboard-shell" style={{
       minHeight: "100vh",
       display: "flex",
-      padding: "16px 20px",
+      padding: "24px",
       gap: 24,
       alignItems: "stretch",
       justifyContent: "flex-start",
@@ -589,277 +613,30 @@ export default function DashboardPage() {
           />
         )}
 
-        {/* VIEW 1: BATCH OPERATIONS HUB */}
-        {activeView === "batches" && (
-          <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-            {/* Metric Cards Grid */}
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-              gap: 16,
-              marginBottom: 24
-            }}>
-              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
-                    Total Batches
-                  </span>
-                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#f1f5f9" }}>
-                    <Layers size={17} color="#0b5cab" />
-                  </div>
-                </div>
-                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "var(--text-main)", marginTop: 6, fontFamily: "var(--font-display)" }}>
-                  {metrics.total}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                  Across all programs & verticals
-                </div>
-              </div>
-
-              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
-                    In Review / Pending
-                  </span>
-                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#fef3c7" }}>
-                    <Clock size={17} color="#d97706" />
-                  </div>
-                </div>
-                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#d97706", marginTop: 6, fontFamily: "var(--font-display)" }}>
-                  {metrics.requested}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                  Awaiting SOW Approval
-                </div>
-              </div>
-
-              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
-                    Approved Batches
-                  </span>
-                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#e0f2fe" }}>
-                    <CheckCircle2 size={17} color="#0b5cab" />
-                  </div>
-                </div>
-                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#0b5cab", marginTop: 6, fontFamily: "var(--font-display)" }}>
-                  {metrics.approved}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                  Schema locked & ready
-                </div>
-              </div>
-
-              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
-                    Live Delivery
-                  </span>
-                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#dcfce7" }}>
-                    <PlayCircle size={17} color="#16a34a" />
-                  </div>
-                </div>
-                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#16a34a", marginTop: 6, fontFamily: "var(--font-display)" }}>
-                  {metrics.ongoing}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                  Active training sessions
-                </div>
-              </div>
-            </div>
-
-            {/* Filter & Search Bar */}
-            <div className="glass-panel" style={{ padding: "16px 20px", marginBottom: 24 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-                <form onSubmit={handleSearchSubmit} style={{ display: "flex", alignItems: "center", gap: 10, flex: "1 1 300px" }}>
-                  <div style={{ position: "relative", width: "100%" }}>
-                    <Search size={16} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
-                    <input
-                      type="text"
-                      placeholder="Search by Program, Client, Technology, or Batch ID..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="glass-input"
-                      style={{ paddingLeft: 38, width: "100%" }}
-                    />
-                  </div>
-                  <button type="submit" className="btn btn-secondary" style={{ padding: "8px 16px" }}>
-                    Search
-                  </button>
-                </form>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <Filter size={15} color="var(--text-dim)" />
-                    <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", fontWeight: 600 }}>Status:</span>
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => {
-                        setStatusFilter(e.target.value);
-                        setBatchPage(1);
-                      }}
-                      className="glass-input"
-                      style={{ padding: "6px 12px", fontSize: "0.85rem", fontWeight: 500 }}
-                    >
-                      <option value="ALL">All Statuses</option>
-                      <option value="Ongoing">Ongoing</option>
-                      <option value="Completed">Completed</option>
-                      <option value="Upcoming">Upcoming</option>
-                      <option value="Approved">Approved</option>
-                      <option value="Requested">Requested</option>
-                      <option value="OnHold">On Hold</option>
-                      <option value="Cancelled">Cancelled</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Batches Table */}
-            <div className="glass-panel" style={{ padding: 0, overflow: "hidden", flex: 1, display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Active Batch Roster ({activeBatches.length})
-                </h3>
-              </div>
-
-              <div style={{ overflowX: "auto", flex: 1, display: "flex", flexDirection: "column" }}>
-                <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                      <th style={{ padding: "12px 16px" }}>Batch & Curriculum</th>
-                      <th style={{ padding: "12px 16px" }}>Client & Venue</th>
-                      <th style={{ padding: "12px 16px" }}>Start Date</th>
-                      <th style={{ padding: "12px 16px" }}>End Date</th>
-                      <th style={{ padding: "12px 16px" }}>Sessions Conducted</th>
-                      <th style={{ padding: "12px 16px" }}>Completion Rate</th>
-                      <th style={{ padding: "12px 16px" }}>Status</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoading ? (
-                      <tr>
-                        <td colSpan={8} style={{ textAlign: "center", padding: "40px 0" }}>
-                          <RefreshCw className="animate-spin" size={24} color="#0b5cab" style={{ margin: "0 auto 8px auto" }} />
-                          <div style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Loading batch records...</div>
-                        </td>
-                      </tr>
-                    ) : activeBatches.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} style={{ textAlign: "center", padding: "48px 0" }}>
-                          <div style={{ color: "var(--text-dim)", fontSize: "0.95rem", fontWeight: 600 }}>No matching batches found</div>
-                          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 4 }}>
-                            Try clearing your search or filter parameters.
-                          </div>
-                        </td>
-                      </tr>
-                    ) : (
-                      paginatedBatches.map((b) => {
-                        const isCompleted = b.status?.toLowerCase() === "completed";
-                        const conducted = b.sessions_conducted ?? 0;
-                        const totalDays = b.training_days || 0;
-                        const rawRate = isCompleted
-                          ? 100
-                          : b.completion_rate !== undefined && b.completion_rate !== null
-                          ? b.completion_rate
-                          : totalDays && conducted
-                          ? (conducted / totalDays) * 100
-                          : 0;
-                        const rate = Math.min(100, Math.max(0, Math.round(rawRate)));
-                        const barColor = rate >= 100 ? "#10b981" : rate >= 50 ? "#0b5cab" : rate > 0 ? "#f59e0b" : "#94a3b8";
-
-                        return (
-                          <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                            <td style={{ padding: "14px 16px" }}>
-                              <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{b.batch_id}</div>
-                              <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
-                            </td>
-                            <td style={{ padding: "14px 16px" }}>
-                              <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
-                              <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-                                {b.delivery_mode || "Online"}{b.location_city ? ` • ${b.location_city}` : ""}
-                              </div>
-                            </td>
-                            <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-                              <div style={{ color: "var(--text-main)", fontWeight: 600 }}>
-                                {b.start_date ? formatDate(b.start_date) : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>TBD</span>}
-                              </div>
-                            </td>
-                            <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-                              <div style={{ color: "var(--text-main)", fontWeight: 600 }}>
-                                {b.end_date ? formatDate(b.end_date) : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>TBD</span>}
-                              </div>
-                            </td>
-                            <td style={{ padding: "14px 16px" }}>
-                              <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-                                <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-main)" }}>
-                                  {conducted}
-                                </span>
-                                {totalDays > 0 ? (
-                                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                                    / {totalDays} {totalDays === 1 ? "day" : "days"}
-                                  </span>
-                                ) : null}
-                              </div>
-                              {b.total_hours ? (
-                                <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
-                                  {b.total_hours} hrs planned
-                                </div>
-                              ) : null}
-                            </td>
-                            <td style={{ padding: "14px 16px", minWidth: 120 }}>
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-                                <span style={{ fontSize: "0.8rem", fontWeight: 700, color: barColor }}>
-                                  {rate}%
-                                </span>
-                              </div>
-                              <div style={{ width: "100%", height: 6, background: "#e2e8f0", borderRadius: 9999, overflow: "hidden" }}>
-                                <div
-                                  style={{
-                                    width: `${rate}%`,
-                                    height: "100%",
-                                    background: barColor,
-                                    borderRadius: 9999,
-                                    transition: "width 0.3s ease",
-                                  }}
-                                />
-                              </div>
-                            </td>
-                            <td style={{ padding: "14px 16px" }}>
-                              {getStatusBadge(b.status)}
-                            </td>
-                            <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                              <div style={{ display: "inline-flex", gap: 8 }}>
-                                <button
-                                  onClick={() => setSelectedBatchForDetail(b)}
-                                  className="btn btn-secondary"
-                                  style={{ padding: "5px 10px", fontSize: "0.775rem" }}
-                                >
-                                  View Full Batch Details
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <PaginationControls
-                currentPage={batchPage}
-                totalItems={activeBatches.length}
-                pageSize={batchPageSize}
-                onPageChange={setBatchPage}
-                onPageSizeChange={(newSize) => {
-                  setBatchPageSize(newSize);
-                  setBatchPage(1);
-                }}
-              />
-            </div>
-          </div>
+        {/* VIEW 1: ACTIVE BATCHES & SESSIONS */}
+        {activeView === "active_batches" && (
+          <ActiveBatchesView
+            filterDate={activeFilterDate}
+            onFilterDateChange={setActiveFilterDate}
+            data={activeBatchesData}
+            isLoading={isLoadingActive}
+            error={activeError}
+            batchPage={activeBatchPage}
+            batchPageSize={activeBatchPageSize}
+            onBatchPageChange={setActiveBatchPage}
+            onBatchPageSizeChange={(newSize) => {
+              setActiveBatchPageSize(newSize);
+              setActiveBatchPage(1);
+            }}
+            sessionPage={activeSessionPage}
+            sessionPageSize={activeSessionPageSize}
+            onSessionPageChange={setActiveSessionPage}
+            onSessionPageSizeChange={(newSize) => {
+              setActiveSessionPageSize(newSize);
+              setActiveSessionPage(1);
+            }}
+            onRefresh={() => fetchActiveBatches(activeFilterDate)}
+          />
         )}
 
         {/* VIEW 2: APPROVAL QUEUE */}
@@ -888,7 +665,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden", flex: 1, display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ padding: "24px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
                   Pending Approvals
                 </h3>
@@ -1058,7 +835,7 @@ export default function DashboardPage() {
             })()}
 
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden", flex: 1, display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ padding: "24px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flex: 1 }}>
                   <input
                     value={financeSearch}
@@ -1320,7 +1097,7 @@ export default function DashboardPage() {
             {/* Utilization stats cards */}
             {facultyUtilization && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "24px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Total Faculty Pool
                   </div>
@@ -1332,7 +1109,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "24px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Active Deployed
                   </div>
@@ -1344,7 +1121,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "24px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Utilization Ratio
                   </div>
@@ -1441,7 +1218,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", background: "#f8fafc" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px", borderBottom: "1px solid var(--border-subtle)", background: "#f8fafc" }}>
                 <div style={{ fontWeight: 800, color: "var(--text-main)", letterSpacing: "0.02em", textTransform: "uppercase", fontSize: "0.8rem" }}>
                   Live Utilization Ledger
                 </div>

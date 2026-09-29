@@ -6,6 +6,8 @@ import {
   api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
+import { notifyError } from "@/lib/notify";
+import { usePrompt } from "@/components/ConfirmProvider";
 import {
   X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
   Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
@@ -122,6 +124,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     verticals: Vertical[];
     program_types: ProgramType[];
   }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], verticals: [], program_types: [] });
+
+  const requestText = usePrompt();
 
   useEffect(() => {
     setCurrentBatch(batch);
@@ -635,28 +639,40 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   };
 
   const handleEditSession = async (session: TrainingSession) => {
-    const topic = window.prompt("Session topic", session.topic);
-    if (!topic || topic.trim() === session.topic) return;
+    const topic = await requestText({
+      title: "Edit session topic",
+      defaultValue: session.topic,
+      confirmLabel: "Save topic",
+    });
+    if (topic === null || topic === session.topic) return;
     try {
-      await api.updateSession(session.id, { topic: topic.trim() });
+      await api.updateSession(session.id, { topic });
       await loadSessions();
     } catch (err: any) {
-      alert(err.message || "Failed to edit session");
+      notifyError("Failed to edit session", err);
     }
   };
 
   const handleSessionOutcome = async (session: TrainingSession, action: "cancel" | "not-conducted") => {
-    const reason = window.prompt("Reason is required");
-    if (!reason || reason.trim().length < 3) return;
+    const reason = await requestText({
+      title: action === "cancel" ? "Cancel session" : "Mark session not conducted",
+      description: "A reason is required and will be recorded in the audit trail.",
+      placeholder: "Reason",
+      multiline: true,
+      minLength: 3,
+      validationMessage: "Reason must be at least 3 characters",
+      confirmLabel: "Confirm",
+    });
+    if (reason === null || reason.length < 3) return;
     try {
       if (action === "cancel") {
-        await api.cancelSession(session.id, reason.trim());
+        await api.cancelSession(session.id, reason);
       } else {
-        await api.markSessionNotConducted(session.id, reason.trim());
+        await api.markSessionNotConducted(session.id, reason);
       }
       await loadSessions();
     } catch (err: any) {
-      alert(err.message || "Failed to update session outcome");
+      notifyError("Failed to update session outcome", err);
     }
   };
 

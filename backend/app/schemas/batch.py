@@ -1,9 +1,10 @@
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from app.schemas.user import UserResponse
+import json
 
 
 class BatchBase(BaseModel):
@@ -33,6 +34,7 @@ class BatchBase(BaseModel):
     coordinator_id: Optional[UUID] = None
     sales_spoc_id: Optional[UUID] = None
     faculty_assigned_text: Optional[str] = None
+    faculty_members: List[dict] = Field(default_factory=list, description="Array of faculty member objects with name, email, etc.")
     finance_status: str = Field("Pending", pattern="^(Pending|Cleared)$", max_length=50)
     finance_status_check_date: Optional[date] = None
     finance_check: Optional[int] = None
@@ -51,6 +53,12 @@ class BatchBase(BaseModel):
                     cleaned[k] = v
             if "sow_number" in cleaned and cleaned["sow_number"] is not None:
                 cleaned["sow_number"] = str(cleaned["sow_number"]).strip()
+            # Parse faculty_members if it's a JSON string
+            if "faculty_members" in cleaned and isinstance(cleaned["faculty_members"], str):
+                try:
+                    cleaned["faculty_members"] = json.loads(cleaned["faculty_members"])
+                except json.JSONDecodeError:
+                    cleaned["faculty_members"] = []
             return cleaned
         return data
 
@@ -64,8 +72,46 @@ class BatchBase(BaseModel):
 class BatchCreate(BatchBase):
     @model_validator(mode="after")
     def validate_create_dates(self):
-        if self.start_date and self.end_date and self.end_date < self.start_date:
-            raise ValueError("end_date must be on or after start_date")
+        today = datetime.now().date()
+        
+        # start_date must be >= today (date only)
+        if self.start_date and self.start_date.date() < today:
+            raise ValueError("Commencement date cannot be in the past")
+        
+        # end_date must be > start_date
+        if self.start_date and self.end_date and self.end_date <= self.start_date:
+            raise ValueError("End date must be after start date")
+        
+        # Auto-calculate calendar_days
+        if self.start_date and self.end_date:
+            self.calendar_days = (self.end_date.date() - self.start_date.date()).days
+        
+        # training_days must be > 0 and <= calendar_days
+        if self.training_days <= 0:
+            raise ValueError("Training days must be greater than 0")
+        if self.calendar_days is not None and self.training_days > self.calendar_days:
+            raise ValueError("Training days must be between 1 and calendar days")
+        
+        # total_hours must be > 0
+        if self.total_hours <= 0:
+            raise ValueError("Total hours must be greater than 0")
+        
+        # total_enrollments must be >= 1
+        if self.total_enrollments < 1:
+            raise ValueError("At least 1 candidate required")
+        
+        # faculty_members array must have at least 1 item
+        if not self.faculty_members or len(self.faculty_members) == 0:
+            raise ValueError("At least one proposed faculty member required")
+        
+        # Required role IDs
+        if not self.sales_spoc_id:
+            raise ValueError("Sales Account SPOC is required")
+        if not self.coordinator_id:
+            raise ValueError("Operations Coordinator is required")
+        if not self.primary_manager_id:
+            raise ValueError("Delivery Manager is required")
+        
         return self
 
 
@@ -131,6 +177,7 @@ class BatchUpdate(BaseModel):
     coordinator_id: Optional[UUID] = None
     sales_spoc_id: Optional[UUID] = None
     faculty_assigned_text: Optional[str] = None
+    faculty_members: Optional[List[dict]] = None
     finance_status: Optional[str] = Field(None, pattern="^(Pending|Cleared)$")
     finance_status_check_date: Optional[date] = None
     finance_check: Optional[int] = None
@@ -149,6 +196,12 @@ class BatchUpdate(BaseModel):
                     cleaned[k] = v
             if "sow_number" in cleaned and cleaned["sow_number"] is not None:
                 cleaned["sow_number"] = str(cleaned["sow_number"]).strip()
+            # Parse faculty_members if it's a JSON string
+            if "faculty_members" in cleaned and isinstance(cleaned["faculty_members"], str):
+                try:
+                    cleaned["faculty_members"] = json.loads(cleaned["faculty_members"])
+                except json.JSONDecodeError:
+                    cleaned["faculty_members"] = []
             return cleaned
         return data
 
@@ -218,5 +271,61 @@ class ProgramTypeResponse(ProgramTypeBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================================
+# Active Batches Schemas (for /batches/active endpoint)
+# ============================================================================
+
+class ActiveBatchItem(BaseModel):
+    id: str
+    batch_id: str
+    program_name: str
+    client_name: Optional[str]
+    category: str
+    delivery_mode: str
+    location_city: Optional[str]
+    start_date: Optional[str]
+    end_date: Optional[str]
+    status: str
+    total_enrollments: int
+    training_days: int
+    sessions_conducted: int
+    progress: float  # computed: (sessions_conducted / training_days) * 100
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActiveSessionItem(BaseModel):
+    id: str
+    batch_id: str
+    batch_name: str
+    session_type: Literal["scheduled", "actual"]  # "scheduled" = TrainingSession, "actual" = FacultyUtilization
+    sequence_number: Optional[int]
+    module: str
+    trainer_name: Optional[str]
+    faculty_name: Optional[str]
+    session_date: str
+    start_time: Optional[str]
+    end_time: Optional[str]
+    duration_hours: float
+    status: str
+    venue: Optional[str]
+    location_city: Optional[str]
+    mode_of_delivery: Optional[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActiveBatchesResponse(BaseModel):
+    filter_date: str
+    batches: List[ActiveBatchItem]
+    sessions: List[ActiveSessionItem]
+    total_batches: int
+    total_sessions: int
+    skip: int
+    limit: int
 
     model_config = ConfigDict(from_attributes=True)

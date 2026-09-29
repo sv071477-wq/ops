@@ -33,6 +33,20 @@ class TrainingSession(Base):
     batch = relationship("Batch", back_populates="scheduled_sessions")
     utilizations = relationship("FacultyUtilization", back_populates="training_session")
 
+    @property
+    def effective_status(self) -> str:
+        """Compute effective status based on session_date and stored status."""
+        today = datetime.now(timezone.utc).date()
+        if self.status == "Completed":
+            return "Completed"
+        session_date = self.session_date
+        if session_date > today:
+            return "Upcoming"
+        elif session_date == today:
+            return "Ongoing"
+        else:  # session_date < today
+            return "Overdue"
+
 
 class FacultyUtilization(Base):
     """Tracks actual delivery, attendance, timesheet hours, and feedback ratings per faculty session."""

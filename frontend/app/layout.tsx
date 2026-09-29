@@ -1,6 +1,8 @@
-import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ConfirmProvider } from "@/components/ConfirmProvider";
+import { QueryProvider } from "@/components/providers/QueryProvider";
+import { Toaster } from "@/components/ui/toaster";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -16,9 +18,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <AuthProvider>
-          <ErrorBoundary>{children}</ErrorBoundary>
-        </AuthProvider>
+        <ErrorBoundary>
+          <QueryProvider>
+            <ConfirmProvider>
+              <AuthProvider>
+                {children}
+                <Toaster />
+              </AuthProvider>
+            </ConfirmProvider>
+          </QueryProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

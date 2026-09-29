@@ -232,14 +232,24 @@ class SessionService:
         session = FacultyUtilization(**session_dict)
         self.db.add(session)
 
-        # If linked to a scheduled training session day, mark it Completed
-        if session_in.training_session_id:
+        # If linked to a scheduled training session day and status is Completed, mark it Completed and copy feedback
+        if session_in.training_session_id and session_in.status == "Completed":
             sched = self.db.query(TrainingSession).filter(TrainingSession.id == session_in.training_session_id).first()
             if sched:
                 sched.status = "Completed"
+                if session_in.feedback_rating is not None:
+                    sched.feedback_rating = session_in.feedback_rating
+                if session_in.feedback_notes:
+                    sched.feedback_notes = session_in.feedback_notes
 
         self.db.commit()
         self.db.refresh(session)
+        
+        # Check and update batch completion/feedback
+        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+        lifecycle_service = BatchLifecycleService(self.db)
+        lifecycle_service.check_and_update_batch_feedback(session.batch_id)
+        
         return session
 
     def update(self, session_id: UUID, session_in: SessionUpdate, user_id: Optional[UUID] = None) -> FacultyUtilization:
@@ -287,11 +297,32 @@ class SessionService:
             if not update_dict.get("outcome_at"):
                 update_dict["outcome_at"] = datetime.now(timezone.utc)
 
+        # Track if status is changing to Completed
+        was_completed = session.status == "Completed"
+        will_be_completed = new_status == "Completed"
+
         for field, value in update_dict.items():
             setattr(session, field, value)
         session.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(session)
+
+        # If linked to a scheduled training session day and status changed to Completed, mark it Completed and copy feedback
+        if session.training_session_id and not was_completed and will_be_completed:
+            sched = self.db.query(TrainingSession).filter(TrainingSession.id == session.training_session_id).first()
+            if sched:
+                sched.status = "Completed"
+                if session.feedback_rating is not None:
+                    sched.feedback_rating = session.feedback_rating
+                if session.feedback_notes:
+                    sched.feedback_notes = session.feedback_notes
+                self.db.commit()
+
+        # Check and update batch completion/feedback
+        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+        lifecycle_service = BatchLifecycleService(self.db)
+        lifecycle_service.check_and_update_batch_feedback(session.batch_id)
+
         return session
 
     def _transition(self, session_id: UUID, status: str, reason: str, user_id: UUID) -> FacultyUtilization:
@@ -312,6 +343,11 @@ class SessionService:
 
         # Recalculate batch feedback if all sessions are terminal
         _check_and_update_batch_completion(self.db, session.batch_id)
+        
+        # Check and update batch completion/feedback using new logic
+        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+        lifecycle_service = BatchLifecycleService(self.db)
+        lifecycle_service.check_and_update_batch_feedback(session.batch_id)
 
         return session
 

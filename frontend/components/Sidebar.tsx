@@ -15,8 +15,8 @@ import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
 interface SidebarProps {
-  activeView: "batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty";
-  setActiveView: (view: "batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty") => void;
+  activeView: "active_batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty";
+  setActiveView: (view: "active_batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty") => void;
   searchQuery?: string;
   setSearchQuery?: (q: string) => void;
   onOpenCreateBatch?: () => void;
@@ -50,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
-  const sidebarRef = useRef<HTMLAsideElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
 
   const isAdmin = user?.role?.toLowerCase() === "admin";
   const isFinance = user?.team_name?.trim().toLowerCase() === "finance" || user?.role?.toLowerCase() === "finance";
@@ -81,15 +81,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           searchInputRef.current?.focus();
         } else if (e.key === "2") {
           e.preventDefault();
-          if (isFinance) {
-            setActiveView("finance");
-          } else {
-            setActiveView("batches");
-          }
+          setActiveView("active_batches");
         } else if (e.key === "3") {
           e.preventDefault();
           if (isFinance) {
-            setActiveView("batches");
+            setActiveView("finance");
           } else if (canSeeManagerBoard) {
             setActiveView("manager_board");
           } else if (isApprover) {
@@ -134,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: null,
     }] : []),
     {
-      id: "batches",
+      id: "active_batches",
       label: "Active Batches",
       icon: Layers,
       badge: null,
@@ -186,9 +182,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div style={{ position: "relative" }} ref={workspaceMenuRef}>
           <Button
             variant="ghost"
-            className="w-full justify-start gap-3 p-2"
+            className={`w-full justify-start gap-3 p-2 sidebar-header ${isWorkspaceMenuOpen ? 'open' : ''}`}
             onClick={() => setIsWorkspaceMenuOpen(!isWorkspaceMenuOpen)}
-            className={`sidebar-header ${isWorkspaceMenuOpen ? 'open' : ''}`}
             style={{
               width: "100%",
               display: "flex",
@@ -246,8 +241,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {teamLabel} • {roleLabel}
                   </div>
                 </div>
-              </>
-            )}
+              </div>
+            </div>
             {isCollapsed && (
               <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto" style={{
                 background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",

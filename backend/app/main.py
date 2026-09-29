@@ -9,6 +9,7 @@ import redis.asyncio as redis
 from app.core.config import settings
 from app.api.v1 import api_router
 from app.db.init_db import init_db
+from app.core.scheduler import start_scheduler, stop_scheduler
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -120,7 +121,14 @@ async def lifespan(app: FastAPI):
             print(f"Warning: Database startup auto-migration/seeding encountered: {e}")
     else:
         print("Production mode: Skipping auto-migration. Run 'alembic upgrade head' manually.")
+    
+    # Start scheduler
+    start_scheduler()
+    
     yield
+    
+    # Stop scheduler on shutdown
+    stop_scheduler()
 
 
 app = FastAPI(

@@ -26,7 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
       position: "sticky",
       top: 0,
       zIndex: 40,
-      padding: "12px 24px",
+      padding: "24px",
       boxShadow: "0 10px 30px rgba(15, 23, 42, 0.04)"
     }}>
       <div style={{

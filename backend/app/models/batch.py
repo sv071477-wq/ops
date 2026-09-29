@@ -1,9 +1,9 @@
-import uuid
 from datetime import datetime, timezone
+import uuid
 from decimal import Decimal
 from sqlalchemy import (
     Column, String, Boolean, Date, DateTime, Integer, Numeric, Text,
-    ForeignKey, CheckConstraint, Index, Uuid
+    ForeignKey, CheckConstraint, Index, Uuid, JSON
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -59,7 +59,7 @@ class Batch(Base):
     primary_manager_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     coordinator_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     sales_spoc_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    faculty_assigned_text = Column(String(500), nullable=True)  # Legacy faculty string
+    faculty_members = Column(JSON, nullable=True, default=list)
 
     # Financial Milestone Status
     finance_status = Column(String(50), default="Pending", nullable=False)  # Pending, Cleared
@@ -150,6 +150,8 @@ class BatchCategory(BatchOptionMixin, Base):
 
 class DeliveryMode(BatchOptionMixin, Base):
     __tablename__ = "delivery_modes"
+
+    max_hours_per_day = Column(Integer, default=8, nullable=False)
 
 
 class Accommodation(BatchOptionMixin, Base):

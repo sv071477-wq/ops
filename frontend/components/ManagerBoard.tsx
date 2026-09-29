@@ -371,7 +371,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       </div>
 
       {/* Filter and Control Bar */}
-      <div className="glass-panel" style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+      <div className="glass-panel" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, flexWrap: "wrap" }}>
           {/* Search Input */}
           <div style={{ position: "relative", minWidth: 260 }}>
@@ -688,7 +688,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       {viewMode === "executive" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {/* Vertical Distribution Breakdown */}
-          <div className="glass-panel" style={{ padding: 22 }}>
+          <div className="glass-panel" style={{ padding: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
@@ -708,7 +708,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                     style={{
                       border: "1px solid var(--border-subtle)",
                       borderRadius: 10,
-                      padding: "16px 18px",
+                      padding: 24,
                       background: "#ffffff",
                       boxShadow: "0 2px 5px rgba(0,0,0,0.02)",
                     }}
@@ -754,7 +754,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
           </div>
 
           {/* Supervised Personnel & Reporting Team */}
-          <div className="glass-panel" style={{ padding: 22, background: "#ffffff" }}>
+          <div className="glass-panel" style={{ padding: 24, background: "#ffffff" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

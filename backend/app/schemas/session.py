@@ -116,7 +116,11 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    pass
+    @model_validator(mode="after")
+    def validate_training_session_id(self):
+        if self.status == "Completed" and not self.training_session_id:
+            raise ValueError("training_session_id is required when status is Completed")
+        return self
 
 
 class SessionUpdate(BaseModel):

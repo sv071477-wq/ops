@@ -7,6 +7,8 @@ import {
   api, Role, Team, User, UserHierarchyNode, BatchOption, FacultyType, Vertical, FmsSyncLog, CoordinatorMappingRecord
 } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/dateUtils";
+import { notifyError, notifySuccess, errorMessage } from "@/lib/notify";
+import { useConfirm } from "@/components/ConfirmProvider";
 import { Navbar } from "@/components/Navbar";
 import { ChangePasswordModal } from "@/components/ChangePasswordModal";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -139,6 +141,7 @@ const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ no
 export default function AdminPortalPage() {
   const { user, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
+  const confirmAction = useConfirm();
 
   const [activeTab, setActiveTab] = useState<"teams" | "roles" | "options" | "users" | "fms" | "hierarchy" | "mappings">("teams");
   const [teams, setTeams] = useState<Team[]>([]);
@@ -386,9 +389,9 @@ export default function AdminPortalPage() {
     setIsSavingApprovers(true);
     try {
       await api.updateApprovalConfiguration({ approver_1_id: approver1Id, approver_2_id: approver2Id });
-      alert("Approval levels saved");
+      notifySuccess("Approval levels saved");
     } catch (err: any) {
-      alert(err.message || "Failed to save approvers");
+      notifyError("Failed to save approvers", err);
     } finally {
       setIsSavingApprovers(false);
     }
@@ -420,19 +423,26 @@ export default function AdminPortalPage() {
       setMappingManagerId("");
       await fetchMappings();
     } catch (err: any) {
-      setMappingFormError(err.message || "Failed to create mapping");
+      setMappingFormError(errorMessage(err, "Failed to create mapping"));
     } finally {
       setIsSubmittingMapping(false);
     }
   };
 
   const handleDeleteMapping = async (mappingId: string, name: string) => {
-    if (!confirm(`Remove mapping for "${name}"?`)) return;
+    const ok = await confirmAction({
+      title: "Remove coordinator mapping?",
+      description: `This removes the mapping for "${name}".`,
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteCoordinatorMapping(mappingId);
+      notifySuccess("Mapping removed");
       await fetchMappings();
     } catch (err: any) {
-      alert(err.message || "Failed to remove mapping");
+      notifyError("Failed to remove mapping", err);
     }
   };
 
@@ -455,7 +465,7 @@ export default function AdminPortalPage() {
       setIsCreateTeamOpen(false);
       await fetchData();
     } catch (err: any) {
-      setTeamFormError(err.message || "Failed to create team");
+      setTeamFormError(errorMessage(err, "Failed to create team"));
     } finally {
       setIsSubmittingTeam(false);
     }
@@ -463,12 +473,19 @@ export default function AdminPortalPage() {
 
   // Handle Delete Team
   const handleDeleteTeam = async (teamId: string, teamName: string) => {
-    if (!confirm(`Are you sure you want to delete team "${teamName}"? Any assigned users will become unassigned from this team.`)) return;
+    const ok = await confirmAction({
+      title: "Delete team?",
+      description: `"${teamName}" will be deleted. Any assigned users will become unassigned from this team.`,
+      confirmLabel: "Delete team",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteTeam(teamId);
+      notifySuccess("Team deleted");
       await fetchData();
     } catch (err: any) {
-      alert(err.message || "Failed to delete team");
+      notifyError("Failed to delete team", err);
     }
   };
 
@@ -499,7 +516,7 @@ export default function AdminPortalPage() {
       setEditingTeam(null);
       await fetchData();
     } catch (err: any) {
-      setEditTeamError(err.message || "Failed to update team");
+      setEditTeamError(errorMessage(err, "Failed to update team"));
     } finally {
       setIsSubmittingEditTeam(false);
     }
@@ -521,7 +538,7 @@ export default function AdminPortalPage() {
       setIsCreateRoleOpen(false);
       await fetchData();
     } catch (err: any) {
-      setRoleFormError(err.message || "Failed to create role");
+      setRoleFormError(errorMessage(err, "Failed to create role"));
     } finally {
       setIsSubmittingRole(false);
     }
@@ -529,12 +546,19 @@ export default function AdminPortalPage() {
 
   // Handle Delete Role
   const handleDeleteRole = async (roleId: string, roleName: string) => {
-    if (!confirm(`Are you sure you want to delete role "${roleName}"?`)) return;
+    const ok = await confirmAction({
+      title: "Delete position title?",
+      description: `"${roleName}" will be removed from the organization.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteRole(roleId);
+      notifySuccess("Position title deleted");
       await fetchData();
     } catch (err: any) {
-      alert(err.message || "Failed to delete role");
+      notifyError("Failed to delete role", err);
     }
   };
 
@@ -566,7 +590,7 @@ export default function AdminPortalPage() {
       setIsCreateOptionOpen(false);
       await fetchBatchOptions();
     } catch (err: any) {
-      setOptionFormError(err.message || "Failed to create option");
+      setOptionFormError(errorMessage(err, "Failed to create option"));
     } finally {
       setIsSubmittingOption(false);
     }
@@ -574,7 +598,13 @@ export default function AdminPortalPage() {
 
   // Handle Delete Batch Option
   const handleDeleteOption = async (optionId: string, optionName: string) => {
-    if (!confirm(`Are you sure you want to deactivate "${optionName}"?`)) return;
+    const ok = await confirmAction({
+      title: "Deactivate taxonomy option?",
+      description: `"${optionName}" will no longer be selectable.`,
+      confirmLabel: "Deactivate",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       if (selectedOptionType === "faculty-types") {
         await api.deleteFacultyType(optionId);
@@ -583,9 +613,10 @@ export default function AdminPortalPage() {
       } else {
         await api.deleteBatchOption(selectedOptionType, optionId);
       }
+      notifySuccess("Option deactivated");
       await fetchBatchOptions();
     } catch (err: any) {
-      alert(err.message || "Failed to delete option");
+      notifyError("Failed to delete option", err);
     }
   };
 
@@ -601,7 +632,7 @@ export default function AdminPortalPage() {
       setFmsSyncMsg({ type: "success", text: `Successfully dispatched ${syncEventType} to external FMS!` });
       await fetchFmsLogs();
     } catch (err: any) {
-      setFmsSyncMsg({ type: "error", text: err.message || "FMS Sync dispatch failed" });
+      setFmsSyncMsg({ type: "error", text: errorMessage(err, "FMS Sync dispatch failed") });
     } finally {
       setIsSyncingFms(false);
     }
@@ -629,7 +660,7 @@ export default function AdminPortalPage() {
       setIsCreateUserOpen(false);
       await fetchData();
     } catch (err: any) {
-      setUserFormError(err.message || "Failed to provision user");
+      setUserFormError(errorMessage(err, "Failed to provision user"));
     } finally {
       setIsSubmittingUser(false);
     }
@@ -666,7 +697,7 @@ export default function AdminPortalPage() {
       setIsEditUserOpen(false);
       await fetchData();
     } catch (err: any) {
-      setEditUserFormError(err.message || "Failed to update staff member");
+      setEditUserFormError(errorMessage(err, "Failed to update staff member"));
     } finally {
       setIsSubmittingEditUser(false);
     }
@@ -674,16 +705,23 @@ export default function AdminPortalPage() {
 
   const handleDeleteUser = async (staffUser: User) => {
     if (staffUser.id === user?.id) {
-      alert("You cannot delete your own admin account.");
+      notifyError("You cannot delete your own admin account.");
       return;
     }
-    if (!confirm(`Delete staff member "${staffUser.full_name}"? This permanently removes their account.`)) return;
+    const ok = await confirmAction({
+      title: "Delete staff member?",
+      description: `This permanently removes the account for "${staffUser.full_name}".`,
+      confirmLabel: "Delete account",
+      destructive: true,
+    });
+    if (!ok) return;
 
     try {
       await api.deleteUser(staffUser.id);
+      notifySuccess("Staff member deleted");
       await fetchData();
     } catch (err: any) {
-      alert(err.message || "Failed to delete staff member");
+      notifyError("Failed to delete staff member", err);
     }
   };
 

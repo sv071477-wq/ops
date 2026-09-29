@@ -1,5 +1,5 @@
 // Enterprise Operations Platform - Database Schema
-// Generated from actual SQLAlchemy models and Alembic migration
+// Generated from actual SQLAlchemy models
 
 Table users {
   id uuid [pk]
@@ -80,6 +80,7 @@ Table delivery_modes {
   name varchar(100) [not null, unique]
   description varchar(255) [null]
   is_active boolean [not null, default: true]
+  max_hours_per_day integer [not null, default: 8]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -112,6 +113,15 @@ Table faculty_types {
 }
 
 Table verticals {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table program_types {
   id uuid [pk]
   name varchar(100) [not null, unique]
   description varchar(255) [null]
@@ -156,7 +166,7 @@ Table batches {
   primary_manager_id uuid [null]
   coordinator_id uuid [null]
   sales_spoc_id uuid [null]
-  faculty_assigned_text varchar(500) [null]
+  faculty_members json [null]
   finance_status varchar(50) [not null, default: 'Pending']
   finance_status_check_date date [null]
   finance_check integer [null]
@@ -218,6 +228,7 @@ Table training_sessions {
     (session_date)
     (status)
     (trainer_name)
+    (batch_id, session_date, module) [unique]
   }
 }
 
@@ -234,7 +245,7 @@ Table faculty_utilization {
   venue varchar(255) [null]
   location_city varchar(100) [null]
   mode_of_delivery varchar(50) [not null, default: 'Online']
-  status varchar(30) [not null, default: 'Scheduled']
+  status varchar(30) [not null, default: 'Completed']
   feedback_submitted boolean [not null, default: false]
   feedback_rating numeric(3,2) [null]
   feedback_notes text [null]
@@ -243,6 +254,7 @@ Table faculty_utilization {
   outcome_by uuid [null]
   replacement_session_id uuid [null]
   vertical varchar(50) [null]
+  program_type_id uuid [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
@@ -254,6 +266,7 @@ Table faculty_utilization {
     (status)
     (outcome_by)
     (replacement_session_id)
+    (program_type_id)
   }
 }
 
@@ -285,3 +298,4 @@ Ref: faculty_utilization.batch_id > batches.id
 Ref: faculty_utilization.training_session_id > training_sessions.id
 Ref: faculty_utilization.outcome_by > users.id
 Ref: faculty_utilization.replacement_session_id > faculty_utilization.id
+Ref: faculty_utilization.program_type_id > program_types.id

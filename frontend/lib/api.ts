@@ -1,13 +1,20 @@
 // API Client for FastAPI backend
 
+/**
+ * Resolved once at module load. A missing `NEXT_PUBLIC_API_URL` is reported as
+ * a console warning and falls back to the local development default rather than
+ * throwing during module evaluation, which previously produced an opaque boot
+ * failure that no error boundary could catch.
+ */
 function getApiBaseUrl(): string {
   const rawApiUrl = process.env.NEXT_PUBLIC_API_URL;
   if (!rawApiUrl) {
-    const isProduction = process.env.NODE_ENV === "production";
-    if (isProduction) {
-      throw new Error("NEXT_PUBLIC_API_URL environment variable is required in production");
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "NEXT_PUBLIC_API_URL is not set. Falling back to http://127.0.0.1:8000/api/v1 — " +
+          "API calls will fail until this is configured."
+      );
     }
-    // Development fallback
     return "http://127.0.0.1:8000/api/v1";
   }
   return rawApiUrl.endsWith("/api/v1") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api/v1`;
@@ -201,6 +208,52 @@ export interface Batch {
   completion_rate?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface ActiveBatchItem {
+  id: string;
+  batch_id: string;
+  program_name: string;
+  client_name?: string | null;
+  category: string;
+  delivery_mode: string;
+  location_city?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  status: string;
+  total_enrollments: number;
+  training_days: number;
+  sessions_conducted: number;
+  progress: number;
+}
+
+export interface ActiveSessionItem {
+  id: string;
+  batch_id: string;
+  batch_name: string;
+  session_type: "scheduled" | "actual";
+  sequence_number?: number | null;
+  module: string;
+  trainer_name?: string | null;
+  faculty_name?: string | null;
+  session_date: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_hours: number;
+  status: string;
+  venue?: string | null;
+  location_city?: string | null;
+  mode_of_delivery?: string | null;
+}
+
+export interface ActiveBatchesResponse {
+  filter_date: string;
+  batches: ActiveBatchItem[];
+  sessions: ActiveSessionItem[];
+  total_batches: number;
+  total_sessions: number;
+  skip: number;
+  limit: number;
 }
 
 export interface CreateBatchPayload {
@@ -500,6 +553,26 @@ export interface FmsSyncLog {
   timestamp: string;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly details?: unknown;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number, details?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.details = details;
+    this.retryable = status === 0 || status === 408 || status === 429 || status >= 500;
+  }
+}
+
+const REQUEST_TIMEOUT_MS = 30000;
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
 class ApiService {
   private getToken(): string | null {
     if (typeof window !== "undefined") {
@@ -510,6 +583,18 @@ class ApiService {
 
   // Promise cache for token refresh to prevent race conditions
   private refreshPromise: Promise<{ access_token: string; refresh_token: string; user: User } | null> | null = null;
+
+  /**
+   * Invoked whenever a silent token refresh replaces the stored credentials, so
+   * AuthContext can resync instead of silently holding stale tokens.
+   */
+  private onTokensRefreshed: ((tokens: { access_token: string; refresh_token: string; user?: User }) => void) | null = null;
+
+  setTokenRefreshListener(
+    listener: ((tokens: { access_token: string; refresh_token: string; user?: User }) => void) | null
+  ): void {
+    this.onTokensRefreshed = listener;
+  }
 
   private async request<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
     const token = this.getToken();
@@ -524,17 +609,44 @@ class ApiService {
 
     const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    // Honour a caller-supplied signal as well, so callers can cancel early.
+    const externalSignal = options.signal ?? undefined;
+    const onExternalAbort = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener("abort", onExternalAbort);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, { ...options, headers, signal: controller.signal });
+    } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) {
+        throw new ApiError("The request timed out. Please check your connection and try again.", 0);
+      }
+      throw new ApiError(
+        "Unable to reach the server. Check your network connection and try again.",
+        0
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+    }
 
     if (!response.ok) {
       let errorMsg = `Error ${response.status}: ${response.statusText}`;
+      let details: unknown;
       try {
         const errJson = await response.json();
-        if (errJson.detail) {
-          errorMsg = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+        details = errJson?.detail;
+        if (errJson?.detail) {
+          errorMsg =
+            typeof errJson.detail === "string"
+              ? errJson.detail
+              : JSON.stringify(errJson.detail);
         }
       } catch {
         // use default error message
@@ -560,6 +672,11 @@ class ApiService {
             if (refreshData) {
               localStorage.setItem("auth_token", refreshData.access_token);
               localStorage.setItem("refresh_token", refreshData.refresh_token);
+              this.onTokensRefreshed?.({
+                access_token: refreshData.access_token,
+                refresh_token: refreshData.refresh_token,
+                user: refreshData.user,
+              });
               // Retry the original request once
               return this.request<T>(endpoint, options, retryCount + 1);
             }
@@ -569,31 +686,122 @@ class ApiService {
         }
       }
 
-      throw new Error(errorMsg);
+      throw new ApiError(errorMsg, response.status, details);
     }
 
-    // Handle empty responses (204 No Content)
+    // Handle empty responses (204 No Content) and empty bodies.
     if (response.status === 204) {
       return undefined as T;
     }
 
-    return response.json();
+    const text = await response.text();
+    if (!text) {
+      return undefined as T;
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new ApiError("The server returned an unreadable response.", response.status, text);
+    }
   }
 
-  private async performTokenRefresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
+  private async performTokenRefresh(
+    refreshToken: string
+  ): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const refreshRes = await fetch(`${API_BASE.replace("/api/v1", "")}/api/v1/auth/refresh`, {
+      const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
+        signal: controller.signal,
       });
       if (refreshRes.ok) {
         return await refreshRes.json();
       }
     } catch {
       // Refresh failed
+    } finally {
+      clearTimeout(timeoutId);
     }
     return null;
+  }
+
+  /**
+   * Authenticated fetch for binary and multipart endpoints, which cannot go
+   * through `request()` because it assumes a JSON body. Shares the same 401
+   * auto-refresh behaviour and throws the same typed `ApiError`.
+   */
+  private async fetchWithAuth(
+    url: string,
+    options: RequestInit = {},
+    retryCount = 0
+  ): Promise<Response> {
+    const token = this.getToken();
+    const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(url, { ...options, headers, signal: controller.signal });
+    } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) {
+        throw new ApiError("The request timed out. Please try again.", 0);
+      }
+      throw new ApiError("Unable to reach the server. Check your connection and try again.", 0);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (response.status === 401 && retryCount < 1) {
+      try {
+        const refreshToken = localStorage.getItem("refresh_token");
+        if (refreshToken) {
+          let refreshData = this.refreshPromise
+            ? await this.refreshPromise
+            : await (this.refreshPromise = this.performTokenRefresh(refreshToken).finally(() => {
+                this.refreshPromise = null;
+              }));
+          if (refreshData) {
+            localStorage.setItem("auth_token", refreshData.access_token);
+            localStorage.setItem("refresh_token", refreshData.refresh_token);
+            this.onTokensRefreshed?.({
+              access_token: refreshData.access_token,
+              refresh_token: refreshData.refresh_token,
+              user: refreshData.user,
+            });
+            return this.fetchWithAuth(url, options, retryCount + 1);
+          }
+        }
+      } catch {
+        // Refresh failed, fall through to error
+      }
+    }
+
+    if (!response.ok) {
+      let details: unknown;
+      let errorMsg = `Error ${response.status}: ${response.statusText}`;
+      try {
+        const errJson = await response.json();
+        details = errJson?.detail;
+        if (errJson?.detail) {
+          errorMsg =
+            typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+        }
+      } catch {
+        // keep default message
+      }
+      throw new ApiError(errorMsg, response.status, details);
+    }
+
+    return response;
   }
 
   // Auth & Users APIs
@@ -766,6 +974,19 @@ class ApiService {
     return this.request<Batch>(`/batches/${id}`);
   }
 
+  async getActiveBatches(params?: { 
+    filterDate?: string; 
+    skip?: number; 
+    limit?: number; 
+  }): Promise<ActiveBatchesResponse> {
+    const query = new URLSearchParams();
+    if (params?.filterDate) query.append("filter_date", params.filterDate);
+    if (params?.skip) query.append("skip", String(params.skip));
+    if (params?.limit) query.append("limit", String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return this.request<ActiveBatchesResponse>(`/batches/active${qs}`);
+  }
+
   async createBatch(payload: CreateBatchPayload): Promise<Batch> {
     return this.request<Batch>("/batches", {
       method: "POST",
@@ -812,21 +1033,19 @@ class ApiService {
     });
   }
 
+  async deleteBatch(id: string): Promise<{ detail: string }> {
+    return this.request<{ detail: string }>(`/batches/${id}`, {
+      method: "DELETE",
+    });
+  }
+
   async importBatchFeedback(id: string, file: File): Promise<BatchFeedbackImportResponse> {
-    const token = this.getToken();
     const formData = new FormData();
     formData.append("file", file);
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    const response = await fetch(`${API_BASE}/batches/${id}/feedback-import`, {
+    const response = await this.fetchWithAuth(`${API_BASE}/batches/${id}/feedback-import`, {
       method: "POST",
-      headers,
       body: formData,
     });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `Feedback import failed: ${response.statusText}`);
-    }
     return response.json();
   }
 
@@ -1022,31 +1241,16 @@ class ApiService {
 
   // Schedules Ingestion & Conflict Engine APIs
   async ingestScheduleFile(file: File, targetBatchId?: string): Promise<ScheduleIngestResponse> {
-    const token = this.getToken();
     const formData = new FormData();
     formData.append("file", file);
     if (targetBatchId) {
       formData.append("target_batch_id", targetBatchId);
     }
 
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const url = `${API_BASE}/schedules/ingest`;
-    const response = await fetch(url, {
+    const response = await this.fetchWithAuth(`${API_BASE}/schedules/ingest`, {
       method: "POST",
-      headers,
       body: formData,
     });
-
-    if (!response.ok) {
-      let errorMsg = `Ingestion error: ${response.statusText}`;
-      try {
-        const errJson = await response.json();
-        if (errJson.detail) errorMsg = errJson.detail;
-      } catch {}
-      throw new Error(errorMsg);
-    }
 
     return response.json();
   }
@@ -1075,25 +1279,10 @@ class ApiService {
   }
 
   async exportMbrReport(): Promise<void> {
-    const token = this.getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const url = `${API_BASE}/analytics/mbr-export`;
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      throw new Error(`Export failed: ${res.statusText}`);
-    }
-
-    const blob = await res.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = `MBR_Report_Export_${new Date().toISOString().split("T")[0]}.xlsx`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(downloadUrl);
+    await this.downloadFile(
+      "/analytics/mbr-export",
+      `MBR_Report_Export_${new Date().toISOString().split("T")[0]}.xlsx`
+    );
   }
 
   // Faculty APIs
@@ -1132,16 +1321,18 @@ class ApiService {
     await this.downloadFile(`/batches/finance/export${qs}`, `finance-review-${new Date().toISOString().split("T")[0]}.csv`);
   }
 
-  private async downloadFile(endpoint: string, filename: string): Promise<void> {
-    const token = this.getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Analytics Export
+  async exportAnalytics(params?: { start_date?: string; end_date?: string; domain?: string }): Promise<void> {
+    const query = new URLSearchParams();
+    if (params?.start_date) query.append("start_date", params.start_date);
+    if (params?.end_date) query.append("end_date", params.end_date);
+    if (params?.domain) query.append("domain", params.domain);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    await this.downloadFile(`/analytics/export${qs}`, `analytics-export-${new Date().toISOString().split("T")[0]}.xlsx`);
+  }
 
-    const url = `${API_BASE}${endpoint}`;
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      throw new Error(`Export failed: ${res.statusText}`);
-    }
+  private async downloadFile(endpoint: string, filename: string): Promise<void> {
+    const res = await this.fetchWithAuth(`${API_BASE}${endpoint}`);
 
     const blob = await res.blob();
     const downloadUrl = window.URL.createObjectURL(blob);

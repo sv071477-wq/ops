@@ -1,12 +1,13 @@
 from datetime import datetime, timezone, timedelta
 import io
+import json
 import pandas as pd
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import or_, Date
 from sqlalchemy.orm import Session
 
 from app.models.batch import (
@@ -19,7 +20,7 @@ from app.models.batch import (
 )
 from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User
-from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreate, BatchUpdate
+from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreate, BatchUpdate, ActiveBatchesResponse
 from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
 from app.api.deps import get_manager_scope_user_ids
 from app.api.v1.gates.service import GatekeeperService
@@ -29,9 +30,57 @@ class BatchService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _as_utc(value):
+        """Normalize a stored datetime to timezone-aware UTC for safe comparison.
+
+        Columns are declared DateTime(timezone=True), but some dialects (and
+        freshly-built in-session objects) can hand back naive datetimes, which
+        cannot be compared against an aware `datetime.now(timezone.utc)`.
+        """
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _estimated_sessions_conducted(self, batch: Batch, now: datetime) -> int:
+        """Estimate delivered sessions when no utilization records exist yet."""
+        if batch.status == "Completed":
+            return batch.training_days or 1
+        if batch.status != "Ongoing":
+            return 0
+        start = self._as_utc(batch.start_date)
+        end = self._as_utc(batch.end_date)
+        if not start or not end or end <= start:
+            return 0
+        total_span = (end - start).total_seconds()
+        elapsed = max(0.0, (min(now, end) - start).total_seconds())
+        fraction = min(1.0, elapsed / total_span) if total_span > 0 else 0.5
+        total_expected = batch.training_days or 10
+        return max(1, int(fraction * total_expected))
+
     def create(self, batch_in: BatchCreate, current_user: User) -> Batch:
+        # Check for unique batch_id
         if self.db.query(Batch).filter(Batch.batch_id == batch_in.batch_id).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Batch ID '{batch_in.batch_id}' is already registered.")
+        
+        # Get delivery mode config for max_hours_per_day validation
+        delivery_mode = None
+        if batch_in.delivery_mode_id:
+            delivery_mode = self.db.query(DeliveryMode).filter(DeliveryMode.id == batch_in.delivery_mode_id, DeliveryMode.is_active.is_(True)).first()
+        elif batch_in.delivery_mode:
+            delivery_mode = self.db.query(DeliveryMode).filter(DeliveryMode.name == batch_in.delivery_mode).first()
+        
+        max_hours_per_day = delivery_mode.max_hours_per_day if delivery_mode and delivery_mode.max_hours_per_day else 8
+        
+        # Validate total_hours against training_days * max_hours_per_day
+        if batch_in.total_hours > batch_in.training_days * max_hours_per_day:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Total hours must be between 0.5 and training_days × max_hours_per_day ({batch_in.training_days} × {max_hours_per_day} = {batch_in.training_days * max_hours_per_day})"
+            )
+        
         batch_data = batch_in.model_dump(exclude_none=True)
         batch_data.pop("batch_request_date", None)
         batch_data["calendar_days"] = self._calendar_days(batch_data.get("start_date"), batch_data.get("end_date"))
@@ -59,6 +108,11 @@ class BatchService:
             batch_data["coordinator_id"] = current_user.id
         elif current_user.role == "Sales" and not batch_data.get("sales_spoc_id"):
             batch_data["sales_spoc_id"] = current_user.id
+        
+        # Store faculty_members as JSON
+        if "faculty_members" in batch_data:
+            batch_data["faculty_members"] = json.dumps(batch_data["faculty_members"])
+        
         batch = Batch(**batch_data)
         self.db.add(batch)
         self.db.commit()
@@ -148,10 +202,16 @@ class BatchService:
         else:
             batch.approver_2_status = "Approved"
             batch.approver_2_approved_at = datetime.now(timezone.utc)
-            batch.status = "Approved"
             batch.is_schema_locked = True
             if decision.reason and not batch.approval_id and len(decision.reason.strip()) <= 100:
                 batch.approval_id = decision.reason.strip()
+            
+            # Auto-transition based on start_date
+            today = datetime.now(timezone.utc).date()
+            if batch.start_date and batch.start_date.date() <= today:
+                batch.status = "Ongoing"
+            else:
+                batch.status = "Upcoming"
         batch.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(batch)
@@ -166,9 +226,16 @@ class BatchService:
                 detail="Approver 1 signoff is pending. Direct approval requires Admin authorization or Level 1 completion."
             )
         batch.approval_id = approval.approval_id
-        batch.status = "Approved"
         batch.is_schema_locked = True
         batch.updated_at = datetime.now(timezone.utc)
+        
+        # Auto-transition based on start_date
+        today = datetime.now(timezone.utc).date()
+        if batch.start_date and batch.start_date.date() <= today:
+            batch.status = "Ongoing"
+        else:
+            batch.status = "Upcoming"
+        
         if not batch.primary_manager_id:
             batch.primary_manager_id = current_user.id
         self.db.commit()
@@ -215,16 +282,7 @@ class BatchService:
             for b in batches:
                 conducted = counts.get(b.id)
                 if conducted is None or conducted == 0:
-                    if b.status == "Completed":
-                        conducted = b.training_days or 1
-                    elif b.status == "Ongoing" and b.start_date and b.end_date and b.end_date > b.start_date:
-                        total_span = (b.end_date - b.start_date).total_seconds()
-                        elapsed = max(0.0, (min(now, b.end_date) - b.start_date).total_seconds())
-                        fraction = min(1.0, elapsed / total_span) if total_span > 0 else 0.5
-                        total_expected = b.training_days or 10
-                        conducted = max(1, int(fraction * total_expected))
-                    else:
-                        conducted = 0
+                    conducted = self._estimated_sessions_conducted(b, now)
                 b._sessions_conducted = conducted
                 total = b.training_days or conducted or 1
                 if b.status == "Completed":
@@ -234,6 +292,181 @@ class BatchService:
                 else:
                     b._completion_rate = round(min(100.0, (conducted / total) * 100.0), 1)
         return batches
+
+    def get_active_batches(
+        self, 
+        filter_date: Optional[str], 
+        current_user: User,
+        skip: int = 0,
+        limit: int = 100
+    ) -> ActiveBatchesResponse:
+        """Get ongoing batches and sessions for a specific date with pagination."""
+        from app.schemas.batch import ActiveBatchItem, ActiveSessionItem, ActiveBatchesResponse
+        
+        # Parse filter_date or default to today (UTC)
+        try:
+            if filter_date:
+                filter_date_obj = datetime.strptime(filter_date, "%Y-%m-%d").date()
+            else:
+                filter_date_obj = datetime.now(timezone.utc).date()
+        except ValueError:
+            filter_date_obj = datetime.now(timezone.utc).date()
+        
+        filter_date_str = filter_date_obj.isoformat()
+        
+        # Build base query with RBAC scoping (same as list())
+        query = self.db.query(Batch)
+        user_role_lower = (current_user.role or "").lower()
+        team_name_lower = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
+
+        if user_role_lower != "admin" and team_name_lower != "finance":
+            team_user_ids = get_manager_scope_user_ids(current_user, self.db)
+            query = query.filter(or_(
+                Batch.primary_manager_id == current_user.id,
+                Batch.coordinator_id.in_(team_user_ids),
+                ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
+                ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
+            ))
+        
+        # Filter batches where start_date <= filter_date <= end_date (inclusive)
+        query = query.filter(
+            Batch.start_date.isnot(None),
+            Batch.end_date.isnot(None),
+            Batch.start_date.cast(Date) <= filter_date_obj,
+            Batch.end_date.cast(Date) >= filter_date_obj,
+        )
+        
+        # Get total count before pagination
+        total_batches = query.count()
+        
+        # Apply pagination and sorting
+        batches = query.order_by(Batch.start_date.asc().nullslast()).offset(skip).limit(limit).all()
+        
+        # Get sessions from TrainingSession and FacultyUtilization for this date
+        from app.models.session import TrainingSession, FacultyUtilization
+        from sqlalchemy import func
+        
+        batch_ids = [b.id for b in batches]
+        
+        # Sessions conducted count for progress calculation (same logic as list())
+        conducted_counts = dict(
+            self.db.query(FacultyUtilization.batch_id, func.count(FacultyUtilization.id))
+            .filter(
+                FacultyUtilization.batch_id.in_(batch_ids),
+                FacultyUtilization.status.in_(["Completed", "InProgress"])
+            )
+            .group_by(FacultyUtilization.batch_id)
+            .all()
+        ) if batch_ids else {}
+        
+        # Build batch items
+        batch_items = []
+        now = datetime.now(timezone.utc)
+        for b in batches:
+            conducted = conducted_counts.get(b.id, 0)
+            if conducted == 0:
+                conducted = self._estimated_sessions_conducted(b, now)
+            
+            training_days = b.training_days or 0
+            progress = round(min(100.0, (conducted / training_days) * 100.0), 1) if training_days > 0 else 0.0
+            
+            delivery_mode_name = b.delivery_mode
+            if b.delivery_mode_detail:
+                delivery_mode_name = b.delivery_mode_detail.name
+            
+            batch_items.append(ActiveBatchItem(
+                id=str(b.id),
+                batch_id=b.batch_id,
+                program_name=b.program_name,
+                client_name=b.client_name,
+                category=b.category,
+                delivery_mode=delivery_mode_name or "Online",
+                location_city=b.location_city,
+                start_date=b.start_date.isoformat() if b.start_date else None,
+                end_date=b.end_date.isoformat() if b.end_date else None,
+                status=b.status,
+                total_enrollments=b.total_enrollments,
+                training_days=training_days,
+                sessions_conducted=conducted,
+                progress=progress,
+            ))
+        
+        # Get sessions for this date
+        session_items = []
+        
+        # TrainingSession (scheduled curriculum)
+        if batch_ids:
+            scheduled_sessions = self.db.query(TrainingSession).filter(
+                TrainingSession.batch_id.in_(batch_ids),
+                TrainingSession.session_date == filter_date_obj,
+                TrainingSession.status.notin_(["Cancelled", "Not Conducted", "Completed"])
+            ).order_by(TrainingSession.start_time.asc().nullslast()).all()
+            
+            for ts in scheduled_sessions:
+                batch = next((b for b in batches if b.id == ts.batch_id), None)
+                session_items.append(ActiveSessionItem(
+                    id=str(ts.id),
+                    batch_id=batch.batch_id if batch else "",
+                    batch_name=batch.program_name if batch else "",
+                    session_type="scheduled",
+                    sequence_number=ts.sequence_number,
+                    module=ts.module,
+                    trainer_name=ts.trainer_name,
+                    faculty_name=None,
+                    session_date=ts.session_date.isoformat(),
+                    start_time=ts.start_time.isoformat() if ts.start_time else None,
+                    end_time=ts.end_time.isoformat() if ts.end_time else None,
+                    duration_hours=float(ts.duration_hours) if ts.duration_hours else 0.0,
+                    status=ts.status,
+                    venue=None,
+                    location_city=batch.location_city if batch else None,
+                    mode_of_delivery=batch.delivery_mode if batch else "Online",
+                ))
+            
+            # FacultyUtilization (actual delivery)
+            actual_sessions = self.db.query(FacultyUtilization).filter(
+                FacultyUtilization.batch_id.in_(batch_ids),
+                FacultyUtilization.date_of_training.cast(Date) == filter_date_obj,
+                FacultyUtilization.status.notin_(["Cancelled", "Not Conducted", "Completed"])
+            ).order_by(FacultyUtilization.start_time.asc().nullslast()).all()
+            
+            for fu in actual_sessions:
+                batch = next((b for b in batches if b.id == fu.batch_id), None)
+                session_items.append(ActiveSessionItem(
+                    id=str(fu.id),
+                    batch_id=batch.batch_id if batch else "",
+                    batch_name=batch.program_name if batch else "",
+                    session_type="actual",
+                    sequence_number=None,
+                    module=fu.topic,
+                    trainer_name=None,
+                    faculty_name=fu.faculty_name,
+                    session_date=fu.date_of_training.date().isoformat(),
+                    start_time=fu.start_time.isoformat() if fu.start_time else None,
+                    end_time=fu.end_time.isoformat() if fu.end_time else None,
+                    duration_hours=float(fu.no_of_hours) if fu.no_of_hours else 0.0,
+                    status=fu.status,
+                    venue=fu.venue,
+                    location_city=fu.location_city,
+                    mode_of_delivery=fu.mode_of_delivery,
+                ))
+        
+        # Sort sessions by start_time ASC (NULLS LAST)
+        session_items.sort(key=lambda s: (s.start_time is None, s.start_time or ""))
+        
+        # Apply pagination to sessions
+        total_sessions = len(session_items)
+        session_items = session_items[skip:skip + limit]
+        
+        return ActiveBatchesResponse(
+            filter_date=filter_date_str,
+            batches=batch_items,
+            sessions=session_items,
+            total_batches=total_batches,
+            total_sessions=total_sessions,
+            skip=skip,
+            limit=limit,
+        )
 
     def _sync_pending_approvers(self) -> None:
         """Backfill pending approval assignments after admin configuration changes/imports."""
@@ -314,6 +547,11 @@ class BatchService:
             delivery_mode_id = update_data.get("delivery_mode_id")
             if delivery_mode_id or delivery_mode_val:
                 update_data["delivery_mode_id"] = self._option_id(DeliveryMode, delivery_mode_id, delivery_mode_val or "Online")
+        
+        # Handle faculty_members JSON serialization
+        if "faculty_members" in update_data:
+            update_data["faculty_members"] = json.dumps(update_data["faculty_members"])
+        
         if batch.is_schema_locked and (current_user.role or "").lower() not in ["admin", "manager", "coordinator"]:
             restricted = {"client_name", "category", "program_name", "technology", "domain"}
             for field in restricted.intersection(update_data):
@@ -330,17 +568,18 @@ class BatchService:
     VALID_TRANSITIONS: dict[str, set[str]] = {
         "Requested": {"Approval 1 Pending", "OnHold", "Cancelled"},
         "Approval 1 Pending": {"Approval 2 Pending", "Requested", "OnHold", "Cancelled"},  # Requested on rejection
-        "Approval 2 Pending": {"Approved", "Requested", "OnHold", "Cancelled"},  # Requested on rejection
-        "Approved": {"Upcoming", "OnHold", "Cancelled"},
+        "Approval 2 Pending": {"Approved", "Upcoming", "Ongoing", "Requested", "OnHold", "Cancelled"},
+        "Approved": {"Upcoming", "Ongoing", "OnHold", "Cancelled"},
         "Upcoming": {"Ongoing", "OnHold", "Cancelled", "Approved"},
-        "Ongoing": {"Completed", "OnHold", "Cancelled"},
+        "Ongoing": {"Pending for Closure", "OnHold", "Cancelled"},
+        "Pending for Closure": {"Completed", "OnHold", "Cancelled"},
         "Completed": {"OnHold"},  # Allow reopening for corrections
         "OnHold": {"Requested", "Approval 1 Pending", "Approval 2 Pending", "Approved", "Upcoming", "Ongoing", "Cancelled"},
         "Cancelled": set(),  # Terminal state - no transitions allowed
     }
 
     # Statuses that require approval completion before entering
-    APPROVAL_REQUIRED_STATUSES = {"Approved", "Upcoming", "Ongoing", "Completed"}
+    APPROVAL_REQUIRED_STATUSES = {"Approved", "Upcoming", "Ongoing", "Pending for Closure", "Completed"}
 
     def _get_resume_target_status(self, batch: Batch) -> str:
         """Determine the correct status when resuming from OnHold based on approval state."""

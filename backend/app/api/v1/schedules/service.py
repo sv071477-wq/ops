@@ -259,6 +259,15 @@ class ExcelIngestionService:
                 batch_user_ids = {batch.primary_manager_id, batch.coordinator_id, batch.sales_spoc_id}
                 if not scope_ids.intersection({value for value in batch_user_ids if value is not None}):
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only apply schedules within your manager scope.")
+        
+        # Schedule ingestion only allowed after batch is submitted for Approval 1
+        allowed_statuses = {"Approval 1 Pending", "Approval 2 Pending", "Approved", "Upcoming", "Ongoing"}
+        if batch.status not in allowed_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, 
+                detail="Schedule can only be applied after batch is submitted for approval (status must be Approval 1 Pending or later)"
+            )
+        
         if batch.status in {"Completed", "Cancelled"}:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Schedule cannot be applied to a completed or cancelled batch")
         if not items:
