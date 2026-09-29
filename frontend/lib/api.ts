@@ -1,7 +1,19 @@
 // API Client for FastAPI backend
 
-const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
-const API_BASE = rawApiUrl.endsWith("/api/v1") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api/v1`;
+function getApiBaseUrl(): string {
+  const rawApiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!rawApiUrl) {
+    const isProduction = process.env.NODE_ENV === "production";
+    if (isProduction) {
+      throw new Error("NEXT_PUBLIC_API_URL environment variable is required in production");
+    }
+    // Development fallback
+    return "http://127.0.0.1:8000/api/v1";
+  }
+  return rawApiUrl.endsWith("/api/v1") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api/v1`;
+}
+
+const API_BASE = getApiBaseUrl();
 
 export interface Team {
   id: string;
@@ -496,6 +508,9 @@ class ApiService {
     return null;
   }
 
+  // Promise cache for token refresh to prevent race conditions
+  private refreshPromise: Promise<{ access_token: string; refresh_token: string; user: User } | null> | null = null;
+
   private async request<T>(endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<T> {
     const token = this.getToken();
     const headers: Record<string, string> = {
@@ -530,13 +545,19 @@ class ApiService {
         try {
           const refreshToken = localStorage.getItem("refresh_token");
           if (refreshToken) {
-            const refreshRes = await fetch(`${API_BASE.replace("/api/v1", "")}/api/v1/auth/refresh`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ refresh_token: refreshToken }),
-            });
-            if (refreshRes.ok) {
-              const refreshData = await refreshRes.json();
+            // Use cached refresh promise if available to prevent race conditions
+            let refreshData;
+            if (this.refreshPromise) {
+              refreshData = await this.refreshPromise;
+            } else {
+              this.refreshPromise = this.performTokenRefresh(refreshToken);
+              try {
+                refreshData = await this.refreshPromise;
+              } finally {
+                this.refreshPromise = null;
+              }
+            }
+            if (refreshData) {
               localStorage.setItem("auth_token", refreshData.access_token);
               localStorage.setItem("refresh_token", refreshData.refresh_token);
               // Retry the original request once
@@ -557,6 +578,22 @@ class ApiService {
     }
 
     return response.json();
+  }
+
+  private async performTokenRefresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string; user: User } | null> {
+    try {
+      const refreshRes = await fetch(`${API_BASE.replace("/api/v1", "")}/api/v1/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (refreshRes.ok) {
+        return await refreshRes.json();
+      }
+    } catch {
+      // Refresh failed
+    }
+    return null;
   }
 
   // Auth & Users APIs

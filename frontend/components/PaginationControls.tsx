@@ -61,9 +61,9 @@ export function PaginationControls({
         justifyContent: "space-between",
         flexWrap: "wrap",
         gap: 12,
-        padding: "12px 18px",
-        background: "#fafcff",
-        borderTop: "1px solid var(--border-subtle)",
+        padding: "10px 16px",
+        background: "#f8fafc",
+        borderTop: "1px solid #e2e8f0",
         fontSize: "0.8rem",
         color: "var(--text-dim)",
       }}

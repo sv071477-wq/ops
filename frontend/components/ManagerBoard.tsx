@@ -121,7 +121,12 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       badgeColor: "#0284c7",
       borderColor: "#93c5fd",
       icon: PlayCircle,
-      filterFn: (b) => b.status === "Approved" || b.status === "Upcoming" || (b.status === "Ongoing" && (!b.batch_nps)),
+      filterFn: (b) => {
+        if (b.status !== "Approved" && b.status !== "Upcoming" && b.status !== "Ongoing") return false;
+        const isPastEnd = b.end_date ? new Date(b.end_date).getTime() < Date.now() : false;
+        // In-flight if delivery is not overdue for NPS closure
+        return !isPastEnd && b.batch_nps === null;
+      },
     },
     {
       id: "nps_closure",
@@ -132,9 +137,10 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       borderColor: "#fda4af",
       icon: Award,
       filterFn: (b) => {
-        if (b.status === "Completed") return false;
+        if (b.status === "Completed" || b.status === "Cancelled" || b.status === "OnHold") return false;
         const isPastEnd = b.end_date ? new Date(b.end_date).getTime() < Date.now() : false;
-        return (b.status === "Ongoing" || b.status === "Approved" || isPastEnd) && b.batch_nps === null;
+        // NPS closure if past end date or sessions completed, but NPS not yet recorded
+        return isPastEnd && (b.batch_nps === null || b.batch_nps === undefined);
       },
     },
     {

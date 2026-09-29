@@ -1,6 +1,7 @@
-from typing import List, Union
-from pydantic import AnyHttpUrl, field_validator
+from typing import List, Union, Optional
+from pydantic import AnyHttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import re
 
 
 class Settings(BaseSettings):
@@ -19,7 +20,7 @@ class Settings(BaseSettings):
     # Security - MUST be set via environment variables in production
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # Reduced from 8 hours to 30 minutes
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Database - MUST be set via environment variables
@@ -29,6 +30,8 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
     DATABASE_URL: str
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
 
     # CORS - Restricted to specific origins, no wildcards
     # Defaults for development; override via env var BACKEND_CORS_ORIGINS in production
@@ -46,13 +49,39 @@ class Settings(BaseSettings):
             return json.loads(v)
         return v
 
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        if self.ENVIRONMENT == "production":
+            # Validate SECRET_KEY strength
+            if len(self.SECRET_KEY) < 32:
+                raise ValueError("SECRET_KEY must be at least 32 characters in production")
+            
+            # Validate CORS origins - no localhost in production
+            for origin in self.BACKEND_CORS_ORIGINS:
+                if "localhost" in origin or "127.0.0.1" in origin:
+                    raise ValueError(f"CORS origin '{origin}' contains localhost - not allowed in production")
+            
+            # Validate DATABASE_URL is not SQLite
+            if "sqlite" in self.DATABASE_URL.lower():
+                raise ValueError("SQLite DATABASE_URL not allowed in production")
+        
+        return self
+
     # Optional FMS Integration - MUST be set via environment variables if used
     FMS_API_BASE_URL: str = ""
     FMS_API_KEY: str = ""
 
+    # Redis for rate limiting and caching
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_DB: int = 0
+    REDIS_URL: Optional[str] = None
+
     # Rate limiting
     RATE_LIMIT_REQUESTS: int = 100
     RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_ENABLED: bool = True
 
     # Account lockout
     MAX_FAILED_LOGIN_ATTEMPTS: int = 5

@@ -1,6 +1,6 @@
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, date
 from decimal import Decimal
 from sqlalchemy.orm import Session
 
@@ -30,14 +30,22 @@ class ConflictEngine:
         Queries existing sessions in the database and checks interval overlaps.
         """
         conflicts: List[ConflictDetail] = []
-        target_date_str = date_of_training.strftime("%Y-%m-%d") if isinstance(date_of_training, datetime) else str(date_of_training)
+        
+        # Normalize to date for comparison (handles timezone-aware datetimes correctly)
+        if isinstance(date_of_training, datetime):
+            target_date = date_of_training.date()
+            target_date_str = target_date.isoformat()
+        else:
+            target_date = date_of_training
+            target_date_str = str(target_date)
 
         resolved_faculty_id = faculty_id
         sessions_on_date = []
 
         if db is not None:
             try:
-                start_of_day = date_of_training.replace(hour=0, minute=0, second=0, microsecond=0)
+                # Use date() for comparison to avoid timezone/DST issues
+                start_of_day = datetime.combine(target_date, time.min)
                 end_of_day = start_of_day + timedelta(days=1)
                 query = db.query(FacultyUtilization).join(
                     Batch, Batch.id == FacultyUtilization.batch_id

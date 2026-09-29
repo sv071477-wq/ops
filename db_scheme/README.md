@@ -18,6 +18,9 @@ Stores user accounts, roles, team membership, and manager relationships.
 | team_id | UUID | Yes | FK to teams.id |
 | manager_id | UUID | Yes | Self-referencing manager |
 | is_active | BOOLEAN | No | Active status |
+| failed_login_attempts | INTEGER | No | Failed login counter |
+| locked_until | TIMESTAMPTZ | Yes | Account lock expiry |
+| last_login_at | TIMESTAMPTZ | Yes | Last successful login |
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 
 Relationships:
@@ -59,7 +62,21 @@ Maps coordinators to managers for reporting and assignment flows.
 | manager_id | UUID | No | FK to users.id |
 | assigned_at | TIMESTAMPTZ | No | Assignment timestamp |
 
-### 5. batches
+### 5. audit_logs
+Audit trail for security and operational events.
+
+| Column | Type | Nullable | Notes |
+|---|---|---:|---|
+| id | UUID | No | Primary key |
+| event_type | VARCHAR(50) | No | Enum: login_success, login_failed, logout, password_change, password_reset_admin, account_locked, account_unlocked, user_created, user_updated, user_deleted, role_assigned, refresh_token_used, refresh_token_failed |
+| user_id | UUID | Yes | FK to users.id |
+| user_email | VARCHAR(255) | Yes | User email at time of event |
+| ip_address | VARCHAR(45) | Yes | Client IP |
+| user_agent | TEXT | Yes | Browser/client info |
+| details | TEXT | Yes | Event details |
+| created_at | TIMESTAMPTZ | No | Audit timestamp |
+
+### 6. batches
 Stores the primary training batch lifecycle and governance information.
 
 | Column | Type | Nullable | Notes |
@@ -69,6 +86,7 @@ Stores the primary training batch lifecycle and governance information.
 | sow_number | VARCHAR(100) | Yes | Client SOW number |
 | approval_id | VARCHAR(100) | Yes | Financial approval reference |
 | category | VARCHAR(100) | No | e.g. Bootcamp, RBT |
+| residential_type | VARCHAR(2) | Yes | 'R' or 'NR' (legacy) |
 | entity_id | UUID | Yes | FK to entities.id |
 | category_id | UUID | Yes | FK to batch_categories.id |
 | delivery_mode_id | UUID | Yes | FK to delivery_modes.id |
@@ -85,6 +103,8 @@ Stores the primary training batch lifecycle and governance information.
 | calendar_days | INTEGER | Yes | Calendar days |
 | total_hours | NUMERIC(8,2) | No | Batch total hours |
 | total_enrollments | INTEGER | No | Count of enrollments |
+| residential_enrollments | INTEGER | No | Residential enrollments |
+| non_residential_enrollments | INTEGER | No | Non-residential enrollments |
 | status | VARCHAR(50) | No | Lifecycle status |
 | is_schema_locked | BOOLEAN | No | Schema freeze flag |
 | approver_1_id | UUID | Yes | First approver |
@@ -101,16 +121,18 @@ Stores the primary training batch lifecycle and governance information.
 | finance_status_check_date | DATE | Yes | Finance check date |
 | finance_check | INTEGER | Yes | Finance check value |
 | batch_avg_feedback | NUMERIC(3,2) | Yes | Average feedback score |
-| batch_nps | NUMERIC(6,2) | Yes | NPS score |
+| total_feedback_score | NUMERIC(10,2) | Yes | Total feedback score |
+| batch_nps | NUMERIC(6,2) | Yes | NPS score (-100 to 100) |
 | nps_total_responses | INTEGER | Yes | Feedback response count |
 | nps_promoters | INTEGER | Yes | Promoter count |
 | nps_passives | INTEGER | Yes | Passive count |
 | nps_detractors | INTEGER | Yes | Detractor count |
 | remarks | TEXT | Yes | Batch remarks |
+| comments | TEXT | Yes | Operational comments |
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
-### 6. batch_categories, delivery_modes, accommodations, entities
+### 7. batch_categories, delivery_modes, accommodations, entities
 Common option/reference tables used for batch metadata.
 
 Each has the following shape:
@@ -124,7 +146,7 @@ Each has the following shape:
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
-### 7. approval_configurations
+### 8. approval_configurations
 Stores approval assignment configuration between approvers.
 
 | Column | Type | Nullable | Notes |
@@ -132,9 +154,10 @@ Stores approval assignment configuration between approvers.
 | id | UUID | No | Primary key |
 | approver_1_id | UUID | Yes | FK to users.id |
 | approver_2_id | UUID | Yes | FK to users.id |
+| created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
-### 8. training_sessions
+### 9. training_sessions
 Represents the planned day-wise schedule for a batch.
 
 | Column | Type | Nullable | Notes |
@@ -148,13 +171,15 @@ Represents the planned day-wise schedule for a batch.
 | start_time | TIME | Yes | Planned start |
 | end_time | TIME | Yes | Planned end |
 | duration_hours | NUMERIC(5,2) | No | Duration |
-| module | VARCHAR(255) | No | Module title |
+| module | TEXT | No | Module title |
 | trainer_name | VARCHAR(255) | Yes | Trainer name |
 | status | VARCHAR(30) | No | Scheduled / InProgress / etc. |
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
-### 9. faculty_utilization
+Unique constraint: (batch_id, session_date, module)
+
+### 10. faculty_utilization
 Tracks actual delivery and utilization records for faculty sessions.
 
 | Column | Type | Nullable | Notes |
@@ -166,20 +191,19 @@ Tracks actual delivery and utilization records for faculty sessions.
 | date_of_training | TIMESTAMPTZ | No | Delivery timestamp |
 | start_time | TIME | Yes | Actual start time |
 | end_time | TIME | Yes | Actual end time |
-| topic | VARCHAR(255) | No | Session topic |
+| topic | TEXT | No | Session topic |
 | no_of_hours | NUMERIC(5,2) | No | Hours delivered |
 | venue | VARCHAR(255) | Yes | Delivery venue |
 | location_city | VARCHAR(100) | Yes | City |
 | mode_of_delivery | VARCHAR(50) | No | Online / Offline / etc. |
 | status | VARCHAR(30) | No | Scheduled / Completed / Cancelled |
 | feedback_submitted | BOOLEAN | No | Feedback submitted flag |
-| feedback_rating | NUMERIC(3,2) | Yes | Feedback score |
+| feedback_rating | NUMERIC(3,2) | Yes | Feedback score (1.0-5.0) |
 | feedback_notes | TEXT | Yes | Detailed feedback |
 | outcome_reason | TEXT | Yes | Outcome explanation |
 | outcome_at | TIMESTAMPTZ | Yes | Outcome timestamp |
 | outcome_by | UUID | Yes | FK to users.id |
-| replacement_session_id | UUID | Yes | FK to faculty_utilization.id |
-| vertical | VARCHAR(50) | Yes | Internal/External/HOP classification |
+| replacement_session_id | UUID | Yes | FK to faculty_utilization.id (self-ref) |
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
@@ -189,6 +213,7 @@ Tracks actual delivery and utilization records for faculty sessions.
 - Role 1 --- * User
 - User 1 --- * User (manager hierarchy)
 - User 1 --- * UserManagerMapping
+- User 1 --- * AuditLog
 - Batch * --- 1 User (primary_manager, coordinator, approver, sales_spoc)
 - Batch 1 --- * TrainingSession
 - Batch 1 --- * FacultyUtilization
@@ -214,16 +239,22 @@ The schema above is derived from the SQLAlchemy model files in the backend:
 ## DBML Schema
 
 ```dbml
+// Enterprise Operations Platform - Database Schema
+// Generated from actual SQLAlchemy models and Alembic migration
+
 Table users {
   id uuid [pk]
   email varchar(255) [not null, unique]
   hashed_password varchar(255) [not null]
   full_name varchar(255) [not null]
-  role varchar(50) [not null]
+  role varchar(50) [not null, default: 'Coordinator']
   role_id uuid [null]
   team_id uuid [null]
   manager_id uuid [null]
   is_active boolean [not null, default: true]
+  failed_login_attempts integer [not null, default: 0]
+  locked_until timestamptz [null]
+  last_login_at timestamptz [null]
   created_at timestamptz [not null]
 
   indexes {
@@ -237,7 +268,7 @@ Table users {
 Table roles {
   id uuid [pk]
   name varchar(100) [not null, unique]
-  system_role varchar(50) [not null]
+  system_role varchar(50) [not null, default: 'Coordinator']
   is_active boolean [not null, default: true]
   created_at timestamptz [not null]
 }
@@ -256,6 +287,24 @@ Table user_manager_mappings {
   coordinator_id uuid [not null]
   manager_id uuid [not null]
   assigned_at timestamptz [not null]
+}
+
+Table audit_logs {
+  id uuid [pk]
+  event_type varchar(50) [not null]
+  user_id uuid [null]
+  user_email varchar(255) [null]
+  ip_address varchar(45) [null]
+  user_agent text [null]
+  details text [null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (event_type)
+    (user_id)
+    (user_email)
+    (created_at)
+  }
 }
 
 Table batch_categories {
@@ -300,6 +349,7 @@ Table batches {
   sow_number varchar(100) [null]
   approval_id varchar(100) [null]
   category varchar(100) [not null, default: 'Bootcamp']
+  residential_type varchar(2) [null]
   entity_id uuid [null]
   category_id uuid [null]
   delivery_mode_id uuid [null]
@@ -316,6 +366,8 @@ Table batches {
   calendar_days integer [null]
   total_hours numeric(8,2) [not null, default: 0.00]
   total_enrollments integer [not null, default: 0]
+  residential_enrollments integer [not null, default: 0]
+  non_residential_enrollments integer [not null, default: 0]
   status varchar(50) [not null, default: 'Requested']
   is_schema_locked boolean [not null, default: false]
   approver_1_id uuid [null]
@@ -332,20 +384,39 @@ Table batches {
   finance_status_check_date date [null]
   finance_check integer [null]
   batch_avg_feedback numeric(3,2) [null]
+  total_feedback_score numeric(10,2) [null]
   batch_nps numeric(6,2) [null]
   nps_total_responses integer [null]
   nps_promoters integer [null]
   nps_passives integer [null]
   nps_detractors integer [null]
   remarks text [null]
+  comments text [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (batch_id) [unique]
+    (sow_number)
+    (approval_id)
+    (program_name)
+    (client_name)
+    (status)
+    (start_date)
+    (end_date)
+    (approver_1_id)
+    (approver_2_id)
+    (primary_manager_id)
+    (coordinator_id)
+    (sales_spoc_id)
+  }
 }
 
 Table approval_configurations {
   id uuid [pk]
   approver_1_id uuid [null]
   approver_2_id uuid [null]
+  created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
 
@@ -359,11 +430,18 @@ Table training_sessions {
   start_time time [null]
   end_time time [null]
   duration_hours numeric(5,2) [not null, default: 8.00]
-  module varchar(255) [not null]
+  module text [not null]
   trainer_name varchar(255) [null]
   status varchar(30) [not null, default: 'Scheduled']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (batch_id)
+    (session_date)
+    (status)
+    (trainer_name)
+  }
 }
 
 Table faculty_utilization {
@@ -374,7 +452,7 @@ Table faculty_utilization {
   date_of_training timestamptz [not null]
   start_time time [null]
   end_time time [null]
-  topic varchar(255) [not null]
+  topic text [not null]
   no_of_hours numeric(5,2) [not null, default: 8.00]
   venue varchar(255) [null]
   location_city varchar(100) [null]
@@ -390,13 +468,27 @@ Table faculty_utilization {
   vertical varchar(50) [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (batch_id)
+    (training_session_id)
+    (faculty_name)
+    (date_of_training)
+    (status)
+    (outcome_by)
+    (replacement_session_id)
+  }
 }
 
 Ref: users.role_id > roles.id
 Ref: users.team_id > teams.id
 Ref: users.manager_id > users.id
+
 Ref: user_manager_mappings.coordinator_id > users.id
 Ref: user_manager_mappings.manager_id > users.id
+
+Ref: audit_logs.user_id > users.id
+
 Ref: batches.entity_id > entities.id
 Ref: batches.category_id > batch_categories.id
 Ref: batches.delivery_mode_id > delivery_modes.id
@@ -406,9 +498,12 @@ Ref: batches.coordinator_id > users.id
 Ref: batches.sales_spoc_id > users.id
 Ref: batches.approver_1_id > users.id
 Ref: batches.approver_2_id > users.id
+
 Ref: approval_configurations.approver_1_id > users.id
 Ref: approval_configurations.approver_2_id > users.id
+
 Ref: training_sessions.batch_id > batches.id
+
 Ref: faculty_utilization.batch_id > batches.id
 Ref: faculty_utilization.training_session_id > training_sessions.id
 Ref: faculty_utilization.outcome_by > users.id

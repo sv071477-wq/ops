@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone, time, date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, Uuid
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, Uuid, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -11,6 +11,9 @@ from app.core.database import Base
 class TrainingSession(Base):
     """Stores the ingested day-wise curriculum schedule for a batch."""
     __tablename__ = "training_sessions"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "session_date", "module", name="uq_batch_date_module"),
+    )
 
     id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     batch_id = Column(Uuid(as_uuid=True), ForeignKey("batches.id", ondelete="CASCADE"), nullable=False, index=True)

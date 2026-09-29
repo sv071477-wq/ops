@@ -12,7 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.database import SessionLocal
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, validate_password_strength
 from app.models.user import Role, Team, User
 
 
@@ -30,8 +30,14 @@ DEFAULT_USERS = (
 
 def main() -> int:
     password = os.getenv("DEFAULT_USER_PASSWORD")
-    if not password or len(password) < 8:
-        print("Error: DEFAULT_USER_PASSWORD must contain at least 8 characters", file=sys.stderr)
+    if not password:
+        print("Error: DEFAULT_USER_PASSWORD environment variable is required", file=sys.stderr)
+        return 2
+    
+    # Validate password strength
+    errors = validate_password_strength(password)
+    if errors:
+        print(f"Error: DEFAULT_USER_PASSWORD does not meet policy: {'; '.join(errors)}", file=sys.stderr)
         return 2
 
     db = SessionLocal()

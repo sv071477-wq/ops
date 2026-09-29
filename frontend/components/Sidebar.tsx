@@ -180,16 +180,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar */}
       <aside
-        ref={sidebarRef}
-        className={cn(
-          "fixed left-0 top-0 z-50 h-full bg-card border-r border-border transition-all duration-300 ease-in-out flex flex-col",
-          "shadow-xl",
-          isMobile ? "w-72 transform" : isCollapsed ? "w-[72px]" : "w-[256px]",
-          isMobile && !isSidebarOpen ? "-translate-x-full" : "translate-x-0",
-          "lg:relative lg:translate-x-0"
-        )}
-        style={{ width: sidebarWidth }}
-        aria-label="Main navigation"
+        className="sidebar"
       >
         {/* Top Header: Brand / Team Selector */}
         <div style={{ position: "relative" }} ref={workspaceMenuRef}>
@@ -197,14 +188,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
             variant="ghost"
             className="w-full justify-start gap-3 p-2"
             onClick={() => setIsWorkspaceMenuOpen(!isWorkspaceMenuOpen)}
-            aria-expanded={isWorkspaceMenuOpen}
-            aria-haspopup="true"
+            className={`sidebar-header ${isWorkspaceMenuOpen ? 'open' : ''}`}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "6px 8px",
+              background: isWorkspaceMenuOpen ? "#f8fafc" : "transparent",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              outline: "none",
+              transition: "background 0.15s ease",
+            }}
+            onMouseOver={(e) => {
+              if (!isWorkspaceMenuOpen) e.currentTarget.style.background = "#f8fafc";
+            }}
+            onMouseOut={(e) => {
+              if (!isWorkspaceMenuOpen) e.currentTarget.style.background = "transparent";
+            }}
           >
-            {!isCollapsed && (
-              <>
-                {/* Logo emblem */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {/* Logo emblem */}
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#ffffff",
+                  boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
+                  position: "relative",
+                  flexShrink: 0,
+                }}
+              >
+                <Layers size={18} strokeWidth={2.5} />
+              </div>
+
+              <div style={{ textAlign: "left" }}>
                 <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                   style={{
                     background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
                     boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",

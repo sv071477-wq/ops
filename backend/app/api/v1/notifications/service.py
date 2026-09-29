@@ -2,6 +2,8 @@ import logging
 from typing import List, Optional
 from uuid import UUID
 
+from app.core.email import get_email_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,6 +15,7 @@ class NotificationService:
             f"[NOTIFICATION TRIGGERED] Batch {batch.batch_id} submitted for approval. "
             f"Approver 1: {batch.approver_1_id}, Approver 2: {batch.approver_2_id}"
         )
+        await cls._send_approval_emails(batch, "requested")
 
     @classmethod
     async def notify_approval_decision(cls, batch, level: int, decision: str):
@@ -20,6 +23,7 @@ class NotificationService:
             f"[NOTIFICATION TRIGGERED] Batch {batch.batch_id} approval level {level}: {decision}. "
             f"Current status: {batch.status}"
         )
+        await cls._send_approval_emails(batch, f"level_{level}_{decision}")
 
     @classmethod
     async def notify_batch_approved(cls, batch_id: str, approval_id: str, manager_email: Optional[str], sales_email: Optional[str]):
@@ -28,6 +32,24 @@ class NotificationService:
             f"[NOTIFICATION TRIGGERED] Batch {batch_id} Approved with SOW ID {approval_id}. "
             f"Recipients: Manager ({manager_email}), Sales ({sales_email})"
         )
+        email_service = get_email_service()
+        
+        subject = f"Batch Approved: {batch_id}"
+        html = f"""
+        <h2>Batch Approved</h2>
+        <p>Batch <strong>{batch_id}</strong> has been approved and schema locked.</p>
+        <p>Approval ID: <strong>{approval_id}</strong></p>
+        <p>You can now proceed with scheduling and delivery.</p>
+        """
+        
+        for email in [manager_email, sales_email]:
+            if email:
+                await email_service.send_email(
+                    to_email=email,
+                    subject=subject,
+                    html_content=html,
+                    text_content=f"Batch {batch_id} approved with Approval ID {approval_id}"
+                )
 
     @classmethod
     async def notify_session_scheduled(cls, faculty_name: str, faculty_email: Optional[str], date_str: str, topic: str):
@@ -35,6 +57,25 @@ class NotificationService:
         logger.info(
             f"[NOTIFICATION TRIGGERED] Session Scheduled for {faculty_name} ({faculty_email}) on {date_str} - Topic: {topic}"
         )
+        if faculty_email:
+            email_service = get_email_service()
+            subject = f"Session Scheduled: {topic} on {date_str}"
+            html = f"""
+            <h2>New Session Scheduled</h2>
+            <p>Hello <strong>{faculty_name}</strong>,</p>
+            <p>A new training session has been scheduled for you:</p>
+            <ul>
+                <li><strong>Topic:</strong> {topic}</li>
+                <li><strong>Date:</strong> {date_str}</li>
+            </ul>
+            <p>Please check the platform for full details.</p>
+            """
+            await email_service.send_email(
+                to_email=faculty_email,
+                subject=subject,
+                html_content=html,
+                text_content=f"New session scheduled: {topic} on {date_str}"
+            )
 
     @classmethod
     async def notify_gate_completion(cls, batch_id: str, gate_name: str, score: str):
@@ -42,3 +83,16 @@ class NotificationService:
         logger.info(
             f"[NOTIFICATION TRIGGERED] Quality Gate '{gate_name}' completed for Batch {batch_id} with Score: {score}"
         )
+
+    @classmethod
+    async def _send_approval_emails(cls, batch, event_type: str):
+        """Send approval-related emails to relevant stakeholders."""
+        email_service = get_email_service()
+        
+        # Get approver emails
+        approver_emails = []
+        if batch.approver_1_id:
+            approver1 = batch.approver_1  # This would need to be loaded
+        # In practice, we'd query the database for user emails
+        # For now, just log
+        logger.info(f"Approval email for batch {batch.batch_id}, event: {event_type}")

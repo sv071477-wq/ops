@@ -269,6 +269,13 @@ export default function DashboardPage() {
     }
   }, [user, activeView]);
 
+  // Re-fetch batches when filter dropdowns change in batches view
+  useEffect(() => {
+    if (user && activeView === "batches") {
+      fetchBatches();
+    }
+  }, [statusFilter, domainFilter, categoryFilter]);
+
   // Auto-switch to manager_board on initial login for managers
   useEffect(() => {
     const teamName = user?.team_name?.trim().toLowerCase();
@@ -590,18 +597,18 @@ export default function DashboardPage() {
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
               gap: 16,
-              marginBottom: 28
+              marginBottom: 24
             }}>
-              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(239,246,255,0.9))", borderColor: "rgba(137, 176, 218, 0.9)" }}>
+              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Total Batches
                   </span>
-                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(11, 92, 171, 0.1)" }}>
-                    <Layers size={18} color="#0b5cab" />
+                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#f1f5f9" }}>
+                    <Layers size={17} color="#0b5cab" />
                   </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--text-main)", marginTop: 8, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "var(--text-main)", marginTop: 6, fontFamily: "var(--font-display)" }}>
                   {metrics.total}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -609,16 +616,16 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,249,235,0.9))", borderColor: "rgba(225, 177, 85, 0.8)" }}>
+              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     In Review / Pending
                   </span>
-                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(217, 119, 6, 0.10)" }}>
-                    <Clock size={18} color="#d97706" />
+                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#fef3c7" }}>
+                    <Clock size={17} color="#d97706" />
                   </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#d97706", marginTop: 8, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#d97706", marginTop: 6, fontFamily: "var(--font-display)" }}>
                   {metrics.requested}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -626,16 +633,16 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(245,249,255,0.9))", borderColor: "rgba(134, 167, 214, 0.75)" }}>
+              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Approved Batches
                   </span>
-                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(11, 92, 171, 0.10)" }}>
-                    <CheckCircle2 size={18} color="#0b5cab" />
+                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#e0f2fe" }}>
+                    <CheckCircle2 size={17} color="#0b5cab" />
                   </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#0b5cab", marginTop: 8, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#0b5cab", marginTop: 6, fontFamily: "var(--font-display)" }}>
                   {metrics.approved}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -643,23 +650,22 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="glass-panel" style={{ padding: "18px 20px", background: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(240,253,250,0.9))", borderColor: "rgba(128, 201, 167, 0.8)" }}>
+              <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Live Delivery
                   </span>
-                  <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(22, 163, 74, 0.10)" }}>
-                    <PlayCircle size={18} color="#16a34a" />
+                  <div style={{ width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, background: "#dcfce7" }}>
+                    <PlayCircle size={17} color="#16a34a" />
                   </div>
                 </div>
-                <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#16a34a", marginTop: 8, fontFamily: "var(--font-display)" }}>
+                <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#16a34a", marginTop: 6, fontFamily: "var(--font-display)" }}>
                   {metrics.ongoing}
                 </div>
                 <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
                   Active training sessions
                 </div>
               </div>
-
             </div>
 
             {/* Filter & Search Bar */}
@@ -1015,29 +1021,35 @@ export default function DashboardPage() {
               const pendingCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status || "Pending") === "Pending").length;
               const clearedCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status) === "Cleared").length;
               return (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-                  {[
-                    { label: "Pending", count: pendingCount, bg: "#fef9ec", border: "#fcd34d", color: "#d97706" },
-                    { label: "Cleared", count: clearedCount, bg: "#f0fdf4", border: "#86efac", color: "#16a34a" },
-                  ].map(({ label, count, bg, border, color }) => (
-                    <div key={label} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <div>
-                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
-                        <div style={{ fontSize: "1.6rem", fontWeight: 800, color, fontFamily: "var(--font-display)" }}>{count}</div>
-                      </div>
-                      <div style={{ width: 36, height: 36, borderRadius: 8, background: `${border}55`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: "1.1rem" }}>{label === "Pending" ? "⏳" : "✅"}</span>
-                      </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
+                  <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                    <div>
+                      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pending Review</div>
+                      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2, fontFamily: "var(--font-display)" }}>{pendingCount}</div>
                     </div>
-                  ))}
+                    <div style={{ width: 34, height: 34, borderRadius: 6, background: "#fef3c7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Clock size={17} color="#d97706" />
+                    </div>
+                  </div>
+
+                  <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                    <div>
+                      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.05em" }}>Cleared</div>
+                      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2, fontFamily: "var(--font-display)" }}>{clearedCount}</div>
+                    </div>
+                    <div style={{ width: 34, height: 34, borderRadius: 6, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <CheckCircle2 size={17} color="#16a34a" />
+                    </div>
+                  </div>
+
                   {dirtyFinanceCount > 0 && (
-                    <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ background: "#ffffff", border: "1px solid #fed7aa", borderRadius: 8, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
                       <div>
-                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#ea580c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Unsaved</div>
-                        <div style={{ fontSize: "1.6rem", fontWeight: 800, color: "#ea580c", fontFamily: "var(--font-display)" }}>{dirtyFinanceCount}</div>
+                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#ea580c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Unsaved Rows</div>
+                        <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#ea580c", marginTop: 2, fontFamily: "var(--font-display)" }}>{dirtyFinanceCount}</div>
                       </div>
-                      <div style={{ width: 36, height: 36, borderRadius: 8, background: "#fed7aa55", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: "1.1rem" }}>✏️</span>
+                      <div style={{ width: 34, height: 34, borderRadius: 6, background: "#ffedd5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: "0.95rem" }}>✏️</span>
                       </div>
                     </div>
                   )}
@@ -1308,11 +1320,11 @@ export default function DashboardPage() {
             {/* Utilization stats cards */}
             {facultyUtilization && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-                <div className="glass-panel" style={{ padding: "16px 20px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Total Faculty Pool
                   </div>
-                  <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#0b5cab", marginTop: 4 }}>
+                  <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "var(--text-main)", marginTop: 4, fontFamily: "var(--font-display)" }}>
                     {facultyUtilization.total_faculty_count}
                   </div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -1320,11 +1332,11 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="glass-panel" style={{ padding: "16px 20px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Active Deployed
                   </div>
-                  <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
+                  <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#16a34a", marginTop: 4, fontFamily: "var(--font-display)" }}>
                     {facultyUtilization.active_deployed_faculty}
                   </div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
@@ -1332,11 +1344,11 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="glass-panel" style={{ padding: "16px 20px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "16px 20px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
                     Utilization Ratio
                   </div>
-                  <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#7c3aed", marginTop: 4 }}>
+                  <div style={{ fontSize: "1.75rem", fontWeight: 700, color: "#0b5cab", marginTop: 4, fontFamily: "var(--font-display)" }}>
                     {facultyUtilization.overall_utilization_percentage}%
                   </div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>

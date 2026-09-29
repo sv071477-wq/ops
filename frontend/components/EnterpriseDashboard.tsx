@@ -1014,7 +1014,16 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   // Team KPI cards data
   const teamKpiData = useMemo(() =>
     teamList.map((t) => {
-      const s = teamBatchStats.get(t.id)!;
+      const s = teamBatchStats.get(t.id) || {
+        active: 0,
+        completed: 0,
+        pipeline: 0,
+        total: 0,
+        hours: 0,
+        enrollments: 0,
+        npsValues: [],
+        feedbackValues: [],
+      };
       const composition = teamRoleComposition.get(t.id) || {};
       const memberCount = Object.values(composition).reduce((a, b) => a + b, 0);
       const avgNps = s.npsValues.length > 0 ? s.npsValues.reduce((a, b) => a + b, 0) / s.npsValues.length : null;
