@@ -383,25 +383,25 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
   return (
     <div className="modal-overlay">
       <div
-        className="modal-content glass-panel"
+        className="modal-content"
         style={{
-          maxWidth: 820,
+          maxWidth: 800,
           width: "95%",
-          maxHeight: "92vh",
+          maxHeight: "90vh",
           display: "flex",
           flexDirection: "column",
-          borderRadius: 20,
+          borderRadius: 8,
           overflow: "hidden",
-          border: "1px solid rgba(160, 190, 223, 0.8)",
-          boxShadow: "0 24px 48px rgba(15, 23, 42, 0.16)",
+          border: "1px solid #e2e8f0",
+          boxShadow: "var(--shadow-lg)",
         }}
       >
         {/* Header with Progress Bar */}
         <div
           style={{
-            padding: "20px 28px 16px 28px",
-            borderBottom: "1px solid var(--border-subtle)",
-            background: "linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.94) 100%)",
+            padding: "16px 24px 14px 24px",
+            borderBottom: "1px solid #e2e8f0",
+            background: "#f8fafc",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -1092,9 +1092,9 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
         {/* Modal Footer Controls */}
         <div
           style={{
-            padding: "16px 28px",
-            borderTop: "1px solid var(--border-subtle)",
-            background: "#ffffff",
+            padding: "14px 24px",
+            borderTop: "1px solid #e2e8f0",
+            background: "#f8fafc",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",

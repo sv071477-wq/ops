@@ -108,28 +108,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       <aside
-        style={{
-          width: 256,
-          flexShrink: 0,
-          background: "#ffffff",
-          borderRadius: 20,
-          border: "1px solid #e5e7eb",
-          boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.04), 0 2px 6px -1px rgba(0, 0, 0, 0.02)",
-          padding: "14px 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-          alignSelf: "stretch",
-          minHeight: "calc(100vh - 32px)",
-          boxSizing: "border-box",
-          fontFamily: "var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif)",
-          userSelect: "none",
-        }}
+        className="sidebar"
       >
         {/* TOP HEADER: Brand / Team Selector */}
         <div style={{ position: "relative" }} ref={workspaceMenuRef}>
           <button
             onClick={() => setIsWorkspaceMenuOpen(!isWorkspaceMenuOpen)}
+            className={`sidebar-header ${isWorkspaceMenuOpen ? 'open' : ''}`}
             style={{
               width: "100%",
               display: "flex",

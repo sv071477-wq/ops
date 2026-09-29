@@ -322,7 +322,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setIsSubmittingUtil(true);
     setUtilError(null);
     try {
-      const dateOfTrainingIso = new Date(`${utilDate}T${utilStartTime || "09:00"}:00`).toISOString();
+      const rawDate = utilDate ? `${utilDate}T${utilStartTime || "09:00"}:00` : new Date().toISOString();
+      const parsedD = new Date(rawDate);
+      const dateOfTrainingIso = isNaN(parsedD.getTime()) ? new Date().toISOString() : parsedD.toISOString();
       const feedbackEntered = utilFeedbackCollected === "yes" && (utilFeedbackNotes.trim().length > 0 || Number(utilFeedbackRating) > 0);
       await api.createSession({
         batch_id: target.id,

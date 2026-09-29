@@ -6,6 +6,7 @@ from decimal import Decimal
 import pandas as pd
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from uuid import UUID
 from app.schemas.schedule import (
     ExtractedScheduleItem,
@@ -386,6 +387,17 @@ class ExcelIngestionService:
             db.commit()
             for session in sessions:
                 db.refresh(session)
+        except IntegrityError as e:
+            db.rollback()
+            # Handle unique constraint violation on (batch_id, session_date, module)
+            if "uq_batch_date_module" in str(e.orig):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"message": "Schedule was not applied", "errors": [
+                        {"source_row": 0, "message": "Duplicate session detected: same batch, date, and module already exists"}
+                    ]}
+                )
+            raise
         except Exception:
             db.rollback()
             raise

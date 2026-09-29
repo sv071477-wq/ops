@@ -17,6 +17,27 @@ from app.api.deps_services import get_excel_ingestion_service
 
 router = APIRouter()
 
+# File upload limits
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+ALLOWED_SCHEDULE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+
+async def validate_upload_file(file: UploadFile, max_size: int = MAX_UPLOAD_SIZE, allowed_extensions: set | None = None) -> bytes:
+    """Validate uploaded file size and extension, return file contents."""
+    if allowed_extensions:
+        filename = file.filename or ""
+        if not any(filename.lower().endswith(ext) for ext in allowed_extensions):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File must be one of: {', '.join(sorted(allowed_extensions))}"
+            )
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum allowed size of {max_size // (1024*1024)} MB"
+        )
+    return content
+
 
 @router.post("/validate", response_model=ScheduleValidationResponse)
 def validate_schedule_slots(
@@ -71,14 +92,8 @@ async def ingest_timetable_file(
     service: ExcelIngestionService = Depends(get_excel_ingestion_service)
 ) -> Any:
     """Workflow 2: Extract timetable rows from Excel or CSV without persistence."""
+    file_bytes = validate_upload_file(file, allowed_extensions=ALLOWED_SCHEDULE_EXTENSIONS)
     filename = file.filename or "uploaded_schedule"
-    if not filename.lower().endswith((".xlsx", ".xls", ".csv")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File must be an Excel (.xlsx, .xls) or CSV spreadsheet."
-        )
-
-    file_bytes = await file.read()
     result = service.ingest_schedule_file(
         file_contents=file_bytes,
         filename=filename,

@@ -25,18 +25,25 @@ export function formatDate(
       return trimmed;
     }
 
-    // Match DD/MM/YYYY
-    const slashMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    // Match DD/MM/YYYY vs MM/DD/YYYY (slash format)
+    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if (slashMatch) {
-      const [, dd, mm, yyyy] = slashMatch;
-      return `${dd}-${mm}-${yyyy}`;
-    }
-
-    // Match MM/DD/YYYY (US format)
-    const usMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (usMatch && parseInt(usMatch[1], 10) <= 12) {
-      const [, mm, dd, yyyy] = usMatch;
-      return `${dd}-${mm}-${yyyy}`;
+      const p1 = parseInt(slashMatch[1], 10);
+      const p2 = parseInt(slashMatch[2], 10);
+      const yyyy = slashMatch[3];
+      
+      // If p1 > 12, it must be DD/MM/YYYY
+      // If p1 <= 12 and p2 > 12, it must be MM/DD/YYYY
+      // Otherwise default to DD/MM/YYYY
+      if (p1 <= 12 && p2 > 12) {
+        const mm = String(p1).padStart(2, "0");
+        const dd = String(p2).padStart(2, "0");
+        return `${dd}-${mm}-${yyyy}`;
+      } else {
+        const dd = String(p1).padStart(2, "0");
+        const mm = String(p2).padStart(2, "0");
+        return `${dd}-${mm}-${yyyy}`;
+      }
     }
   }
 
@@ -74,15 +81,29 @@ export function parseToISO(dateValue?: string | Date | null): string | null {
     if (!trimmed) return null;
     
     // Already ISO format
-    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
-      return trimmed;
+    if (/^\d{4}-\d{2}-\d{2}(?:T|\s|$)/.test(trimmed)) {
+      const d = new Date(trimmed);
+      return isNaN(d.getTime()) ? null : d.toISOString();
     }
     
     // DD-MM-YYYY
-    const dashMatch = trimmed.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    const dashMatch = trimmed.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
     if (dashMatch) {
-      const [, dd, mm, yyyy] = dashMatch;
-      return `${yyyy}-${mm}-${dd}T00:00:00`;
+      const dd = String(dashMatch[1]).padStart(2, "0");
+      const mm = String(dashMatch[2]).padStart(2, "0");
+      const yyyy = dashMatch[3];
+      return `${yyyy}-${mm}-${dd}T00:00:00.000Z`;
+    }
+
+    // DD/MM/YYYY or MM/DD/YYYY
+    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashMatch) {
+      const p1 = parseInt(slashMatch[1], 10);
+      const p2 = parseInt(slashMatch[2], 10);
+      const yyyy = slashMatch[3];
+      const dd = p1 <= 12 && p2 > 12 ? String(p2).padStart(2, "0") : String(p1).padStart(2, "0");
+      const mm = p1 <= 12 && p2 > 12 ? String(p1).padStart(2, "0") : String(p2).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}T00:00:00.000Z`;
     }
   }
   

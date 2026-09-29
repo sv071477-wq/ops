@@ -1,13 +1,19 @@
+// Enterprise Operations Platform - Database Schema
+// Generated from actual SQLAlchemy models and Alembic migration
+
 Table users {
   id uuid [pk]
   email varchar(255) [not null, unique]
   hashed_password varchar(255) [not null]
   full_name varchar(255) [not null]
-  role varchar(50) [not null]
+  role varchar(50) [not null, default: 'Coordinator']
   role_id uuid [null]
   team_id uuid [null]
   manager_id uuid [null]
   is_active boolean [not null, default: true]
+  failed_login_attempts integer [not null, default: 0]
+  locked_until timestamptz [null]
+  last_login_at timestamptz [null]
   created_at timestamptz [not null]
 
   indexes {
@@ -21,7 +27,7 @@ Table users {
 Table roles {
   id uuid [pk]
   name varchar(100) [not null, unique]
-  system_role varchar(50) [not null]
+  system_role varchar(50) [not null, default: 'Coordinator']
   is_active boolean [not null, default: true]
   created_at timestamptz [not null]
 }
@@ -40,6 +46,24 @@ Table user_manager_mappings {
   coordinator_id uuid [not null]
   manager_id uuid [not null]
   assigned_at timestamptz [not null]
+}
+
+Table audit_logs {
+  id uuid [pk]
+  event_type varchar(50) [not null]
+  user_id uuid [null]
+  user_email varchar(255) [null]
+  ip_address varchar(45) [null]
+  user_agent text [null]
+  details text [null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (event_type)
+    (user_id)
+    (user_email)
+    (created_at)
+  }
 }
 
 Table batch_categories {
@@ -84,6 +108,7 @@ Table batches {
   sow_number varchar(100) [null]
   approval_id varchar(100) [null]
   category varchar(100) [not null, default: 'Bootcamp']
+  residential_type varchar(2) [null]
   entity_id uuid [null]
   category_id uuid [null]
   delivery_mode_id uuid [null]
@@ -100,6 +125,8 @@ Table batches {
   calendar_days integer [null]
   total_hours numeric(8,2) [not null, default: 0.00]
   total_enrollments integer [not null, default: 0]
+  residential_enrollments integer [not null, default: 0]
+  non_residential_enrollments integer [not null, default: 0]
   status varchar(50) [not null, default: 'Requested']
   is_schema_locked boolean [not null, default: false]
   approver_1_id uuid [null]
@@ -116,20 +143,39 @@ Table batches {
   finance_status_check_date date [null]
   finance_check integer [null]
   batch_avg_feedback numeric(3,2) [null]
+  total_feedback_score numeric(10,2) [null]
   batch_nps numeric(6,2) [null]
   nps_total_responses integer [null]
   nps_promoters integer [null]
   nps_passives integer [null]
   nps_detractors integer [null]
   remarks text [null]
+  comments text [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (batch_id) [unique]
+    (sow_number)
+    (approval_id)
+    (program_name)
+    (client_name)
+    (status)
+    (start_date)
+    (end_date)
+    (approver_1_id)
+    (approver_2_id)
+    (primary_manager_id)
+    (coordinator_id)
+    (sales_spoc_id)
+  }
 }
 
 Table approval_configurations {
   id uuid [pk]
   approver_1_id uuid [null]
   approver_2_id uuid [null]
+  created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
 
@@ -143,11 +189,18 @@ Table training_sessions {
   start_time time [null]
   end_time time [null]
   duration_hours numeric(5,2) [not null, default: 8.00]
-  module varchar(255) [not null]
+  module text [not null]
   trainer_name varchar(255) [null]
   status varchar(30) [not null, default: 'Scheduled']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (batch_id)
+    (session_date)
+    (status)
+    (trainer_name)
+  }
 }
 
 Table faculty_utilization {
@@ -158,7 +211,7 @@ Table faculty_utilization {
   date_of_training timestamptz [not null]
   start_time time [null]
   end_time time [null]
-  topic varchar(255) [not null]
+  topic text [not null]
   no_of_hours numeric(5,2) [not null, default: 8.00]
   venue varchar(255) [null]
   location_city varchar(100) [null]
@@ -173,13 +226,27 @@ Table faculty_utilization {
   replacement_session_id uuid [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+
+  indexes {
+    (batch_id)
+    (training_session_id)
+    (faculty_name)
+    (date_of_training)
+    (status)
+    (outcome_by)
+    (replacement_session_id)
+  }
 }
 
 Ref: users.role_id > roles.id
 Ref: users.team_id > teams.id
 Ref: users.manager_id > users.id
+
 Ref: user_manager_mappings.coordinator_id > users.id
 Ref: user_manager_mappings.manager_id > users.id
+
+Ref: audit_logs.user_id > users.id
+
 Ref: batches.entity_id > entities.id
 Ref: batches.category_id > batch_categories.id
 Ref: batches.delivery_mode_id > delivery_modes.id
@@ -189,9 +256,12 @@ Ref: batches.coordinator_id > users.id
 Ref: batches.sales_spoc_id > users.id
 Ref: batches.approver_1_id > users.id
 Ref: batches.approver_2_id > users.id
+
 Ref: approval_configurations.approver_1_id > users.id
 Ref: approval_configurations.approver_2_id > users.id
+
 Ref: training_sessions.batch_id > batches.id
+
 Ref: faculty_utilization.batch_id > batches.id
 Ref: faculty_utilization.training_session_id > training_sessions.id
 Ref: faculty_utilization.outcome_by > users.id

@@ -11,18 +11,25 @@ def create_db_engine():
         engine_kwargs["connect_args"] = {"check_same_thread": False}
         return create_engine(db_url, **engine_kwargs)
     
+    # PostgreSQL connection - fail fast in production, allow fallback only in development
     try:
-        # Test PostgreSQL connection with a short timeout
-        test_engine = create_engine(db_url, connect_args={"connect_timeout": 2})
+        test_engine = create_engine(db_url, connect_args={"connect_timeout": 5})
         with test_engine.connect() as conn:
             pass
         engine_kwargs.update({
-            "pool_size": 10,
-            "max_overflow": 20,
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
         })
         return create_engine(db_url, **engine_kwargs)
     except Exception as e:
-        # Fallback to local SQLite database if PostgreSQL server is not active
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(
+                f"PostgreSQL connection failed in production environment. "
+                f"DATABASE_URL={settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}. "
+                f"Original error: {e}"
+            ) from e
+        
+        # Development only: fallback to SQLite
         sqlite_fallback = "sqlite:///./ops_local.db"
         print(f"[DB Notice] PostgreSQL not reachable ({e}). Falling back to SQLite local storage: {sqlite_fallback}")
         engine_kwargs = {"connect_args": {"check_same_thread": False}}

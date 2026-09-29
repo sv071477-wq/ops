@@ -27,7 +27,7 @@ if str(BACKEND_DIR) not in sys.path:
 import openpyxl
 from sqlalchemy import text
 from app.core.database import SessionLocal
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, validate_password_strength
 from app.core.config import settings
 from app.models.user import User, Role, Team, UserManagerMapping
 from app.models.batch import (
@@ -38,8 +38,16 @@ from app.models.session import TrainingSession, FacultyUtilization
 MBR_FILE = Path("/app/project_data/1.MBR_Active Batches.xlsx")
 FACULTY_FILE = Path("/app/project_data/Faculty_Utilisation - Ver 2.0.xlsx")
 
-# Use strong password from environment
-IMPORT_PASSWORD = os.getenv("IMPORT_DATA_PASSWORD") or "Import@SecurePass2024!"
+# Use strong password from environment - REQUIRED, no fallback
+IMPORT_PASSWORD = os.getenv("IMPORT_DATA_PASSWORD")
+if not IMPORT_PASSWORD:
+    print("Error: IMPORT_DATA_PASSWORD environment variable is required", file=sys.stderr)
+    sys.exit(2)
+
+errors = validate_password_strength(IMPORT_PASSWORD)
+if errors:
+    print(f"Error: IMPORT_DATA_PASSWORD does not meet policy: {'; '.join(errors)}", file=sys.stderr)
+    sys.exit(2)
 
 def uid():
     return uuid.uuid4()

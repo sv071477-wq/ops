@@ -325,48 +325,82 @@ class BatchService:
         self.db.refresh(batch)
         return batch
 
+    # Valid lifecycle status transitions
+    # Key: current_status -> Set of allowed next statuses
+    VALID_TRANSITIONS: dict[str, set[str]] = {
+        "Requested": {"Approval 1 Pending", "OnHold", "Cancelled"},
+        "Approval 1 Pending": {"Approval 2 Pending", "Requested", "OnHold", "Cancelled"},  # Requested on rejection
+        "Approval 2 Pending": {"Approved", "Requested", "OnHold", "Cancelled"},  # Requested on rejection
+        "Approved": {"Upcoming", "OnHold", "Cancelled"},
+        "Upcoming": {"Ongoing", "OnHold", "Cancelled", "Approved"},
+        "Ongoing": {"Completed", "OnHold", "Cancelled"},
+        "Completed": {"OnHold"},  # Allow reopening for corrections
+        "OnHold": {"Requested", "Approval 1 Pending", "Approval 2 Pending", "Approved", "Upcoming", "Ongoing", "Cancelled"},
+        "Cancelled": set(),  # Terminal state - no transitions allowed
+    }
+
+    # Statuses that require approval completion before entering
+    APPROVAL_REQUIRED_STATUSES = {"Approved", "Upcoming", "Ongoing", "Completed"}
+
+    def _get_resume_target_status(self, batch: Batch) -> str:
+        """Determine the correct status when resuming from OnHold based on approval state."""
+        if batch.approver_1_status == "Pending":
+            return "Approval 1 Pending"
+        if batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
+            return "Approval 2 Pending"
+        if batch.approver_1_status == "Rejected" or batch.approver_2_status == "Rejected":
+            return "Requested"
+        if batch.approver_1_status == "Approved" and batch.approver_2_status == "Approved":
+            return "Upcoming"
+        return "Approval 1 Pending"
+
+    def _is_approval_complete(self, batch: Batch) -> bool:
+        """Check if both approval levels are approved."""
+        return batch.approver_1_status == "Approved" and batch.approver_2_status == "Approved"
+
     def update_lifecycle_status(self, batch_id: UUID, new_status: str, reason: str, current_user: User) -> Batch:
         batch = self.get(batch_id, current_user)
         self._require_operational_scope(batch, current_user)
 
-        target_status = new_status
-        # If resuming from OnHold or target is 'Resume', resume into the rightful approval status
-        if new_status == "Resume" or (batch.status == "OnHold" and new_status in ["Upcoming", "Approved", "Resume"]):
-            if batch.approver_1_status == "Pending":
-                target_status = "Approval 1 Pending"
-            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
-                target_status = "Approval 2 Pending"
-            elif batch.approver_1_status == "Rejected" or batch.approver_2_status == "Rejected":
-                target_status = "Requested"
-            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Approved":
-                target_status = "Upcoming"
-            else:
-                target_status = "Approval 1 Pending"
+        current_status = batch.status
 
-        # Prevent non-approved batches from jumping straight into Upcoming or Ongoing without approvals
-        if target_status in ["Upcoming", "Ongoing"] and (batch.approver_1_status != "Approved" or batch.approver_2_status != "Approved"):
-            if batch.approver_1_status == "Pending":
-                target_status = "Approval 1 Pending"
-            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
-                target_status = "Approval 2 Pending"
-            else:
-                target_status = "Requested"
+        # Handle "Resume" special case - maps to resuming from OnHold
+        if new_status == "Resume":
+            if current_status != "OnHold":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Resume is only valid when batch is OnHold"
+                )
+            target_status = self._get_resume_target_status(batch)
+        else:
+            target_status = new_status
 
-        allowed_statuses = {
-            "OnHold",
-            "Cancelled",
-            "Upcoming",
-            "Ongoing",
-            "Approved",
-            "Requested",
-            "Approval 1 Pending",
-            "Approval 2 Pending",
-        }
-        if target_status not in allowed_statuses:
+        # Validate transition is allowed
+        allowed_next = self.VALID_TRANSITIONS.get(current_status, set())
+        if target_status not in allowed_next:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid target status '{target_status}'. Allowed: {', '.join(sorted(allowed_statuses))}"
+                detail=f"Invalid status transition from '{current_status}' to '{target_status}'. "
+                       f"Allowed: {', '.join(sorted(allowed_next))}"
             )
+
+        # Prevent entering approval-required statuses without completed approvals
+        if target_status in self.APPROVAL_REQUIRED_STATUSES and not self._is_approval_complete(batch):
+            # Redirect to the appropriate approval pending status
+            if batch.approver_1_status == "Pending":
+                target_status = "Approval 1 Pending"
+            elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
+                target_status = "Approval 2 Pending"
+            else:
+                target_status = "Requested"
+            
+            # If the redirected status isn't allowed from current, that's an error
+            if target_status not in allowed_next:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Cannot transition to '{new_status}': approvals not complete. "
+                           f"Current approval state: Level 1={batch.approver_1_status}, Level 2={batch.approver_2_status}"
+                )
 
         if not reason or len(reason.strip()) < 3:
             raise HTTPException(

@@ -29,6 +29,43 @@ from app.core.database import get_db
 
 router = APIRouter()
 
+# File upload limits
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+ALLOWED_FEEDBACK_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+
+# Pagination limits
+MAX_PAGE_LIMIT = 100
+DEFAULT_PAGE_LIMIT = 50
+
+def validate_upload_file(file: UploadFile, max_size: int = MAX_UPLOAD_SIZE, allowed_extensions: set | None = None) -> None:
+    """Validate uploaded file size and extension."""
+    if allowed_extensions:
+        filename = file.filename or ""
+        if not any(filename.lower().endswith(ext) for ext in allowed_extensions):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File must be one of: {', '.join(sorted(allowed_extensions))}"
+            )
+    # Check file size by reading content
+    content = file.file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum allowed size of {max_size // (1024*1024)} MB"
+        )
+    # Reset file pointer for subsequent reads
+    file.file.seek(0)
+
+def validate_pagination(skip: int = 0, limit: int = DEFAULT_PAGE_LIMIT) -> tuple[int, int]:
+    """Validate and normalize pagination parameters."""
+    if skip < 0:
+        skip = 0
+    if limit < 1:
+        limit = DEFAULT_PAGE_LIMIT
+    if limit > MAX_PAGE_LIMIT:
+        limit = MAX_PAGE_LIMIT
+    return skip, limit
+
 
 @router.get("/approval-config", response_model=ApprovalConfigurationResponse)
 def get_approval_config(
@@ -137,11 +174,12 @@ def list_batches(
     client_name: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = 0,
-    limit: int = 5000,
+    limit: int = DEFAULT_PAGE_LIMIT,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """List batches with RBAC scoping and multi-attribute filters."""
+    skip, limit = validate_pagination(skip, limit)
     return service.list(current_user, status_filter, domain, category, client_name, search, skip, limit)
 
 
@@ -211,9 +249,8 @@ async def import_batch_feedback(
     current_user: User = Depends(require_coordinator_or_above),
 ) -> BatchFeedbackImportResponse:
     """Import and calculate the authoritative final NPS breakdown for a batch."""
+    validate_upload_file(file, allowed_extensions=ALLOWED_FEEDBACK_EXTENSIONS)
     filename = file.filename or "feedback.xlsx"
-    if not filename.lower().endswith((".xlsx", ".xls", ".csv")):
-        raise HTTPException(status_code=400, detail="File must be an Excel (.xlsx, .xls) or CSV spreadsheet")
     return service.import_feedback_workbook(
         batch_id=id,
         file_contents=await file.read(),

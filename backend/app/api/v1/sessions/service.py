@@ -1,6 +1,4 @@
 import re
-import secrets
-import string
 from datetime import datetime, timedelta, timezone, date
 from decimal import Decimal
 from typing import Any, Optional, List
@@ -11,8 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
 from app.models.session import FacultyUtilization, TrainingSession
-from app.models.user import User, Role
-from app.core.security import get_password_hash
+from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionOutcomeRequest, SessionRescheduleRequest,
@@ -185,37 +182,7 @@ class SessionService:
             if faculty:
                 return faculty
 
-            # Provision active Faculty user so schedule creation succeeds seamlessly
-            slug = re.sub(r'[^a-zA-Z0-9]+', '.', clean_name.lower()).strip('.') or "faculty.trainer"
-            email = f"{slug}@ops.faculty.internal"
-            counter = 1
-            while self.db.query(User).filter(User.email == email).first():
-                email = f"{slug}{counter}@ops.faculty.internal"
-                counter += 1
-
-            fac_role = self.db.query(Role).filter(Role.system_role == "Faculty").first()
-            # Generate a secure random password for auto-provisioned faculty
-            alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-            random_password = "".join(secrets.choice(alphabet) for _ in range(16))
-            new_faculty = User(
-                email=email,
-                hashed_password=get_password_hash(random_password),
-                full_name=clean_name,
-                role="Faculty",
-                role_id=fac_role.id if fac_role else None,
-                is_active=True
-            )
-            self.db.add(new_faculty)
-            self.db.commit()
-            self.db.refresh(new_faculty)
-            return new_faculty
-
-        # Fallback to any active faculty in system
-        fallback_fac = self.db.query(User).filter(User.role.ilike("faculty"), User.is_active.is_(True)).first()
-        if fallback_fac:
-            return fallback_fac
-
-        raise HTTPException(status_code=422, detail="faculty_id or faculty_name must be provided to schedule a session")
+        raise HTTPException(status_code=422, detail="Faculty not found. Please provide a valid faculty_id or ensure the faculty user exists in the system.")
 
     def create(self, session_in: SessionCreate, user_id: Optional[UUID] = None) -> FacultyUtilization:
         """Logs a faculty utilization delivery record, optionally linking to a scheduled session day."""
