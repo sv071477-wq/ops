@@ -42,7 +42,16 @@ describe("ApiService error handling", () => {
       )
     );
 
-    const error = await api.createBatch({ batch_id: "X", program_name: "X", delivery_mode: "Online" }).catch((e) => e);
+    const error = await api
+      .createBatch({
+        batch_id: "X",
+        program_name: "X",
+        delivery_mode: "Online",
+        primary_manager_id: "m1",
+        coordinator_id: "c1",
+        sales_spoc_id: "s1",
+      })
+      .catch((e) => e);
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(422);
@@ -175,5 +184,39 @@ describe("ApiService auth token handling", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(401);
+  });
+});
+
+describe("ApiService getBatches ownership scope", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("sends mine=true when the caller asks for its own batches", async () => {
+    let seen: URLSearchParams | null = null;
+    server.use(
+      http.get("*/api/v1/batches", ({ request }) => {
+        seen = new URL(request.url).searchParams;
+        return HttpResponse.json([]);
+      })
+    );
+
+    await api.getBatches({ mine: true });
+
+    expect(seen!.get("mine")).toBe("true");
+  });
+
+  it("omits mine entirely when it is not requested", async () => {
+    let seen: URLSearchParams | null = null;
+    server.use(
+      http.get("*/api/v1/batches", ({ request }) => {
+        seen = new URL(request.url).searchParams;
+        return HttpResponse.json([]);
+      })
+    );
+
+    await api.getBatches({});
+
+    expect(seen!.has("mine")).toBe(false);
   });
 });

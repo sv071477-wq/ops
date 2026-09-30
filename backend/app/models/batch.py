@@ -55,11 +55,18 @@ class Batch(Base):
     approver_1_approved_at = Column(DateTime(timezone=True), nullable=True)
     approver_2_approved_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Approver relationships. The FK columns above are not enough: notification
+    # code resolves the approver User objects, and without these relationships
+    # that access raised AttributeError and failed the whole request.
+    approver_1 = relationship("User", foreign_keys=[approver_1_id])
+    approver_2 = relationship("User", foreign_keys=[approver_2_id])
+
     # Ownership & Operational Roles
     primary_manager_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     coordinator_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     sales_spoc_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     faculty_members = Column(JSON, nullable=True, default=list)
+    faculty_assigned_text = Column(String(500), nullable=True)  # Legacy raw faculty names string
 
     # Financial Milestone Status
     finance_status = Column(String(50), default="Pending", nullable=False)  # Pending, Cleared
@@ -133,6 +140,20 @@ class Batch(Base):
     @completion_rate.setter
     def completion_rate(self, value: float):
         self._completion_rate = value
+
+    @property
+    def scheduled_session_count(self) -> int:
+        """Timetable rows for this batch, as computed by `BatchService.list()`.
+
+        Defaults to 0 everywhere else (detail reads, scheduler, CSV export) so a
+        batch without an ingested timetable reads as unscheduled rather than
+        failing attribute lookup during response serialisation.
+        """
+        return getattr(self, "_scheduled_session_count", 0)
+
+    @scheduled_session_count.setter
+    def scheduled_session_count(self, value: int):
+        self._scheduled_session_count = value
 
 
 class BatchOptionMixin:

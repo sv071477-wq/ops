@@ -36,6 +36,7 @@ def init_db(db: Session = None) -> None:
                     "nps_promoters": "INTEGER",
                     "nps_passives": "INTEGER",
                     "nps_detractors": "INTEGER",
+                    "faculty_assigned_text": "VARCHAR(500)",
                 },
                 "training_sessions": {
                     "sequence_number": "INTEGER",

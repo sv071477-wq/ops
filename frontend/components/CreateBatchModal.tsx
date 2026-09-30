@@ -68,29 +68,19 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
       category_id: data.category_id?.trim(),
       delivery_mode_id: data.delivery_mode_id?.trim(),
       accommodation_id: data.accommodation_id?.trim(),
-      sales_spoc_id: data.sales_spoc_id?.trim() || undefined,
-      coordinator_id: data.coordinator_id?.trim() || undefined,
-      primary_manager_id: data.primary_manager_id?.trim() || undefined,
+      sales_spoc_id: data.sales_spoc_id.trim(),
+      coordinator_id: data.coordinator_id.trim(),
+      primary_manager_id: data.primary_manager_id.trim(),
       delivery_mode: options.modes?.find((m) => m.id === data.delivery_mode_id)?.name || "Online",
       location_city: data.location_city?.trim() || undefined,
       start_date: data.start_date ? new Date(data.start_date).toISOString() : undefined,
       end_date: data.end_date ? new Date(data.end_date).toISOString() : undefined,
-      calendar_days:
-        data.start_date && data.end_date
-          ? Math.max(
-              0,
-              Math.round(
-                (new Date(data.end_date).getTime() - new Date(data.start_date).getTime()) / 86400000
-              )
-            )
-          : 0,
       training_days: Number(data.training_days) || 0,
       total_hours: Number(data.total_hours) || 0,
       total_enrollments: totalEnrollments,
-      residential_enrollments: 0,
-      non_residential_enrollments: totalEnrollments,
       sow_number: data.sow_number?.trim(),
       faculty_assigned_text: facultyMembers.map((f) => f?.name).filter(Boolean).join(", "),
+      faculty_members: facultyMembers.filter((f) => f?.name).map((f) => ({ name: f.name })),
       remarks: data.remarks?.trim() || undefined,
     });
 
@@ -108,10 +98,10 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
       submitLabel="Submit Batch Request"
       size="full"
       render={(form) => (
-        <div className="space-y-8 p-6">
-          <section className="space-y-4">
+        <div className="space-y-form-lg p-4">
+          <section className="space-y-form">
             <SectionHeading title="Program & Client" />
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid-form-2">
               <TextField
                 name="batch_id"
                 label="Batch Identifier / Code"
@@ -161,12 +151,12 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
             </div>
           </section>
 
-          <section className="space-y-4 border-t pt-6">
+          <section className="space-y-form section-divider">
             <SectionHeading title="Schedule & Delivery" />
             <ScheduleFields form={form} options={options} />
           </section>
 
-          <section className="space-y-4 border-t pt-6">
+          <section className="space-y-form section-divider">
             <SectionHeading title="Headcount & Faculty" />
             <NumberField
               name="total_enrollments"
@@ -184,7 +174,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
               required
               helperText="At least one faculty member is required to submit the batch"
             />
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid-form-3">
               <SelectField
                 name="sales_spoc_id"
                 label="Sales Account SPOC"
@@ -212,9 +202,9 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
             </div>
           </section>
 
-          <section className="space-y-4 border-t pt-6">
+          <section className="space-y-form section-divider">
             <SectionHeading title="Commercial & Review" />
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid-form-2">
               <TextField
                 name="sow_number"
                 label="Client SOW / PO Number"
@@ -240,7 +230,12 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+    <div className="flex items-center gap-2">
+      <div className="h-4 w-0.5 bg-primary rounded-full" />
+      <h3 className="text-xs font-bold uppercase tracking-wider text-primary">
+        {title}
+      </h3>
+    </div>
   );
 }
 
@@ -283,6 +278,7 @@ function ScheduleFields({
         options={options.accommodations || []}
         required
         className="md:col-span-2"
+        placeholder="Select accommodation type"
       />
       <DateField name="start_date" label="Commencement Date" required />
       <DateField name="end_date" label="Conclusion Date" required min={startDate} />
@@ -339,12 +335,17 @@ function PreFlightSummary({
     users?.find((u: User) => u.id === id)?.full_name || "Unassigned";
 
   return (
-    <div className="bg-muted/50 border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h4 className="font-semibold">Pre-Flight Submission Summary</h4>
+    <div className="panel panel-sm border-primary/20">
+      <div className="flex items-center justify-between mb-4 pb-3 border-b border-border">
+        <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+          <div className="p-1 bg-primary/10 rounded-lg">
+            <Info className="h-4 w-4 text-primary" />
+          </div>
+          Pre-Flight Submission Summary
+        </h4>
         <span className="text-xs text-muted-foreground">Please review before submitting</span>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
         <div className="border-l-2 border-primary pl-3">
           <p className="text-xs text-muted-foreground uppercase font-semibold">Program & Client</p>
           <p className="font-semibold text-foreground">{data.batch_id || "-"}</p>

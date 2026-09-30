@@ -86,13 +86,17 @@ class NotificationService:
 
     @classmethod
     async def _send_approval_emails(cls, batch, event_type: str):
-        """Send approval-related emails to relevant stakeholders."""
-        email_service = get_email_service()
-        
-        # Get approver emails
-        approver_emails = []
-        if batch.approver_1_id:
-            approver1 = batch.approver_1  # This would need to be loaded
-        # In practice, we'd query the database for user emails
-        # For now, just log
-        logger.info(f"Approval email for batch {batch.batch_id}, event: {event_type}")
+        """Resolve the assigned approvers for a batch.
+
+        Delivery is not wired up yet - this only resolves and logs the
+        recipients so the approver assignment is observable.
+        """
+        approver_emails = [
+            approver.email
+            for approver in (batch.approver_1, batch.approver_2)
+            if approver is not None and approver.email
+        ]
+        logger.info(
+            f"Approval email for batch {batch.batch_id}, event: {event_type}, "
+            f"recipients: {approver_emails or 'none'}"
+        )

@@ -7,7 +7,7 @@ from app.schemas.user import (
 )
 from app.schemas.client import ClientBase, ClientCreate, ClientUpdate, ClientResponse
 from app.schemas.faculty import FacultyBase, FacultyCreate, FacultyUpdate, FacultyResponse, FacultyUtilizationSummary
-from app.schemas.batch import BatchBase, BatchCreate, BatchUpdate, BatchApprove, BatchResponse, BatchDetailResponse
+from app.schemas.batch import BatchCreateRequest, BatchUpdateRequest, BatchApprove, BatchResponse, BatchDetailResponse
 from app.schemas.session import SessionBase, SessionCreate, SessionUpdate, SessionResponse, SessionDetailResponse
 from app.schemas.feedback import SessionFeedbackCreate, SessionFeedbackResponse, BatchNpsClosureCreate, BatchNpsClosureResponse
 from app.schemas.schedule import (
@@ -22,7 +22,7 @@ __all__ = [
     "AdminUserCreate",
     "ClientBase", "ClientCreate", "ClientUpdate", "ClientResponse",
     "FacultyBase", "FacultyCreate", "FacultyUpdate", "FacultyResponse", "FacultyUtilizationSummary",
-    "BatchBase", "BatchCreate", "BatchUpdate", "BatchApprove", "BatchResponse", "BatchDetailResponse",
+    "BatchCreateRequest", "BatchUpdateRequest", "BatchApprove", "BatchResponse", "BatchDetailResponse",
     "SessionBase", "SessionCreate", "SessionUpdate", "SessionResponse", "SessionDetailResponse",
     "SessionFeedbackCreate", "SessionFeedbackResponse", "BatchNpsClosureCreate", "BatchNpsClosureResponse",
     "ScheduleValidationItem", "ScheduleValidationRequest", "ConflictDetail",

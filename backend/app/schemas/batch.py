@@ -2,42 +2,54 @@ from typing import Optional, List, Any, Literal
 from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from app.schemas.user import UserResponse
 import json
 
 
-class BatchBase(BaseModel):
+class BatchCreateRequest(BaseModel):
+    """Payload accepted by POST /batches.
+
+    Declared explicitly rather than inherited from a shared base: this is the
+    create contract only. Lifecycle, approval, finance and quality-gate fields
+    are owned by the server and must never arrive from the client, so they are
+    absent here by design.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Identification and classification
     batch_id: str = Field(..., min_length=3, max_length=255, description="Unique immutable batch identifier")
     sow_number: Optional[str] = Field(None, max_length=100, description="Client-side SOW number")
-    approval_id: Optional[str] = Field(None, max_length=100, description="Financial SOW Approval ID")
-    category: str = Field("Bootcamp", description="Bootcamp, RBT, PJP, Workshop")
+    program_name: str = Field(..., min_length=2, max_length=255)
+    category: str = Field("Bootcamp", description="Legacy category name, used only when category_id is absent")
     entity_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     delivery_mode_id: Optional[UUID] = None
-    delivery_mode: Optional[str] = "Online"
+    delivery_mode: Optional[str] = Field("Online", description="Legacy delivery mode name, used only when delivery_mode_id is absent")
     accommodation_id: Optional[UUID] = None
-    program_name: str = Field(..., min_length=2, max_length=255)
     technology: Optional[str] = Field(None, max_length=255)
     domain: Optional[str] = Field(None, max_length=100)
     client_name: Optional[str] = Field(None, max_length=255)
     location_city: Optional[str] = Field(None, max_length=100)
+
+    # Schedule
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    batch_request_date: Optional[datetime] = None
+
+    # Effort and headcount
     training_days: int = Field(0, ge=0)
-    calendar_days: Optional[int] = Field(0, ge=0)
     total_hours: Decimal = Field(Decimal("0.00"), ge=Decimal("0.00"))
     total_enrollments: int = Field(0, ge=0)
-    status: str = Field("Requested", description="Requested, Approved, Upcoming, Ongoing, Completed, Cancelled, OnHold")
-    primary_manager_id: Optional[UUID] = None
-    coordinator_id: Optional[UUID] = None
-    sales_spoc_id: Optional[UUID] = None
-    faculty_assigned_text: Optional[str] = None
+
+    # Ownership
+    primary_manager_id: UUID
+    coordinator_id: UUID
+    sales_spoc_id: UUID
+
+    # Faculty and notes
+    faculty_assigned_text: Optional[str] = Field(None, max_length=500)
     faculty_members: List[dict] = Field(default_factory=list, description="Array of faculty member objects with name, email, etc.")
-    finance_status: str = Field("Pending", pattern="^(Pending|Cleared)$", max_length=50)
-    finance_status_check_date: Optional[date] = None
-    finance_check: Optional[int] = None
     remarks: Optional[str] = None
 
     @model_validator(mode="before")
@@ -68,51 +80,40 @@ class BatchBase(BaseModel):
             self.end_date = self.start_date
         return self
 
-
-class BatchCreate(BatchBase):
     @model_validator(mode="after")
     def validate_create_dates(self):
         today = datetime.now().date()
-        
+
         # start_date must be >= today (date only)
         if self.start_date and self.start_date.date() < today:
             raise ValueError("Commencement date cannot be in the past")
-        
+
         # end_date must be > start_date
         if self.start_date and self.end_date and self.end_date <= self.start_date:
             raise ValueError("End date must be after start date")
-        
-        # Auto-calculate calendar_days
-        if self.start_date and self.end_date:
-            self.calendar_days = (self.end_date.date() - self.start_date.date()).days
-        
+
         # training_days must be > 0 and <= calendar_days
         if self.training_days <= 0:
             raise ValueError("Training days must be greater than 0")
-        if self.calendar_days is not None and self.training_days > self.calendar_days:
-            raise ValueError("Training days must be between 1 and calendar days")
-        
+        if self.start_date and self.end_date:
+            calendar_days = (self.end_date.date() - self.start_date.date()).days
+            if self.training_days > calendar_days:
+                raise ValueError("Training days must be between 1 and calendar days")
+
         # total_hours must be > 0
         if self.total_hours <= 0:
             raise ValueError("Total hours must be greater than 0")
-        
+
         # total_enrollments must be >= 1
         if self.total_enrollments < 1:
             raise ValueError("At least 1 candidate required")
-        
+
         # faculty_members array must have at least 1 item
         if not self.faculty_members or len(self.faculty_members) == 0:
             raise ValueError("At least one proposed faculty member required")
-        
-        # Required role IDs
-        if not self.sales_spoc_id:
-            raise ValueError("Sales Account SPOC is required")
-        if not self.coordinator_id:
-            raise ValueError("Operations Coordinator is required")
-        if not self.primary_manager_id:
-            raise ValueError("Delivery Manager is required")
-        
+
         return self
+
 
 
 class BatchApprove(BaseModel):
@@ -151,32 +152,39 @@ class BatchLifecycleStatusUpdate(BaseModel):
     reason: str = Field(..., min_length=3, max_length=1000, description="Mandatory reason/justification for status change")
 
 
-class BatchUpdate(BaseModel):
-    sow_number: Optional[str] = None
-    approval_id: Optional[str] = None
+class BatchUpdateRequest(BaseModel):
+    """Payload accepted by PATCH /batches/{id}.
+
+    Editable fields only. batch_request_date and calendar_days are excluded
+    because they are server-owned/derived; the service recomputes calendar_days
+    from start_date and end_date.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sow_number: Optional[str] = Field(None, max_length=100)
+    approval_id: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = None
     entity_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     delivery_mode_id: Optional[UUID] = None
     delivery_mode: Optional[str] = None
     accommodation_id: Optional[UUID] = None
-    program_name: Optional[str] = None
-    technology: Optional[str] = None
-    domain: Optional[str] = None
-    client_name: Optional[str] = None
-    location_city: Optional[str] = None
+    program_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    technology: Optional[str] = Field(None, max_length=255)
+    domain: Optional[str] = Field(None, max_length=100)
+    client_name: Optional[str] = Field(None, max_length=255)
+    location_city: Optional[str] = Field(None, max_length=100)
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    batch_request_date: Optional[datetime] = None
-    training_days: Optional[int] = None
-    calendar_days: Optional[int] = None
-    total_hours: Optional[Decimal] = None
-    total_enrollments: Optional[int] = None
+    training_days: Optional[int] = Field(None, ge=0)
+    total_hours: Optional[Decimal] = Field(None, ge=Decimal("0.00"))
+    total_enrollments: Optional[int] = Field(None, ge=0)
     status: Optional[str] = None
     primary_manager_id: Optional[UUID] = None
     coordinator_id: Optional[UUID] = None
     sales_spoc_id: Optional[UUID] = None
-    faculty_assigned_text: Optional[str] = None
+    faculty_assigned_text: Optional[str] = Field(None, max_length=500)
     faculty_members: Optional[List[dict]] = None
     finance_status: Optional[str] = Field(None, pattern="^(Pending|Cleared)$")
     finance_status_check_date: Optional[date] = None
@@ -213,8 +221,47 @@ class BatchUpdate(BaseModel):
         return self
 
 
-class BatchResponse(BatchBase):
+class BatchResponse(BaseModel):
+    """Read model for GET /batches.
+
+    Declared standalone on purpose. A shared "base" schema applied write-time
+    constraints (patterns, min_length, ge=...) to stored rows as well, and any
+    legacy value outside those constraints raised ResponseValidationError -
+    a 500 that the browser then reported as a CORS failure.
+    """
+
     id: UUID
+    batch_id: str
+    sow_number: Optional[str] = None
+    approval_id: Optional[str] = None
+    category: str = "Bootcamp"
+    entity_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
+    delivery_mode_id: Optional[UUID] = None
+    delivery_mode: Optional[str] = "Online"
+    accommodation_id: Optional[UUID] = None
+    program_name: str
+    technology: Optional[str] = None
+    domain: Optional[str] = None
+    client_name: Optional[str] = None
+    location_city: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    batch_request_date: Optional[datetime] = None
+    training_days: int = 0
+    calendar_days: Optional[int] = 0
+    total_hours: Decimal = Decimal("0.00")
+    total_enrollments: int = 0
+    status: str = "Requested"
+    primary_manager_id: Optional[UUID] = None
+    coordinator_id: Optional[UUID] = None
+    sales_spoc_id: Optional[UUID] = None
+    faculty_assigned_text: Optional[str] = None
+    faculty_members: List[dict] = Field(default_factory=list)
+    finance_status: str = "Pending"
+    finance_status_check_date: Optional[date] = None
+    finance_check: Optional[int] = None
+    remarks: Optional[str] = None
     is_schema_locked: bool
     approver_1_id: Optional[UUID] = None
     approver_2_id: Optional[UUID] = None
@@ -233,8 +280,23 @@ class BatchResponse(BatchBase):
     sales_spoc: Optional[UserResponse] = None
     sessions_conducted: Optional[int] = 0
     completion_rate: Optional[float] = 0.0
+    scheduled_session_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("faculty_members", mode="before")
+    @classmethod
+    def normalize_faculty_members(cls, value: Any) -> Any:
+        """The column is nullable and may hold legacy JSON text; never fail the
+        whole list response on it."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        return value if isinstance(value, list) else []
 
     model_config = ConfigDict(from_attributes=True)
 

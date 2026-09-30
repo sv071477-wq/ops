@@ -12,6 +12,48 @@ from app.db.init_db import init_db
 from app.core.scheduler import start_scheduler, stop_scheduler
 
 
+class ErrorResponseMiddleware:
+    """Convert unhandled exceptions into a JSON 500.
+
+    Starlette's ServerErrorMiddleware is the outermost middleware, so an
+    exception response is generated outside CORSMiddleware and carries no
+    Access-Control-Allow-Origin header. The browser then reports an opaque
+    "CORS header missing" error instead of the real failure. This middleware is
+    registered inside CORSMiddleware, so the 500 it builds still passes back
+    out through the CORS layer and reaches the frontend with its headers.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def send_wrapper(message):
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            if response_started:
+                # Cannot replace an in-flight response; let ASGI handle it.
+                raise
+            print(f"[Error] Unhandled exception on {scope.get('method')} {scope.get('path')}: {exc!r}")
+            if settings.ENVIRONMENT != "production":
+                detail = f"{type(exc).__name__}: {exc}"
+            else:
+                detail = "Internal server error"
+            response = JSONResponse(status_code=500, content={"detail": detail})
+            await response(scope, receive, send)
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses."""
     async def dispatch(self, request: Request, call_next):
@@ -139,6 +181,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Error handling. Added first so it is the innermost middleware: the 500 it
+# builds travels back out through security headers, rate limiting and CORS.
+app.add_middleware(ErrorResponseMiddleware)
+
 # Security Headers
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -147,11 +193,20 @@ if settings.RATE_LIMIT_ENABLED:
     app.add_middleware(RedisRateLimitMiddleware, requests_per_window=settings.RATE_LIMIT_REQUESTS, window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS)
 
 # CORS Configuration - Restricted methods and headers
-if settings.BACKEND_CORS_ORIGINS:
+if settings.BACKEND_CORS_ORIGINS or settings.ENVIRONMENT != "production":
+    if settings.ENVIRONMENT != "production":
+        # In development, dynamically allow any origin
+        allow_origins = ["*"]
+        allow_credentials = False
+    else:
+        # In production, use restricted origins with credentials
+        allow_origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
+        allow_credentials = True
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
         expose_headers=["X-Total-Count"],

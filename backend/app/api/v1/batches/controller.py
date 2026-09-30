@@ -12,8 +12,8 @@ from app.schemas.batch import (
     ApprovalConfigurationBase,
     ApprovalConfigurationResponse,
     ApprovalDecision,
-    BatchCreate,
-    BatchUpdate,
+    BatchCreateRequest,
+    BatchUpdateRequest,
     BatchApprove,
     BatchResponse,
     BatchDetailResponse,
@@ -88,7 +88,7 @@ def update_approval_config(
 
 @router.post("", response_model=BatchResponse, status_code=status.HTTP_201_CREATED)
 async def create_batch(
-    batch_in: BatchCreate,
+    batch_in: BatchCreateRequest,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
@@ -175,14 +175,30 @@ def list_batches(
     category: Optional[str] = None,
     client_name: Optional[str] = None,
     search: Optional[str] = None,
+    mine: bool = Query(False, description="Restrict to batches owned by the caller"),
     skip: int = 0,
     limit: int = DEFAULT_PAGE_LIMIT,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(get_current_user)
 ) -> Any:
-    """List batches with RBAC scoping and multi-attribute filters."""
+    """List batches with RBAC scoping and multi-attribute filters.
+
+    `mine=true` narrows the result to batches the caller owns. Ownership is
+    always resolved from the authenticated user, never from a client-supplied
+    id, so no caller can enumerate another user's batches.
+    """
     skip, limit = validate_pagination(skip, limit)
-    return service.list(current_user, status_filter, domain, category, client_name, search, skip, limit)
+    return service.list(
+        current_user,
+        status_filter,
+        domain,
+        category,
+        client_name,
+        search,
+        skip,
+        limit,
+        ownership_filter=current_user.id if mine else None,
+    )
 
 
 @router.get("/active", response_model=ActiveBatchesResponse)
@@ -210,7 +226,7 @@ def get_batch_detail(
 @router.patch("/{id}", response_model=BatchResponse)
 def update_batch(
     id: UUID,
-    batch_in: BatchUpdate,
+    batch_in: BatchUpdateRequest,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:

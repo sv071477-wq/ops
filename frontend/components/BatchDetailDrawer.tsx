@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail,
   api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType
@@ -97,6 +99,8 @@ const parseRemarksList = (rawRemarks?: string | null): ParsedRemarkItem[] => {
   });
 };
 
+export type BatchDetailTab = "overview" | "sessions" | "quality_gates";
+
 interface BatchDetailDrawerProps {
   batch: Batch | null;
   isOpen: boolean;
@@ -104,6 +108,7 @@ interface BatchDetailDrawerProps {
   onOpenApprove?: (batch: Batch) => void;
   canApprove?: boolean;
   onBatchUpdated?: () => void;
+  initialTab?: BatchDetailTab;
 }
 
 export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
@@ -113,6 +118,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   onOpenApprove,
   canApprove = false,
   onBatchUpdated,
+  initialTab = "overview",
 }) => {
   const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
   const [options, setOptions] = useState<{
@@ -127,8 +133,13 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
   const requestText = usePrompt();
 
+  const [activeTab, setActiveTab] = useState<BatchDetailTab>(initialTab);
+
   useEffect(() => {
     setCurrentBatch(batch);
+    // Reopening the drawer for a different batch must not carry the previous
+    // batch's tab forward, so the requested landing tab is re-applied here.
+    setActiveTab(initialTab);
     if (batch?.id) {
       api.getBatch(batch.id)
         .then((fresh) => {
@@ -136,7 +147,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         })
         .catch((err) => console.error("Failed to load fresh batch details:", err));
     }
-  }, [batch]);
+  }, [batch, initialTab]);
 
   useEffect(() => {
     if (isOpen) {
@@ -153,8 +164,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       });
     }
   }, [isOpen]);
-
-  const [activeTab, setActiveTab] = useState<"overview" | "sessions" | "quality_gates">("overview");
 
   // Edit Batch state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -833,40 +842,30 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         }}
       >
         {/* Modal Header */}
-        <div style={{
-          padding: "20px 26px 16px 26px",
+        <div className="flex items-center justify-between shrink-0 px-6 py-4 border-b" style={{
           borderBottom: "1px solid var(--border-subtle)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
           background: "linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.94) 100%)",
         }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.04em" }}>
+            <div className="flex items-center gap-2.5 mb-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Full Batch Details & Governance Hub
               </span>
               {getStatusBadge(activeBatch.status)}
             </div>
-            <h2 style={{
-              fontSize: "1.35rem",
-              fontWeight: 800,
-              fontFamily: "var(--font-display)",
-              color: "#0b5cab",
-              marginTop: 4
-            }}>
+            <h2 className="text-xl font-bold font-display" style={{ color: "#0b5cab", margin: 0 }}>
               {activeBatch.batch_id}
             </h2>
           </div>
           <button
             onClick={onClose}
             aria-label="Close details"
+            className="p-2 rounded-lg transition-all hover:bg-accent"
             style={{
               background: "rgba(226, 232, 240, 0.6)",
               border: "none",
               color: "var(--text-muted)",
               cursor: "pointer",
-              padding: 8,
               borderRadius: 10,
               display: "flex",
               alignItems: "center",
@@ -879,79 +878,53 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div style={{
-          display: "flex",
+        <div className="flex gap-3 px-6 border-b shrink-0" style={{
           borderBottom: "1px solid var(--border-subtle)",
           background: "#ffffff",
-          padding: "0 24px",
-          gap: 12
         }}>
           <button
             onClick={() => setActiveTab("overview")}
-            style={{
-              padding: "12px 14px",
-              borderBottom: activeTab === "overview" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "overview" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.875rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer"
-            }}
+            className={cn(
+              "px-4 py-3 text-sm font-semibold transition-all",
+              "border-b-2 -mb-px",
+              activeTab === "overview"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
           >
             Overview & Details
           </button>
 
           <button
             onClick={() => setActiveTab("sessions")}
-            style={{
-              padding: "12px 14px",
-              borderBottom: activeTab === "sessions" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "sessions" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.875rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 6
-            }}
+            className={cn(
+              "px-4 py-3 text-sm font-semibold transition-all flex items-center gap-2",
+              "border-b-2 -mb-px",
+              activeTab === "sessions"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
           >
             <span>Sessions & Timetable</span>
-            <span style={{
-              background: activeTab === "sessions" ? "#e8f2fb" : "#f1f5f9",
-              color: activeTab === "sessions" ? "#0b5cab" : "var(--text-dim)",
-              padding: "1px 6px",
-              borderRadius: 10,
-              fontSize: "0.75rem",
-              fontWeight: 700
-            }}>
+            <span className={cn(
+              "px-2 py-0.5 text-xs font-bold rounded-full",
+              activeTab === "sessions"
+                ? "bg-primary/10 text-primary"
+                : "bg-muted text-muted-foreground"
+            )}>
               {sessions.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab("quality_gates")}
-            style={{
-              padding: "12px 14px",
-              borderBottom: activeTab === "quality_gates" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "quality_gates" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.875rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 6
-            }}
+            className={cn(
+              "px-4 py-3 text-sm font-semibold transition-all flex items-center gap-2",
+              "border-b-2 -mb-px",
+              activeTab === "quality_gates"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
           >
             <Sparkles size={15} />
             <span>Quality Checkpoints</span>
@@ -959,7 +932,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 18 }}>
+        <div className="modal-scroll-content flex-1 px-6 py-6 space-y-6">
 
           {/* TAB 1: OVERVIEW */}
           {activeTab === "overview" && (
@@ -2086,33 +2059,25 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         </div>
 
         {/* Drawer Footer Actions */}
-        <div style={{
-          padding: "16px 24px",
+        <div className="shrink-0 px-6 py-4 border-t flex flex-wrap items-center justify-between gap-4" style={{
           borderTop: "1px solid var(--border-subtle)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
           background: "#f8fafc",
-          gap: 12,
-          flexWrap: "wrap",
         }}>
-          <button onClick={onClose} className="btn btn-secondary">
+          <Button variant="outline" onClick={onClose}>
             Close Details
-          </button>
+          </Button>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="flex flex-wrap items-center gap-3">
             {/* Batch Lifecycle Status Actions (OnHold / Cancelled / Resume) */}
             {activeBatch.status !== "Cancelled" && (
               <>
                 {activeBatch.status !== "OnHold" ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="secondary"
                     onClick={() => openStatusModal("OnHold")}
-                    className="btn btn-secondary"
+                    className="flex items-center gap-2"
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
                       color: "#b45309",
                       borderColor: "#fcd34d",
                       background: "#fffbeb",
@@ -2121,16 +2086,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   >
                     <PauseCircle size={15} color="#b45309" />
                     <span>Put On Hold</span>
-                  </button>
+                  </Button>
                 ) : (
-                  <button
+                  <Button
                     type="button"
+                    variant="secondary"
                     onClick={() => openStatusModal("Resume")}
-                    className="btn btn-secondary"
+                    className="flex items-center gap-2"
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
                       color: "#059669",
                       borderColor: "#a7f3d0",
                       background: "#ecfdf5",
@@ -2139,17 +2102,15 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   >
                     <PlayCircle size={15} color="#059669" />
                     <span>Resume Batch</span>
-                  </button>
+                  </Button>
                 )}
 
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
                   onClick={() => openStatusModal("Cancelled")}
-                  className="btn btn-secondary"
+                  className="flex items-center gap-2"
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
                     color: "#b91c1c",
                     borderColor: "#fca5a5",
                     background: "#fef2f2",
@@ -2158,19 +2119,17 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 >
                   <Ban size={15} color="#b91c1c" />
                   <span>Cancel Batch</span>
-                </button>
+                </Button>
               </>
             )}
 
             {activeBatch.status === "Cancelled" && (
-              <button
+              <Button
                 type="button"
+                variant="secondary"
                 onClick={() => openStatusModal("Resume")}
-                className="btn btn-secondary"
+                className="flex items-center gap-2"
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
                   color: "#0b5cab",
                   borderColor: "#93c5fd",
                   background: "#eff6ff",
@@ -2179,31 +2138,31 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               >
                 <RefreshCw size={15} color="#0b5cab" />
                 <span>Reopen Batch</span>
-              </button>
+              </Button>
             )}
 
             {/* Edit Batch (Always available for active editing and post-approval adjustments) */}
-            <button
+            <Button
               onClick={openEditModal}
-              className="btn btn-secondary"
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
+              variant="secondary"
+              className="flex items-center gap-2"
             >
               <Edit3 size={15} />
               <span>Edit Batch</span>
-            </button>
+            </Button>
 
             {canApprove && ["Requested", "Approval 1 Pending", "Approval 2 Pending"].includes(activeBatch.status) && onOpenApprove && (
-              <button
+              <Button
                 onClick={() => {
                   onClose();
                   onOpenApprove(activeBatch);
                 }}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 6, background: "linear-gradient(135deg, #0f7a5a 0%, #169570 100%)" }}
+                className="flex items-center gap-2"
+                style={{ background: "linear-gradient(135deg, #0f7a5a 0%, #169570 100%)" }}
               >
                 <CheckCircle2 size={16} />
                 <span>Approve Batch</span>
-              </button>
+              </Button>
             )}
           </div>
         </div>

@@ -4,7 +4,7 @@ import { forwardRef, useState } from "react";
 import { Controller, ControllerProps, FieldPath, FieldValues, useFormContext } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface PasswordFieldProps<T extends FieldValues> extends Omit<ControllerProps<T>, "name" | "control" | "rules" | "render"> {
@@ -42,7 +42,14 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps<any
                 type={show ? "text" : "password"}
                 placeholder={placeholder}
                 disabled={disabled}
-                className={cn("pr-12", errorMessage && "border-destructive focus:ring-destructive", disabled && "bg-muted")}
+                className={cn(
+                  "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm transition-colors",
+                  "placeholder:text-muted-foreground/70",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  "pr-12",
+                  errorMessage && "border-destructive focus-visible:ring-destructive",
+                  disabled && "bg-muted cursor-not-allowed"
+                )}
                 aria-invalid={errorMessage ? "true" : "false"}
                 aria-describedby={errorMessage ? `${name}-error` : helperText ? `${name}-helper` : undefined}
                 {...field}
@@ -54,15 +61,20 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps<any
             <button
               type="button"
               onClick={() => setShow(!show)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded p-1 transition-colors"
               aria-label={show ? "Hide password" : "Show password"}
             >
               {show ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
             </button>
           )}
         </div>
-        {errorMessage && <p id={`${name}-error`} className="text-sm text-destructive" role="alert">{errorMessage}</p>}
-        {helperText && !errorMessage && <p id={`${name}-helper`} className="text-sm text-muted-foreground">{helperText}</p>}
+        {errorMessage && (
+          <p id={`${name}-error`} className="text-sm text-destructive mt-1 flex items-center gap-1" role="alert">
+            <AlertCircle className="h-3 w-3" />
+            {errorMessage}
+          </p>
+        )}
+        {helperText && !errorMessage && <p id={`${name}-helper`} className="text-sm text-muted-foreground mt-1">{helperText}</p>}
       </div>
     );
   }

@@ -14,9 +14,18 @@ import { Input } from "@/components/ui/input";
 import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
+export type DashboardView =
+  | "my_batches"
+  | "active_batches"
+  | "manager_board"
+  | "approvals"
+  | "finance"
+  | "analytics"
+  | "faculty";
+
 interface SidebarProps {
-  activeView: "active_batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty";
-  setActiveView: (view: "active_batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty") => void;
+  activeView: DashboardView;
+  setActiveView: (view: DashboardView) => void;
   searchQuery?: string;
   setSearchQuery?: (q: string) => void;
   onOpenCreateBatch?: () => void;
@@ -59,6 +68,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isManager = (user?.direct_reports_count ?? 0) > 0 || user?.is_manager || user?.role?.toLowerCase() === "manager" || isAdmin;
   const canSeeManagerBoard = !isFinance && isManager;
   const canSeeAnalytics = !isFinance && isManager;
+  // My Batches is the landing view for Delivery staff, which is exactly the
+  // audience that creates batches and needs the schedule UI.
+  const canSeeMyBatches = !isFinance && !isAdmin;
 
   // Handle responsive behavior
   useEffect(() => {
@@ -81,7 +93,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           searchInputRef.current?.focus();
         } else if (e.key === "2") {
           e.preventDefault();
-          setActiveView("active_batches");
+          setActiveView("my_batches");
         } else if (e.key === "3") {
           e.preventDefault();
           if (isFinance) {
@@ -92,6 +104,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             setActiveView("approvals");
           }
         } else if (e.key === "4") {
+          e.preventDefault();
+          setActiveView("active_batches");
+        } else if (e.key === "5") {
           e.preventDefault();
           setActiveView("faculty");
         }
@@ -126,6 +141,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     ...(isFinance ? [{
       id: "finance",
       label: "Finance Review",
+      icon: Layers,
+      badge: null,
+    }] : []),
+    ...(canSeeMyBatches ? [{
+      id: "my_batches",
+      label: "My Batches",
       icon: Layers,
       badge: null,
     }] : []),
@@ -176,63 +197,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Sidebar */}
       <aside
-        className="sidebar"
+        className={cn(
+          "sidebar h-screen flex flex-col overflow-y-auto transition-all duration-300",
+          isMobile
+            ? "fixed inset-y-0 left-0 z-50 w-72 transform"
+            : "relative transform",
+          isMobile
+            ? (isSidebarOpen ? "translate-x-0" : "-translate-x-full")
+            : "",
+          !isMobile && isCollapsed ? "w-20" : !isMobile ? "w-64" : "",
+        )}
+        style={{
+          width: isMobile ? 288 : sidebarWidth,
+        }}
       >
         {/* Top Header: Brand / Team Selector */}
         <div style={{ position: "relative" }} ref={workspaceMenuRef}>
           <Button
             variant="ghost"
-            className={`w-full justify-start gap-3 p-2 sidebar-header ${isWorkspaceMenuOpen ? 'open' : ''}`}
+            className={cn(
+              "w-full gap-3 rounded-xl p-2.5 font-medium transition-all duration-200",
+              "hover:bg-accent hover:text-accent-foreground",
+              !isCollapsed && "justify-start",
+              isCollapsed && "justify-center",
+              isWorkspaceMenuOpen ? "bg-accent/50" : "",
+            )}
             onClick={() => setIsWorkspaceMenuOpen(!isWorkspaceMenuOpen)}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "6px 8px",
-              background: isWorkspaceMenuOpen ? "#f8fafc" : "transparent",
-              border: "none",
-              borderRadius: 10,
-              cursor: "pointer",
-              outline: "none",
-              transition: "background 0.15s ease",
-            }}
-            onMouseOver={(e) => {
-              if (!isWorkspaceMenuOpen) e.currentTarget.style.background = "#f8fafc";
-            }}
-            onMouseOut={(e) => {
-              if (!isWorkspaceMenuOpen) e.currentTarget.style.background = "transparent";
-            }}
+            aria-haspopup="true"
+            aria-expanded={isWorkspaceMenuOpen}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="flex items-center gap-2.5">
               {/* Logo emblem */}
               <div
+                className="flex items-center justify-center text-white flex-shrink-0"
                 style={{
-                  width: 32,
-                  height: 32,
+                  width: isCollapsed ? 28 : 32,
+                  height: isCollapsed ? 28 : 32,
                   borderRadius: 8,
                   background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: "#ffffff",
                   boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
-                  position: "relative",
-                  flexShrink: 0,
+                  transition: "width 0.3s, height 0.3s",
                 }}
               >
-                <Layers size={18} strokeWidth={2.5} />
+                <Layers size={isCollapsed ? 16 : 18} strokeWidth={2.5} />
               </div>
 
-              <div style={{ textAlign: "left" }}>
-                <div
-                  style={{
-                    background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
-                    boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
-                  }}
-                >
-                  <Layers size={18} strokeWidth={2.5} className="text-white" />
-                </div>
+              {!isCollapsed && (
                 <div className="text-left min-w-0">
                   <div className="font-semibold text-foreground text-sm truncate">
                     Enterprise Ops
@@ -241,17 +251,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {teamLabel} • {roleLabel}
                   </div>
                 </div>
-              </div>
+              )}
             </div>
-            {isCollapsed && (
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto" style={{
-                background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
-                boxShadow: "0 2px 6px rgba(11, 92, 171, 0.3)",
-              }}>
-                <Layers size={18} strokeWidth={2.5} className="text-white" />
-              </div>
-            )}
-            {!isCollapsed && <ChevronsUpDown size={14} className="text-muted-foreground ml-auto" />}
           </Button>
 
           {/* Workspace Menu Popover */}
@@ -271,7 +272,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {isAdmin && (
                 <Button
                   variant="ghost"
-                  className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm"
+                  className={cn(
+                    "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-all",
+                    "hover:bg-accent hover:text-accent-foreground",
+                  )}
                   onClick={() => {
                     setIsWorkspaceMenuOpen(false);
                     router.push("/admin");
@@ -322,15 +326,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Button
               variant="default"
               className={cn(
-                "w-full justify-center gap-2",
-                isCollapsed && "p-2",
-                "bg-primary/10 text-primary border-primary/20 hover:bg-primary/20"
+                "w-full gap-2 transition-all",
+                isCollapsed && "justify-center p-2",
               )}
+              style={{
+                background: "linear-gradient(135deg, #0b5cab 0%, #0284c7 100%)",
+              }}
               onClick={onOpenCreateBatch}
               aria-label="Add New Batch"
             >
-              <Plus size={15} strokeWidth={2.5} />
-              {!isCollapsed && <span className="font-semibold text-sm">Add New Batch</span>}
+              <Plus size={isCollapsed ? 18 : 15} strokeWidth={isCollapsed ? 2.5 : 2} className="text-white" />
+              {!isCollapsed && <span className="font-semibold text-sm text-white">Add New Batch</span>}
             </Button>
           </div>
         )}
@@ -343,12 +349,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             return (
               <Button
                 key={item.id}
-                variant={isActive ? "default" : "ghost"}
+                variant="ghost"
                 className={cn(
-                  "w-full justify-start gap-3",
-                  isCollapsed && "p-2 justify-center",
-                  isActive && "bg-primary/10 text-primary border-primary/20",
-                  !isActive && "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  "relative w-full gap-3 rounded-xl font-medium text-sm transition-all duration-200",
+                  isCollapsed ? "justify-center p-2.5" : "justify-start px-3 py-2.5",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  isActive
+                    ? "bg-primary/15 text-primary shadow-sm"
+                    : "text-muted-foreground hover:translate-x-0.5",
                 )}
                 onClick={() => {
                   setActiveView(item.id as any);
@@ -357,14 +365,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 aria-current={isActive ? "page" : undefined}
                 aria-label={item.label}
               >
-                <Icon size={17} className={cn("flex-shrink-0", isActive && "text-primary")} aria-hidden="true" />
-                {!isCollapsed && (
-                  <span className="font-medium text-sm truncate">{item.label}</span>
+                {isActive && !isCollapsed && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-0.5 bg-primary rounded-r-full" />
                 )}
-                {!isCollapsed && item.badge && (
-                  <span className="ml-auto px-2 py-0.5 text-xs font-semibold text-primary-foreground bg-primary rounded-full">
-                    {item.badge}
-                  </span>
+                <Icon
+                  size={isCollapsed ? 20 : 17}
+                  strokeWidth={isCollapsed ? 2.5 : 2}
+                  className={cn(
+                    "flex-shrink-0",
+                    isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+                  )}
+                  aria-hidden="true"
+                />
+                {!isCollapsed && (
+                  <>
+                    <span className="truncate">{item.label}</span>
+                    {item.badge && (
+                      <span className="ml-auto px-2 py-0.5 text-xs font-semibold text-primary-foreground bg-primary rounded-full">
+                        {item.badge}
+                      </span>
+                    )}
+                  </>
                 )}
               </Button>
             );
@@ -377,7 +398,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Button
               variant="ghost"
               size="icon"
-              className={cn("w-full justify-center", !isCollapsed && "justify-end")}
+              className={cn(
+                "rounded-xl transition-all duration-200",
+                "hover:bg-accent hover:text-accent-foreground",
+                !isCollapsed && "justify-end",
+              )}
               onClick={() => {
                 if (isMobile) {
                   setIsSidebarOpen(false);
@@ -390,8 +415,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               {isMobile ? (
                 <XIcon size={18} className="text-muted-foreground" />
-              ) : isCollapsed ? (
-                <ChevronLeft size={18} className="text-muted-foreground" />
               ) : (
                 <ChevronLeft size={18} className="text-muted-foreground" />
               )}
@@ -407,8 +430,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Button
             variant="ghost"
             className={cn(
-              "w-full justify-start gap-3",
-              isCollapsed && "p-2 justify-center"
+              "relative w-full gap-3 rounded-xl font-medium transition-all duration-200",
+              "hover:bg-accent hover:text-accent-foreground",
+              isCollapsed ? "justify-center p-2.5" : "justify-start px-3 py-2.5",
+              isUserMenuOpen ? "bg-accent/50" : "",
             )}
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
             aria-expanded={isUserMenuOpen}
@@ -427,13 +452,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </div>
             )}
-            {!isCollapsed && <ChevronsUpDown size={14} className="text-muted-foreground ml-auto" />}
+            {!isCollapsed && <ChevronsUpDown size={14} className="text-muted-foreground flex-shrink-0" />}
           </Button>
 
           {/* User Popover Dropdown */}
           {isUserMenuOpen && !isCollapsed && (
             <div
-              className="absolute bottom-full left-0 right-0 mb-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-slide-in-bottom"
+              className="absolute top-full left-0 right-0 mt-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-fade-in"
               role="menu"
             >
               <div className="px-2 py-2 border-b border-border">
@@ -445,7 +470,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <Button
                 variant="ghost"
-                className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm"
+                className={cn(
+                  "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-all",
+                  "hover:bg-accent hover:text-accent-foreground",
+                )}
                 onClick={() => {
                   setIsUserMenuOpen(false);
                   setIsChangePasswordOpen(true);
@@ -459,7 +487,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {isAdmin && (
                 <Button
                   variant="ghost"
-                  className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm"
+                  className={cn(
+                    "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-all",
+                    "hover:bg-accent hover:text-accent-foreground",
+                  )}
                   onClick={() => {
                     setIsUserMenuOpen(false);
                     router.push("/admin");
@@ -473,7 +504,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <Button
                 variant="ghost"
-                className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive"
+                className={cn(
+                  "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive transition-all",
+                  "hover:bg-destructive/10",
+                )}
                 onClick={() => {
                   setIsUserMenuOpen(false);
                   logout();

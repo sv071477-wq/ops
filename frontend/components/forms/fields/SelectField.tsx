@@ -5,6 +5,7 @@ import { Controller, ControllerProps, FieldPath, FieldValues, useFormContext } f
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { AlertCircle } from "lucide-react";
 
 interface SelectOption {
   id: string;
@@ -50,7 +51,13 @@ export const SelectField = forwardRef<HTMLButtonElement, SelectFieldProps<any, a
                 id={name as string}
                 disabled={disabled}
                 error={!!errorMessage}
-                className={cn(disabled && "bg-muted")}
+                className={cn(
+                  "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm transition-colors",
+                  "placeholder:text-muted-foreground/70",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  errorMessage && "border-destructive focus-visible:ring-destructive",
+                  disabled && "bg-muted cursor-not-allowed"
+                )}
                 aria-invalid={errorMessage ? "true" : "false"}
                 aria-describedby={errorMessage ? `${name}-error` : helperText ? `${name}-helper` : undefined}
                 {...props}
@@ -72,8 +79,13 @@ export const SelectField = forwardRef<HTMLButtonElement, SelectFieldProps<any, a
             </Select>
           )}
         />
-        {errorMessage && <p id={`${name}-error`} className="text-sm text-destructive" role="alert">{errorMessage}</p>}
-        {helperText && !errorMessage && <p id={`${name}-helper`} className="text-sm text-muted-foreground">{helperText}</p>}
+        {errorMessage && (
+          <p id={`${name}-error`} className="text-sm text-destructive mt-1 flex items-center gap-1" role="alert">
+            <AlertCircle className="h-3 w-3" />
+            {errorMessage}
+          </p>
+        )}
+        {helperText && !errorMessage && <p id={`${name}-helper`} className="text-sm text-muted-foreground mt-1">{helperText}</p>}
       </div>
     );
   }

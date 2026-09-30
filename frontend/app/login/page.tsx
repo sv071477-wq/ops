@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { Layers, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function LoginPage() {
   const { user, login, isLoading: isAuthLoading } = useAuth();
@@ -40,115 +41,84 @@ export default function LoginPage() {
   };
 
   return (
-    <main style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "24px",
-      position: "relative"
-    }}>
-      <div style={{ width: "100%", maxWidth: 460, position: "relative", zIndex: 10 }}>
+    <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+      {/* Background decoration */}
+      <div className="absolute inset-0 -z-10">
+        <div className="absolute top-1/3 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/3 right-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
+      </div>
+
+      <div className="w-full max-w-md mx-auto relative z-10">
         {/* Brand Card */}
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{
-            width: 52,
-            height: 52,
-            borderRadius: 6,
-            background: "#0b5cab",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "none",
-            marginBottom: 16
-          }}>
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 mx-auto rounded-xl bg-gradient-to-br from-primary to-primary-hover flex items-center justify-center shadow-md mb-4">
             <Layers size={28} color="#ffffff" />
           </div>
-          <h1 style={{
-            fontSize: "1.75rem",
-            fontWeight: 800,
-            fontFamily: "var(--font-display)",
-            letterSpacing: "-0.02em",
-            color: "var(--text-main)"
-          }}>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">
             Operations Hub Login
           </h1>
-          <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginTop: 6 }}>
+          <p className="text-sm text-muted-foreground mt-2">
             Sign in to manage batches, faculty utilization, and quality checkpoints
           </p>
         </div>
 
         {/* Login Form Container */}
-        <div className="glass-panel" style={{ padding: "32px" }}>
+        <div className="glass-panel">
           {error && (
-            <div style={{
-              background: "rgba(244, 63, 94, 0.15)",
-              border: "1px solid rgba(244, 63, 94, 0.3)",
-              color: "#fb7185",
-              padding: "12px 16px",
-              borderRadius: 12,
-              fontSize: "0.875rem",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginBottom: 20
-            }}>
-              <AlertCircle size={18} />
-              <span>{error}</span>
+            <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 text-destructive p-4 mb-4">
+              <AlertCircle size={18} className="flex-shrink-0" />
+              <span className="text-sm">{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <div>
-              <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+            <div className="space-y-1">
+              <label className="block text-sm font-semibold text-foreground">
                 Corporate Email Address
               </label>
-              <div style={{ position: "relative" }}>
-                <Mail size={18} color="var(--text-dim)" style={{ position: "absolute", left: 14, top: 12 }} />
+              <div className="relative">
+                <Mail size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className="glass-input"
-                  style={{ paddingLeft: 42 }}
+                  className={cn(
+                    "w-full h-10 rounded-lg border border-input bg-background pl-10 pr-3 text-sm transition-colors",
+                    "placeholder:text-muted-foreground/70",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  )}
                   required
+                  autoComplete="email"
                 />
               </div>
             </div>
 
-            <div>
-              <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+            <div className="space-y-1">
+              <label className="block text-sm font-semibold text-foreground">
                 Password
               </label>
-              <div style={{ position: "relative" }}>
-                <Lock size={18} color="var(--text-dim)" style={{ position: "absolute", left: 14, top: 12 }} />
+              <div className="relative">
+                <Lock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="glass-input"
-                  style={{ paddingLeft: 42, paddingRight: 42 }}
+                  className={cn(
+                    "w-full h-10 rounded-lg border border-input bg-background pl-10 pr-14 text-sm transition-colors",
+                    "placeholder:text-muted-foreground/70",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  )}
                   required
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  style={{
-                    position: "absolute",
-                    right: 12,
-                    top: 8,
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: 4,
-                    color: "var(--text-dim)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                   aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -158,8 +128,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="btn btn-primary"
-              style={{ width: "100%", padding: "12px", marginTop: 8 }}
+              className="btn btn-primary w-full py-3 mt-2"
             >
               <span>{isLoading ? "Signing in..." : "Sign in"}</span>
               <ArrowRight size={18} />

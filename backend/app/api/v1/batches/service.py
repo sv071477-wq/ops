@@ -20,7 +20,7 @@ from app.models.batch import (
 )
 from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User
-from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreate, BatchUpdate, ActiveBatchesResponse
+from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreateRequest, BatchUpdateRequest, ActiveBatchesResponse
 from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
 from app.api.deps import get_manager_scope_user_ids
 from app.api.v1.gates.service import GatekeeperService
@@ -60,7 +60,7 @@ class BatchService:
         total_expected = batch.training_days or 10
         return max(1, int(fraction * total_expected))
 
-    def create(self, batch_in: BatchCreate, current_user: User) -> Batch:
+    def create(self, batch_in: BatchCreateRequest, current_user: User) -> Batch:
         # Check for unique batch_id
         if self.db.query(Batch).filter(Batch.batch_id == batch_in.batch_id).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Batch ID '{batch_in.batch_id}' is already registered.")
@@ -82,7 +82,6 @@ class BatchService:
             )
         
         batch_data = batch_in.model_dump(exclude_none=True)
-        batch_data.pop("batch_request_date", None)
         batch_data["calendar_days"] = self._calendar_days(batch_data.get("start_date"), batch_data.get("end_date"))
         batch_data["category_id"] = self._option_id(BatchCategory, batch_data.get("category_id"), batch_data.get("category", "Bootcamp"))
         delivery_mode_str = batch_data.get("delivery_mode", "Online")
@@ -242,7 +241,21 @@ class BatchService:
         self.db.refresh(batch)
         return batch
 
-    def list(self, current_user: User, status_filter: Optional[str], domain: Optional[str], category: Optional[str], client_name: Optional[str], search: Optional[str], skip: int, limit: int) -> List[Batch]:
+    def _resolve_ownership_field(self, current_user: User):
+        """Map the caller's role to the Batch column that records their ownership.
+
+        Coordinators own `coordinator_id`; Managers own `primary_manager_id`.
+        Admins own nothing, so no restriction is returned for them. A single
+        hardcoded column would silently return zero rows for one of the roles.
+        """
+        user_role_lower = (current_user.role or "").lower()
+        if user_role_lower == "coordinator":
+            return Batch.coordinator_id
+        if user_role_lower == "manager":
+            return Batch.primary_manager_id
+        return None
+
+    def list(self, current_user: User, status_filter: Optional[str], domain: Optional[str], category: Optional[str], client_name: Optional[str], search: Optional[str], skip: int, limit: int, ownership_filter: Optional[UUID] = None) -> List[Batch]:
         self._sync_pending_approvers()
         query = self.db.query(Batch)
         user_role_lower = (current_user.role or "").lower()
@@ -256,6 +269,15 @@ class BatchService:
                 ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
                 ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
             ))
+
+        # Ownership narrows the RBAC scope above; it never replaces or widens it.
+        # Admin and Finance carry no per-user ownership, so `mine` is a no-op for
+        # them and they keep their existing full-scope behaviour.
+        if ownership_filter is not None:
+            ownership_field = self._resolve_ownership_field(current_user)
+            if ownership_field is not None:
+                query = query.filter(ownership_field == ownership_filter)
+
         if status_filter:
             query = query.filter(Batch.status == status_filter)
         if domain:
@@ -278,8 +300,17 @@ class BatchService:
                 .group_by(FacultyUtilization.batch_id)
                 .all()
             )
+            # Timetable rows, i.e. what `GET /batches` used to not report. Lets a
+            # coordinator see at a glance which batches still need a schedule.
+            scheduled_counts = dict(
+                self.db.query(TrainingSession.batch_id, func.count(TrainingSession.id))
+                .filter(TrainingSession.batch_id.in_(batch_ids))
+                .group_by(TrainingSession.batch_id)
+                .all()
+            )
             now = datetime.now(timezone.utc)
             for b in batches:
+                b._scheduled_session_count = scheduled_counts.get(b.id, 0)
                 conducted = counts.get(b.id)
                 if conducted is None or conducted == 0:
                     conducted = self._estimated_sessions_conducted(b, now)
@@ -524,11 +555,10 @@ class BatchService:
                 detail="You can only view or edit batches within your manager scope.",
             )
 
-    def update(self, batch_id: UUID, batch_in: BatchUpdate, current_user: User) -> Batch:
+    def update(self, batch_id: UUID, batch_in: BatchUpdateRequest, current_user: User) -> Batch:
         batch = self.get(batch_id, current_user)
         self._require_operational_scope(batch, current_user)
         update_data = batch_in.model_dump(exclude_unset=True)
-        update_data.pop("batch_request_date", None)
         finance_fields = {"finance_status", "finance_status_check_date", "finance_check"}
         if finance_fields.intersection(update_data):
             team_name = current_user.team_detail.name if current_user.team_detail else ""

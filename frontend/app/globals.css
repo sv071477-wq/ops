@@ -72,19 +72,6 @@
   --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/*
- * Legacy semantic aliases.
- *
- * The inline-style layer across the older components (app/page.tsx,
- * app/admin/page.tsx, components/BatchDetailDrawer.tsx,
- * components/EnterpriseDashboard.tsx) references unprefixed token names.
- * Tailwind v4 only emits the `--color-*` names declared in `@theme`, so
- * `var(--text-main)` and friends resolved to nothing and silently
- * invalidated the declarations that used them.
- *
- * These aliases map the legacy names onto the v4 theme tokens. They are
- * intentionally outside `@theme` so they are not turned into utilities.
- */
 :root {
   --text-main: var(--color-foreground);
   --text-muted: var(--color-muted-foreground);
@@ -190,7 +177,7 @@
   }
 
   .badge {
-    @apply inline-flex items-center gap-1.5 rounded-full text-xs font-semibold uppercase tracking-wider;
+    @apply inline-flex items-center gap-1.5 rounded-full text-xs font-semibold uppercase tracking-wider px-2.5 py-0.5;
   }
 
   .badge-requested {
@@ -294,8 +281,8 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
@@ -304,28 +291,346 @@
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background-color: var(--color-border);
-    border-radius: 3px;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: content-box;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background-color: var(--color-muted-foreground);
   }
-}
 
-.dashboard-shell {
-  @apply bg-background;
-}
+  .scrollbar-thin::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 
-.glass-table thead th {
-  @apply bg-muted/50 border-b border-border font-semibold uppercase tracking-wider text-xs;
-}
+  /* Modal scroll utilities */
+  .modal-scroll-content {
+    @apply overflow-y-auto overflow-x-hidden pr-2 scrollbar-thin;
+    max-height: calc(90vh - 200px);
+  }
 
-.glass-table tbody tr {
-  @apply transition-colors duration-150;
-}
+  .modal-scroll-content::-webkit-scrollbar {
+    width: 6px;
+  }
 
-.glass-table tbody tr:hover td {
-  @apply bg-muted/30;
+  .modal-scroll-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .modal-scroll-content::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 3px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  .modal-scroll-content::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-muted-foreground);
+  }
+
+  /* Table scroll wrapper */
+  .table-scroll-wrapper {
+    @apply overflow-x-auto overflow-y-hidden scrollbar-thin;
+  }
+
+  .table-scroll-wrapper::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .table-scroll-wrapper::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .table-scroll-wrapper::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 3px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  .table-scroll-wrapper::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-muted-foreground);
+  }
+
+  /* Button icon positioning utilities */
+  .btn-icon-left {
+    @apply flex items-center justify-center gap-2;
+  }
+
+  .btn-icon-right {
+    @apply flex items-center justify-center gap-2;
+  }
+
+  .btn-icon-only {
+    @apply flex items-center justify-center p-2;
+  }
+
+  /* Form field improvements */
+  .form-field {
+    @apply w-full;
+  }
+
+  .form-field-label {
+    @apply block text-sm font-medium text-foreground mb-1.5;
+  }
+
+  .form-field-input {
+    @apply w-full bg-white/94 border border-input rounded-lg text-sm transition-all duration-150 outline-none;
+  }
+
+  .form-field-input:focus {
+    @apply border-primary ring-2 ring-primary/20;
+  }
+
+  .form-field-input::placeholder {
+    @apply text-muted-foreground;
+  }
+
+  .form-field-error {
+    @apply text-sm text-destructive mt-1;
+  }
+
+  .form-field-helper {
+    @apply text-sm text-muted-foreground mt-1;
+  }
+
+  /* Consistent spacing utilities */
+  .space-y-form {
+    @apply space-y-4;
+  }
+
+  .space-y-form-lg {
+    @apply space-y-6;
+  }
+
+  .grid-form-2 {
+    @apply grid gap-4 md:grid-cols-2;
+  }
+
+  .grid-form-3 {
+    @apply grid gap-4 md:grid-cols-3;
+  }
+
+  .grid-form-4 {
+    @apply grid gap-4 md:grid-cols-4;
+  }
+
+  /* Card/panel consistent styling */
+  .panel {
+    @apply bg-card border border-border rounded-xl shadow-sm;
+  }
+
+  .panel-sm {
+    @apply p-4;
+  }
+
+  .panel-md {
+    @apply p-6;
+  }
+
+  .panel-lg {
+    @apply p-8;
+  }
+
+  /* Icon sizing consistency */
+  .icon-sm {
+    @apply h-4 w-4;
+  }
+
+  .icon-md {
+    @apply h-5 w-5;
+  }
+
+  .icon-lg {
+    @apply h-6 w-6;
+  }
+
+  .icon-xl {
+    @apply h-8 w-8;
+  }
+
+  /* Focus ring consistency */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+
+  /* Animation utilities */
+  .transition-smooth {
+    @apply transition-all duration-200 ease-out;
+  }
+
+  .transition-fast-smooth {
+    @apply transition-all duration-150 ease-out;
+  }
+
+  /* Responsive container */
+  .container-responsive {
+    @apply w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Section spacing */
+  .section {
+    @apply py-8 sm:py-12 lg:py-16;
+  }
+
+  /* Header consistency */
+  .page-header {
+    @apply mb-6 sm:mb-8;
+  }
+
+  .page-title {
+    @apply text-2xl sm:text-3xl font-bold text-foreground;
+  }
+
+  .page-subtitle {
+    @apply text-muted-foreground mt-1 text-sm sm:text-base;
+  }
+
+  /* Label styling */
+  .label {
+    @apply block text-sm font-medium text-foreground mb-1.5;
+  }
+
+  .label-required::after {
+    content: " *";
+    color: hsl(var(--destructive));
+  }
+
+  /* Input disabled state */
+  .input-disabled {
+    @apply bg-muted cursor-not-allowed;
+  }
+
+  /* Button group */
+  .btn-group {
+    @apply inline-flex items-center gap-2;
+  }
+
+  /* Spinner size */
+  .spinner-sm {
+    @apply h-3 w-3 animate-spin;
+  }
+
+  .spinner-md {
+    @apply h-4 w-4 animate-spin;
+  }
+
+  .spinner-lg {
+    @apply h-6 w-6 animate-spin;
+  }
+
+  /* Decision buttons */
+  .decision-btn {
+    @apply flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-sm transition-all;
+  }
+
+  .decision-btn-active {
+    @apply border-2 bg-background;
+  }
+
+  /* Info card */
+  .info-card {
+    @apply p-4 bg-muted/50 rounded-lg border;
+  }
+
+  /* Details grid */
+  .details-grid {
+    @apply grid grid-cols-2 gap-3 p-4 border border-border rounded-lg bg-background;
+  }
+
+  /* Status badge with icon */
+  .status-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full text-xs font-semibold uppercase tracking-wider px-2.5 py-0.5;
+  }
+
+  /* User avatar */
+  .user-avatar {
+    @apply flex items-center justify-center font-semibold text-xs bg-gradient-to-br from-pink-200 to-pink-400 text-pink-900 rounded-lg flex-shrink-0;
+  }
+
+  /* Workspace emblem */
+  .workspace-emblem {
+    @apply flex items-center justify-center text-white bg-gradient-to-br from-primary to-primary-hover rounded-xl shadow-md flex-shrink-0 transition-all;
+  }
+
+  /* Search wrapper */
+  .search-wrapper {
+    @apply relative;
+  }
+
+  .search-wrapper-icon {
+    @apply absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground;
+  }
+
+  .search-wrapper-clear {
+    @apply absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground;
+  }
+
+  /* Nav button */
+  .nav-btn {
+    @apply w-full flex items-center gap-3 rounded-lg font-medium text-sm transition-all;
+  }
+
+  .nav-btn-active {
+    @apply bg-primary/10 text-primary border border-primary/20;
+  }
+
+  .nav-btn-inactive {
+    @apply text-muted-foreground hover:text-foreground hover:bg-accent;
+  }
+
+  /* User menu button */
+  .user-menu-btn {
+    @apply w-full flex items-center gap-3 rounded-lg font-medium text-sm transition-all;
+  }
+
+  /* Dropdown popovers */
+  .dropdown-popover {
+    @apply absolute bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-fade-in;
+  }
+
+  .dropdown-popover-bottom {
+    @apply absolute bottom-full left-0 right-0 mb-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-slide-in-bottom;
+  }
+
+  .dropdown-popover-section-title {
+    @apply px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider;
+  }
+
+  .dropdown-popover-item {
+    @apply flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors;
+  }
+
+  .dropdown-popover-item:hover {
+    @apply bg-accent text-accent-foreground;
+  }
+
+  .dropdown-popover-item-icon {
+    @apply text-primary;
+  }
+
+  /* Dashboard shell */
+  .dashboard-shell {
+    @apply bg-background;
+  }
+
+  .glass-table thead th {
+    @apply bg-muted/50 border-b border-border font-semibold uppercase tracking-wider text-xs;
+  }
+
+  .glass-table tbody tr {
+    @apply transition-colors duration-150;
+  }
+
+  .glass-table tbody tr:hover td {
+    @apply bg-muted/30;
+  }
+
+  /* Section divider */
+  .section-divider {
+    @apply border-t border-border pt-6;
+  }
 }
 
 @media (max-width: 1024px) {

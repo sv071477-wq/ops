@@ -206,6 +206,7 @@ export interface Batch {
   comments?: string | null;
   sessions_conducted?: number;
   completion_rate?: number;
+  scheduled_session_count?: number;
   created_at: string;
   updated_at: string;
 }
@@ -259,33 +260,28 @@ export interface ActiveBatchesResponse {
 export interface CreateBatchPayload {
   batch_id: string;
   sow_number?: string;
+  program_name: string;
   entity_id?: string;
   category_id?: string;
   delivery_mode_id?: string;
   accommodation_id?: string;
   category?: string;
-  residential_type?: string;
-  program_name: string;
   technology?: string;
   domain?: string;
   client_name?: string;
-  delivery_mode: string;
+  delivery_mode?: string;
   location_city?: string;
   start_date?: string;
   end_date?: string;
-  calendar_days?: number;
   training_days?: number;
   total_hours?: number;
   total_enrollments?: number;
-  residential_enrollments?: number;
-  non_residential_enrollments?: number;
-  status?: string;
+  primary_manager_id: string;
+  coordinator_id: string;
+  sales_spoc_id: string;
   faculty_assigned_text?: string;
+  faculty_members?: Array<{ name?: string }>;
   remarks?: string;
-  comments?: string;
-  sales_spoc_id?: string;
-  coordinator_id?: string;
-  primary_manager_id?: string;
 }
 
 export interface BatchOption {
@@ -957,6 +953,7 @@ class ApiService {
     category?: string;
     client_name?: string;
     search?: string;
+    mine?: boolean;
   }): Promise<Batch[]> {
     const query = new URLSearchParams();
     if (params?.status && params.status !== "ALL") query.append("status", params.status);
@@ -964,6 +961,9 @@ class ApiService {
     if (params?.category && params.category !== "ALL") query.append("category", params.category);
     if (params?.client_name) query.append("client_name", params.client_name);
     if (params?.search) query.append("search", params.search);
+    // Ownership is resolved server-side from the bearer token, so this is a
+    // boolean scope switch rather than a user id the caller could tamper with.
+    if (params?.mine) query.append("mine", "true");
 
     const queryString = query.toString();
     const endpoint = queryString ? `/batches?${queryString}` : "/batches";

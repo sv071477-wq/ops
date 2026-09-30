@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 import {
   api, Role, Team, User, UserHierarchyNode, BatchOption, FacultyType, Vertical, FmsSyncLog, CoordinatorMappingRecord
 } from "@/lib/api";
@@ -12,6 +13,8 @@ import { useConfirm } from "@/components/ConfirmProvider";
 import { Navbar } from "@/components/Navbar";
 import { ChangePasswordModal } from "@/components/ChangePasswordModal";
 import { PaginationControls } from "@/components/PaginationControls";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Shield, Users, Tag, UserPlus, Plus, Trash2, CheckCircle2,
   AlertCircle, RefreshCw, GitFork, Briefcase, Layers, Building2,
@@ -1274,11 +1277,17 @@ export default function AdminPortalPage() {
                       <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
                         {formatDate(r.created_at)}
                       </td>
-                      <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                        <button onClick={() => handleDeleteRole(r.id, r.name)} style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: "6px" }}>
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
+                     <td className="px-4 py-3 text-right">
+                       <Button
+                         variant="ghost"
+                         size="sm"
+                         onClick={() => handleDeleteRole(r.id, r.name)}
+                         title="Deactivate Role"
+                         className="h-8 w-8 p-0 text-destructive hover:text-destructive/80 hover:bg-destructive/10"
+                       >
+                         <Trash2 size={16} />
+                       </Button>
+                     </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1322,7 +1331,7 @@ export default function AdminPortalPage() {
             </div>
 
             {/* Sub-tabs for option types */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "1px solid var(--border-subtle)", paddingBottom: 10 }}>
+            <div className="flex flex-wrap gap-1 p-1 bg-muted/50 rounded-lg mb-4">
               {[
                 { key: "categories", label: "Categories" },
                 { key: "delivery-modes", label: "Delivery Modes" },
@@ -1331,22 +1340,20 @@ export default function AdminPortalPage() {
                 { key: "faculty-types", label: "Faculty Types" },
                 { key: "verticals", label: "Verticals" },
               ].map((tab) => (
-                <button
+                <Button
                   key={tab.key}
+                  variant={selectedOptionType === tab.key ? "default" : "ghost"}
+                  size="sm"
                   onClick={() => setSelectedOptionType(tab.key as any)}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: selectedOptionType === tab.key ? "#0b5cab" : "#f1f5f9",
-                    color: selectedOptionType === tab.key ? "#ffffff" : "#475569",
-                    fontWeight: 600,
-                    fontSize: "0.825rem",
-                    cursor: "pointer"
-                  }}
+                  className={cn(
+                    "text-xs font-semibold transition-all",
+                    selectedOptionType === tab.key
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
                 >
                   {tab.label}
-                </button>
+                </Button>
               ))}
             </div>
 
@@ -1411,141 +1418,156 @@ export default function AdminPortalPage() {
 
         {/* TAB 4: STAFF DIRECTORY */}
         {activeTab === "users" && (
-          <div className="glass-panel" style={{ padding: "24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div className="glass-panel panel-md">
+            <div className="flex justify-between items-center mb-6">
               <div>
-                <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                <h2 className="text-xl font-bold text-foreground">
                   Organization Staff Directory
                 </h2>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
+                <p className="text-sm text-muted-foreground mt-1">
                   Provision new employees, assign position titles, assign teams (Ops, etc.), and configure reporting managers.
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ position: "relative", minWidth: 260 }}>
-                  <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
-                  <input
-                    type="text"
-                    placeholder="Search staff by name, email, role, team..."
-                    value={userSearch}
-                    onChange={(e) => {
-                      setUserSearch(e.target.value);
-                      setUserPage(1);
-                    }}
-                    className="glass-input"
-                    style={{ paddingLeft: 32, fontSize: "0.825rem", width: "100%" }}
-                  />
+                <div className="flex gap-2 flex-wrap items-center">
+                  <div className="relative min-w-64">
+                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" aria-hidden="true" />
+                    <input
+                      type="text"
+                      placeholder="Search staff by name, email, role, team..."
+                      value={userSearch}
+                      onChange={(e) => {
+                        setUserSearch(e.target.value);
+                        setUserPage(1);
+                      }}
+                      className="glass-input pl-10 h-10 text-sm w-full"
+                    />
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    onClick={() => handleOpenChangePassword(null)}
+                    className="flex items-center gap-2"
+                  >
+                    <KeyRound size={16} className="text-amber-600" />
+                    <span>Change User Password</span>
+                  </Button>
+
+                  <Button
+                    onClick={() => setIsCreateUserOpen(true)}
+                    className="flex items-center gap-2"
+                  >
+                    <UserPlus size={16} />
+                    <span>Add New User</span>
+                  </Button>
                 </div>
-
-                <button
-                  onClick={() => handleOpenChangePassword(null)}
-                  className="btn btn-secondary"
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  <KeyRound size={16} color="#d97706" />
-                  <span>Change User Password</span>
-                </button>
-
-                <button
-                  onClick={() => setIsCreateUserOpen(true)}
-                  className="btn btn-primary"
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  <UserPlus size={16} />
-                  <span>Add New User</span>
-                </button>
               </div>
-            </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                    <th style={{ padding: "12px 16px" }}>Full Name</th>
-                    <th style={{ padding: "12px 16px" }}>Corporate Email</th>
-                    <th style={{ padding: "12px 16px" }}>Assigned Role / Title</th>
-                    <th style={{ padding: "12px 16px" }}>Assigned Team (Dept)</th>
-                    <th style={{ padding: "12px 16px" }}>Reports To (Manager)</th>
-                    <th style={{ padding: "12px 16px" }}>Direct Reports</th>
-                    <th style={{ padding: "12px 16px" }}>Status</th>
-                    <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} style={{ textAlign: "center", padding: "36px 0", color: "var(--text-muted)" }}>
-                        No staff members found matching &quot;{userSearch}&quot;.
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="glass-table w-full border-collapse">
+                  <thead>
+                    <tr className="text-left text-xs text-muted-foreground/70 uppercase font-semibold">
+                      <th className="px-4 py-3">Full Name</th>
+                      <th className="px-4 py-3">Corporate Email</th>
+                      <th className="px-4 py-3">Assigned Role / Title</th>
+                      <th className="px-4 py-3">Assigned Team (Dept)</th>
+                      <th className="px-4 py-3">Reports To (Manager)</th>
+                      <th className="px-4 py-3">Direct Reports</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
-                  ) : (
-                    paginatedUsers.map((u) => (
-                      <tr key={u.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
-                          {u.full_name}
+                  </thead>
+                  <tbody>
+                    {paginatedUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="text-center py-9 text-muted-foreground">
+                          No staff members found matching &quot;{userSearch}&quot;.
                         </td>
-                        <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
-                          {u.email}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600, background: "#e8f2fb", color: "#0b5cab" }}>
-                            {u.role_detail?.name || u.role}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          {u.team_detail ? (
-                            <span style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "0.85rem" }}>
-                              {u.team_detail.name}
+                      </tr>
+                    ) : (
+                      paginatedUsers.map((u) => (
+                        <tr key={u.id} className="border-b border-border text-sm">
+                          <td className="px-4 py-3 font-semibold text-foreground">
+                            {u.full_name}
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground">
+                            {u.email}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-block px-2 py-1 rounded text-xs font-semibold bg-primary/10 text-primary">
+                              {u.role_detail?.name || u.role}
                             </span>
-                          ) : (
-                            <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>— Unassigned —</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: u.manager_name ? "var(--text-main)" : "var(--text-dim)", fontSize: "0.825rem" }}>
-                          {u.manager_name || "— Top Level —"}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          {u.direct_reports_count && u.direct_reports_count > 0 ? (
-                            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 700, background: "#f0fdf4", color: "#16a34a" }}>
-                              {u.direct_reports_count} direct report(s)
+                          </td>
+                          <td className="px-4 py-3">
+                            {u.team_detail ? (
+                              <span className="font-semibold text-foreground text-sm">
+                                {u.team_detail.name}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/60 text-sm">— Unassigned —</span>
+                            )}
+                          </td>
+                          <td className={cn(
+                            "px-4 py-3 text-sm",
+                            u.manager_name ? "text-foreground" : "text-muted-foreground/60"
+                          )}>
+                            {u.manager_name || "— Top Level —"}
+                          </td>
+                          <td className="px-4 py-3">
+                            {u.direct_reports_count && u.direct_reports_count > 0 ? (
+                              <Badge variant="success" className="text-xs font-semibold">
+                                {u.direct_reports_count} direct report(s)
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground/60 text-sm">0</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={cn(
+                              "inline-flex items-center gap-1.5 text-xs font-semibold",
+                              u.is_active ? "text-success" : "text-muted-foreground/60"
+                            )}>
+                              <span className={cn(
+                                "w-2 h-2 rounded-full",
+                                u.is_active ? "bg-success" : "bg-muted-foreground/60"
+                              )} />
+                              {u.is_active ? "Active" : "Inactive"}
                             </span>
-                          ) : (
-                            <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>0</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: u.is_active ? "#16a34a" : "#94a3b8", fontSize: "0.8rem", fontWeight: 600 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.is_active ? "#16a34a" : "#94a3b8" }} />
-                            {u.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
-                          <button
-                            onClick={() => handleOpenChangePassword(u)}
-                            title="Change User Password"
-                            aria-label={`Change password for ${u.full_name}`}
-                            style={{ background: "transparent", border: "none", color: "#d97706", cursor: "pointer", padding: 6 }}
-                          >
-                            <KeyRound size={16} />
-                          </button>
-                          <button
-                            onClick={() => handleOpenEditUser(u)}
-                            title="Edit staff member"
-                            aria-label={`Edit ${u.full_name}`}
-                            style={{ background: "transparent", border: "none", color: "#0b5cab", cursor: "pointer", padding: 6 }}
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUser(u)}
-                            title="Delete staff member"
-                            aria-label={`Delete ${u.full_name}`}
-                            style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: 6 }}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            <div className="flex items-center gap-1 justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenChangePassword(u)}
+                                title="Change User Password"
+                                aria-label={`Change password for ${u.full_name}`}
+                                className="h-8 w-8 p-0 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                              >
+                                <KeyRound size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenEditUser(u)}
+                                title="Edit staff member"
+                                aria-label={`Edit ${u.full_name}`}
+                                className="h-8 w-8 p-0 text-primary hover:text-primary-hover hover:bg-primary/10"
+                              >
+                                <Edit2 size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteUser(u)}
+                                title="Delete staff member"
+                                aria-label={`Delete ${u.full_name}`}
+                                className="h-8 w-8 p-0 text-destructive hover:text-destructive/80 hover:bg-destructive/10"
+                              >
+                                <Trash2 size={16} />
+                              </Button>
+                            </div>
+                          </td>
                       </tr>
                     ))
                   )}
@@ -1625,22 +1647,22 @@ export default function AdminPortalPage() {
                   </select>
                 </div>
 
-                <button type="submit" disabled={isSyncingFms} className="btn btn-primary" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Button type="submit" disabled={isSyncingFms} className="btn btn-primary flex items-center gap-2">
                   <ArrowRightLeft size={16} />
                   <span>{isSyncingFms ? "Dispatching..." : "Dispatch FMS Sync"}</span>
-                </button>
+                </Button>
               </form>
             </div>
 
             {/* Sync logs table */}
-            <div className="glass-panel" style={{ padding: "24px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+            <div className="glass-panel panel-md">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-foreground">
                   Recent FMS Dispatch History ({fmsLogs.length})
                 </h3>
-                <button onClick={fetchFmsLogs} className="btn btn-secondary" style={{ padding: "4px 10px", fontSize: "0.8rem" }}>
+                <Button variant="secondary" size="sm" onClick={fetchFmsLogs}>
                   Refresh Logs
-                </button>
+                </Button>
               </div>
 
               {isLoadingFms ? (
@@ -1783,23 +1805,23 @@ export default function AdminPortalPage() {
                     ))}
                   </select>
                 </div>
-                <button type="submit" disabled={isSubmittingMapping} className="btn btn-primary" style={{ height: 40, whiteSpace: "nowrap" }}>
+                <Button type="submit" disabled={isSubmittingMapping} className="btn btn-primary h-10 whitespace-nowrap">
                   <Link2 size={15} />
                   <span>{isSubmittingMapping ? "Assigning..." : "Assign"}</span>
-                </button>
+                </Button>
               </form>
             </div>
 
             {/* Existing Mappings Table */}
             <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+                <h3 className="text-lg font-bold text-foreground">
                   Active Mappings ({mappings.length})
                 </h3>
-                <button onClick={fetchMappings} className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: "0.8rem" }}>
+                <Button variant="secondary" size="sm" onClick={fetchMappings}>
                   <RefreshCw size={14} />
                   <span>Refresh</span>
-                </button>
+                </Button>
               </div>
               {isLoadingMappings ? (
                 <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>

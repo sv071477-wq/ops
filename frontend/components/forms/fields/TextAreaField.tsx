@@ -5,6 +5,7 @@ import { Controller, ControllerProps, FieldPath, FieldValues, useFormContext } f
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { AlertCircle } from "lucide-react";
 
 interface TextAreaFieldProps<T extends FieldValues> extends Omit<ControllerProps<T>, "name" | "control" | "rules" | "render"> {
   name: FieldPath<T>;
@@ -39,7 +40,13 @@ export const TextAreaField = forwardRef<HTMLTextAreaElement, TextAreaFieldProps<
               placeholder={placeholder}
               disabled={disabled}
               rows={rows}
-              className={cn(errorMessage && "border-destructive focus:ring-destructive", disabled && "bg-muted")}
+              className={cn(
+                "w-full rounded-lg border border-input bg-background px-3 text-sm transition-colors",
+                "placeholder:text-muted-foreground/70",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                errorMessage && "border-destructive focus-visible:ring-destructive",
+                disabled && "bg-muted cursor-not-allowed"
+              )}
               aria-invalid={errorMessage ? "true" : "false"}
               aria-describedby={errorMessage ? `${name}-error` : helperText ? `${name}-helper` : undefined}
               {...field}
@@ -47,8 +54,13 @@ export const TextAreaField = forwardRef<HTMLTextAreaElement, TextAreaFieldProps<
             />
           )}
         />
-        {errorMessage && <p id={`${name}-error`} className="text-sm text-destructive" role="alert">{errorMessage}</p>}
-        {helperText && !errorMessage && <p id={`${name}-helper`} className="text-sm text-muted-foreground">{helperText}</p>}
+        {errorMessage && (
+          <p id={`${name}-error`} className="text-sm text-destructive mt-1 flex items-center gap-1" role="alert">
+            <AlertCircle className="h-3 w-3" />
+            {errorMessage}
+          </p>
+        )}
+        {helperText && !errorMessage && <p id={`${name}-helper`} className="text-sm text-muted-foreground mt-1">{helperText}</p>}
       </div>
     );
   }

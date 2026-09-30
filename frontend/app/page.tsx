@@ -9,11 +9,12 @@ import {
 import { formatDate } from "@/lib/dateUtils";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { ActiveBatchesView } from "./dashboard/components/ActiveBatchesView";
+import { MyBatchesView } from "./dashboard/components/MyBatchesView";
 import { CreateBatchModal } from "@/components/CreateBatchModal";
 import { ApproveBatchModal } from "@/components/ApproveBatchModal";
-import { BatchDetailDrawer } from "@/components/BatchDetailDrawer";
+import { BatchDetailDrawer, BatchDetailTab } from "@/components/BatchDetailDrawer";
 import { ManagerBoard } from "@/components/ManagerBoard";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, DashboardView } from "@/components/Sidebar";
 import { EnterpriseDashboard } from "@/components/EnterpriseDashboard";
 import { PaginationControls } from "@/components/PaginationControls";
 import {
@@ -34,7 +35,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   // Top-level Navigation View
-  const [activeView, setActiveView] = useState<"active_batches" | "manager_board" | "approvals" | "finance" | "analytics" | "faculty">("active_batches");
+  const [activeView, setActiveView] = useState<DashboardView>("active_batches");
 
   // Active Batches state
   const [activeFilterDate, setActiveFilterDate] = useState<string>(toTodayIso());
@@ -45,6 +46,14 @@ export default function DashboardPage() {
   const [activeBatchPageSize, setActiveBatchPageSize] = useState(10);
   const [activeSessionPage, setActiveSessionPage] = useState(1);
   const [activeSessionPageSize, setActiveSessionPageSize] = useState(15);
+
+  // My Batches state. Kept separate from `batches`, which is manager scope and
+  // already loaded for other views.
+  const [myBatches, setMyBatches] = useState<Batch[]>([]);
+  const [isLoadingMyBatches, setIsLoadingMyBatches] = useState(false);
+  const [myBatchesError, setMyBatchesError] = useState<string | null>(null);
+  const [myBatchesPage, setMyBatchesPage] = useState(1);
+  const [myBatchesPageSize, setMyBatchesPageSize] = useState(10);
 
   // Direct reports state for managerial dashboard
   const [myReports, setMyReports] = useState<User[]>([]);
@@ -107,6 +116,14 @@ export default function DashboardPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedBatchForApproval, setSelectedBatchForApproval] = useState<Batch | null>(null);
   const [selectedBatchForDetail, setSelectedBatchForDetail] = useState<Batch | null>(null);
+  // The My Batches "Manage Schedule" path lands the coordinator straight on the
+  // timetable; every other entry point keeps the default Overview tab.
+  const [detailDrawerTab, setDetailDrawerTab] = useState<BatchDetailTab>("overview");
+
+  const openBatchDetail = (batch: Batch, tab: BatchDetailTab = "overview") => {
+    setDetailDrawerTab(tab);
+    setSelectedBatchForDetail(batch);
+  };
 
   // Redirect if unauthenticated
   useEffect(() => {
@@ -132,6 +149,21 @@ export default function DashboardPage() {
       console.error("Failed to load batches:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Fetch batches owned by the caller
+  const fetchMyBatches = async () => {
+    setIsLoadingMyBatches(true);
+    setMyBatchesError(null);
+    try {
+      const data = await api.getBatches({ mine: true });
+      setMyBatches(data);
+    } catch (err: any) {
+      console.error("Failed to load my batches:", err);
+      setMyBatchesError(err?.message || "Failed to load your batches");
+    } finally {
+      setIsLoadingMyBatches(false);
     }
   };
 
@@ -296,7 +328,9 @@ export default function DashboardPage() {
       setDomainFilter("ALL");
       setCategoryFilter("ALL");
 
-      if (activeView === "active_batches") {
+      if (activeView === "my_batches") {
+        fetchMyBatches();
+      } else if (activeView === "active_batches") {
         fetchActiveBatches(activeFilterDate);
       } else if (activeView === "manager_board") {
         fetchBatches();
@@ -331,13 +365,22 @@ export default function DashboardPage() {
     }
   }, [statusFilter, domainFilter, categoryFilter]);
 
-  // Auto-switch to manager_board on initial login for managers
+  // Auto-switch to the role's landing view on initial login
   useEffect(() => {
     const teamName = user?.team_name?.trim().toLowerCase();
     if (user && teamName === "finance" && activeView === "active_batches") {
       setActiveView("finance");
     } else if (user && user.role?.toLowerCase() === "manager" && activeView === "active_batches") {
       setActiveView("manager_board");
+    } else if (
+      user &&
+      user.role?.toLowerCase() === "coordinator" &&
+      teamName !== "finance" &&
+      activeView === "active_batches"
+    ) {
+      // Coordinators create batches, so the schedule path has to be one click
+      // away the moment they land.
+      setActiveView("my_batches");
     }
   }, [user]);
 
@@ -356,6 +399,9 @@ export default function DashboardPage() {
       setActiveView("finance");
     } else if (!hasReportingStaff && (activeView === "analytics" || activeView === "manager_board")) {
       setActiveView("active_batches");
+    } else if (isFinanceTeam && activeView === "my_batches") {
+      // My Batches is hidden for Finance, so never strand them on an absent view.
+      setActiveView("finance");
     }
   }, [hasReportingStaff, activeView, user?.team_name]);
 
@@ -594,6 +640,26 @@ export default function DashboardPage() {
       {/* Main Content Area */}
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignSelf: "stretch" }}>
 
+        {/* VIEW 0: MY BATCHES (coordinator-owned, schedule-first) */}
+        {activeView === "my_batches" && (
+          <MyBatchesView
+            data={myBatches}
+            isLoading={isLoadingMyBatches}
+            error={myBatchesError}
+            onRefresh={fetchMyBatches}
+            onOpenBatchDetail={(batch) => openBatchDetail(batch, "sessions")}
+            canCreateBatch={canCreateBatch}
+            onCreateBatch={() => setIsCreateOpen(true)}
+            page={myBatchesPage}
+            pageSize={myBatchesPageSize}
+            onPageChange={setMyBatchesPage}
+            onPageSizeChange={(newSize) => {
+              setMyBatchesPageSize(newSize);
+              setMyBatchesPage(1);
+            }}
+          />
+        )}
+
         {/* VIEW 0: MANAGER LEVEL CONTROL BOARD */}
         {activeView === "manager_board" && (
           <ManagerBoard
@@ -605,7 +671,7 @@ export default function DashboardPage() {
               fetchBatches();
               fetchAnalytics();
             }}
-            onOpenBatchDetail={(batch) => setSelectedBatchForDetail(batch)}
+            onOpenBatchDetail={(batch) => openBatchDetail(batch)}
             onOpenApproval={(batch) => setSelectedBatchForApproval(batch)}
             currentUser={user}
             onExportMbr={handleExportMbr}
@@ -734,7 +800,7 @@ export default function DashboardPage() {
                             <td style={{ padding: "14px 16px" }}>{getStatusBadge(b.status)}</td>
                             <td style={{ padding: "14px 16px", textAlign: "right" }}>
                               <button
-                                onClick={() => setSelectedBatchForDetail(b)}
+                                onClick={() => openBatchDetail(b)}
                                 className="btn btn-primary"
                                 style={{ padding: "5px 10px", fontSize: "0.775rem" }}
                               >
@@ -1342,7 +1408,10 @@ export default function DashboardPage() {
       <CreateBatchModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
-        onBatchCreated={() => fetchBatches()}
+        onBatchCreated={() => {
+          fetchBatches();
+          if (activeView === "my_batches") fetchMyBatches();
+        }}
       />
 
       <ApproveBatchModal
@@ -1359,7 +1428,11 @@ export default function DashboardPage() {
         onClose={() => setSelectedBatchForDetail(null)}
         onOpenApprove={(b) => setSelectedBatchForApproval(b)}
         canApprove={!!selectedBatchForDetail && approvalQueue.some((batch) => batch.id === selectedBatchForDetail.id)}
-        onBatchUpdated={() => fetchBatches()}
+        onBatchUpdated={() => {
+          fetchBatches();
+          if (activeView === "my_batches") fetchMyBatches();
+        }}
+        initialTab={detailDrawerTab}
       />
     </div>
   );
