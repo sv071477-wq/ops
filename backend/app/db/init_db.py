@@ -9,6 +9,7 @@ from app.models.batch import (
     BatchCategory,
     DeliveryMode,
     Entity,
+    FacultyType,
     Vertical,
     ProgramType,
 )
@@ -47,7 +48,16 @@ def init_db(db: Session = None) -> None:
                 },
                 "faculty_utilization": {
                     "vertical": "VARCHAR(50)",
+                    "faculty_type_id": "UUID REFERENCES faculty_types(id) ON DELETE SET NULL",
                 },
+            }
+
+            # create_all() skips tables that already exist, so it never adds
+            # indexes to them either. Re-add the ones the models declare.
+            expected_indexes = {
+                "faculty_utilization": [
+                    "ix_faculty_utilization_faculty_type_id",
+                ],
             }
 
             inspector = inspect(conn)
@@ -59,6 +69,16 @@ def init_db(db: Session = None) -> None:
                     if column_name not in existing_columns:
                         conn.execute(text(
                             f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {definition}'
+                        ))
+
+            for table_name, index_names in expected_indexes.items():
+                if not inspector.has_table(table_name):
+                    continue
+                existing_indexes = {index["name"] for index in inspector.get_indexes(table_name)}
+                for index_name in index_names:
+                    if index_name not in existing_indexes:
+                        conn.execute(text(
+                            f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table_name}" ("faculty_type_id")'
                         ))
             conn.commit()
     except Exception as e:
@@ -111,6 +131,7 @@ def init_db(db: Session = None) -> None:
             (Entity, ["Unext", "Unext BSFI"]),
             (Vertical, ["CG&O", "DS/ITES", "ET/BFSI", "ET/ITES", "ET/Merittrac", "IT/ITES"]),
             (ProgramType, ["RBT", "Bootcamp", "RGT"]),
+            (FacultyType, ["Internal Full-time", "External Consultant", "HOP"]),
         ]
         for option_model, names in default_options:
             for name in names:

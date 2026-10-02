@@ -7,6 +7,10 @@ import {
   User,
 } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
+import { FullscreenTable, SortableHeaderCell, TableFilters } from "@/components/table";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useTableFilters, type TableFilterField } from "@/hooks/useTableFilters";
+import type { SortAccessors } from "@/lib/tableUtils";
 import {
   Kanban,
   BarChart3,
@@ -54,6 +58,51 @@ interface KanbanStage {
   icon: React.ElementType;
   filterFn: (batch: Batch) => boolean;
 }
+
+/** Flattened row for the "Supervised Personnel & Reporting Team" table. */
+interface PersonnelRow {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
+  team: string;
+  batchesHandled: number;
+  status: string;
+}
+
+const PERSONNEL_COLUMNS = 6;
+
+// Heading padding matches the `12px 14px` body cells of the personnel table.
+const PERSONNEL_TH_STYLE: React.CSSProperties = { padding: "12px 14px" };
+
+const PERSONNEL_ACCESSORS: SortAccessors<PersonnelRow> = {
+  name: (row) => row.fullName,
+  email: (row) => row.email,
+  role: (row) => row.role,
+  team: (row) => row.team,
+  batches: (row) => row.batchesHandled,
+  status: (row) => row.status,
+};
+
+const PERSONNEL_FILTER_FIELDS: readonly TableFilterField<PersonnelRow>[] = [
+  { key: "name", accessor: PERSONNEL_ACCESSORS.name },
+  { key: "email", accessor: PERSONNEL_ACCESSORS.email },
+  { key: "role", accessor: PERSONNEL_ACCESSORS.role },
+  { key: "team", accessor: PERSONNEL_ACCESSORS.team },
+  { key: "batches", accessor: PERSONNEL_ACCESSORS.batches },
+  { key: "status", accessor: PERSONNEL_ACCESSORS.status },
+];
+
+const PERSONNEL_SORT_OPTIONS = [
+  { key: "name", label: "Employee Name" },
+  { key: "email", label: "Corporate Email" },
+  { key: "role", label: "Assigned Role" },
+  { key: "team", label: "Ops Team" },
+  { key: "batches", label: "Batches Handled" },
+  { key: "status", label: "Account Status" },
+];
+
+const PERSONNEL_DESC_FIRST_KEYS = ["batches"];
 
 export const ManagerBoard: React.FC<ManagerBoardProps> = ({
   batches,
@@ -212,6 +261,27 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
     }).length;
     return { l2Count, activeCount, overdueCount };
   }, [batches]);
+
+  // Personnel ledger rows: the same six fields the table renders, pre-flattened
+  // so sorting and filtering run on raw values instead of JSX.
+  const personnelRows = useMemo<PersonnelRow[]>(
+    () =>
+      reports.map((r) => ({
+        id: r.id,
+        fullName: r.full_name || "",
+        email: r.email || "",
+        role: r.role_detail?.name || r.role || "",
+        team: r.team_name || "Operations",
+        batchesHandled: batches.filter((b) => b.coordinator_id === r.id).length,
+        status: r.is_active ? "Active" : "Inactive",
+      })),
+    [reports, batches]
+  );
+
+  const personnelSort = useTableSort(personnelRows, PERSONNEL_ACCESSORS, {
+    descFirstKeys: PERSONNEL_DESC_FIRST_KEYS,
+  });
+  const personnelFilters = useTableFilters(personnelSort.sortedRows, PERSONNEL_FILTER_FIELDS);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -788,59 +858,157 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                 </div>
               </div>
             ) : (
-              <div style={{ overflowX: "auto" }}>
+              <FullscreenTable
+                panelClassName=""
+                style={{ border: "1px solid var(--border-subtle)", borderRadius: 10, background: "#ffffff" }}
+                toolbar={
+                  <TableFilters
+                    search={{
+                      value: personnelFilters.search,
+                      onChange: personnelFilters.setSearch,
+                      placeholder: "Search name, email, role...",
+                      width: 240,
+                    }}
+                    selects={[
+                      {
+                        key: "role",
+                        label: "Role",
+                        value: personnelFilters.getFilter("role"),
+                        onChange: (value) => personnelFilters.setFilter("role", value),
+                        options: personnelFilters.optionsFor("role"),
+                        width: 150,
+                      },
+                      {
+                        key: "team",
+                        label: "Ops Team",
+                        value: personnelFilters.getFilter("team"),
+                        onChange: (value) => personnelFilters.setFilter("team", value),
+                        options: personnelFilters.optionsFor("team"),
+                        width: 160,
+                      },
+                      {
+                        key: "status",
+                        label: "Account Status",
+                        value: personnelFilters.getFilter("status"),
+                        onChange: (value) => personnelFilters.setFilter("status", value),
+                        options: personnelFilters.optionsFor("status"),
+                        width: 150,
+                      },
+                    ]}
+                    sort={{
+                      options: PERSONNEL_SORT_OPTIONS,
+                      sortKey: personnelSort.sortKey,
+                      sortDir: personnelSort.sortDir,
+                      onChange: personnelSort.applySort,
+                    }}
+                    onClear={personnelFilters.clearFilters}
+                    hasActiveFilters={personnelFilters.hasActiveFilters}
+                    activeFilterCount={personnelFilters.activeFilterCount}
+                  />
+                }
+              >
                 <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
-                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.78rem", color: "var(--text-dim)" }}>
-                      <th style={{ padding: "10px 14px" }}>Employee Name</th>
-                      <th style={{ padding: "10px 14px" }}>Corporate Email</th>
-                      <th style={{ padding: "10px 14px" }}>Assigned Role</th>
-                      <th style={{ padding: "10px 14px" }}>Ops Team</th>
-                      <th style={{ padding: "10px 14px" }}>Batches Handled</th>
-                      <th style={{ padding: "10px 14px" }}>Account Status</th>
+                    <tr>
+                      <SortableHeaderCell
+                        columnKey="name"
+                        label="Employee Name"
+                        sortKey={personnelSort.sortKey}
+                        sortDir={personnelSort.sortDir}
+                        onSort={personnelSort.toggleSort}
+                        style={PERSONNEL_TH_STYLE}
+                      />
+                      <SortableHeaderCell
+                        columnKey="email"
+                        label="Corporate Email"
+                        sortKey={personnelSort.sortKey}
+                        sortDir={personnelSort.sortDir}
+                        onSort={personnelSort.toggleSort}
+                        style={PERSONNEL_TH_STYLE}
+                      />
+                      <SortableHeaderCell
+                        columnKey="role"
+                        label="Assigned Role"
+                        sortKey={personnelSort.sortKey}
+                        sortDir={personnelSort.sortDir}
+                        onSort={personnelSort.toggleSort}
+                        style={PERSONNEL_TH_STYLE}
+                      />
+                      <SortableHeaderCell
+                        columnKey="team"
+                        label="Ops Team"
+                        sortKey={personnelSort.sortKey}
+                        sortDir={personnelSort.sortDir}
+                        onSort={personnelSort.toggleSort}
+                        style={PERSONNEL_TH_STYLE}
+                      />
+                      <SortableHeaderCell
+                        columnKey="batches"
+                        label="Batches Handled"
+                        sortKey={personnelSort.sortKey}
+                        sortDir={personnelSort.sortDir}
+                        onSort={personnelSort.toggleSort}
+                        style={PERSONNEL_TH_STYLE}
+                      />
+                      <SortableHeaderCell
+                        columnKey="status"
+                        label="Account Status"
+                        sortKey={personnelSort.sortKey}
+                        sortDir={personnelSort.sortDir}
+                        onSort={personnelSort.toggleSort}
+                        style={PERSONNEL_TH_STYLE}
+                      />
                     </tr>
                   </thead>
                   <tbody>
-                    {reports.map((r) => {
-                      const assignedBatchesCount = batches.filter((b) => b.coordinator_id === r.id).length;
-                      return (
+                    {personnelFilters.filteredRows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={PERSONNEL_COLUMNS}
+                          style={{ padding: "32px 14px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem" }}
+                        >
+                          No direct reports match the current search or filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      personnelFilters.filteredRows.map((r) => (
                         <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.85rem" }}>
                           <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--text-main)" }}>
-                            {r.full_name}
+                            {r.fullName}
                           </td>
                           <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
                             {r.email}
                           </td>
                           <td style={{ padding: "12px 14px" }}>
                             <span style={{ padding: "2px 8px", borderRadius: 4, background: "#e8f2fb", color: "#0b5cab", fontSize: "0.75rem", fontWeight: 600 }}>
-                              {r.role_detail?.name || r.role}
+                              {r.role}
                             </span>
                           </td>
                           <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
-                            {r.team_name || "Operations"}
+                            {r.team}
                           </td>
                           <td style={{ padding: "12px 14px", fontWeight: 700, color: "#0b5cab" }}>
-                            {assignedBatchesCount} Batch(es)
+                            {r.batchesHandled} Batch(es)
                           </td>
                           <td style={{ padding: "12px 14px" }}>
                             <span style={{
                               display: "inline-flex",
                               alignItems: "center",
                               gap: 5,
-                              color: r.is_active ? "#16a34a" : "#94a3b8",
+                              color: r.status === "Active" ? "#16a34a" : "#94a3b8",
                               fontSize: "0.8rem",
                               fontWeight: 600,
                             }}>
-                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: r.is_active ? "#16a34a" : "#94a3b8" }} />
-                              {r.is_active ? "Active" : "Inactive"}
+                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: r.status === "Active" ? "#16a34a" : "#94a3b8" }} />
+                              {r.status}
                             </span>
                           </td>
                         </tr>
-                      );
-                    })}
+                      ))
+                    )}
                   </tbody>
                 </table>
-              </div>
+              </FullscreenTable>
             )}
           </div>
         </div>

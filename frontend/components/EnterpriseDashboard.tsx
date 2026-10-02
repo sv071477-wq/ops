@@ -11,6 +11,12 @@ import {
 import { Batch, User, ManagerDashboardSummary } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "./PaginationControls";
+import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useTableFilters } from "@/hooks/useTableFilters";
+import type { TableFilterField } from "@/hooks/useTableFilters";
+import { isBlankTableValue } from "@/lib/tableUtils";
+import type { SortAccessors, TableAccessor } from "@/lib/tableUtils";
 
 interface EnterpriseDashboardProps {
   batches: Batch[];
@@ -631,6 +637,143 @@ function QualityBubble({
   );
 }
 
+interface ManagerWorkloadRow {
+  manager: User;
+  total: number;
+  active: number;
+  pending: number;
+  completed: number;
+  totalHours: number;
+  totalEnrollments: number;
+}
+
+interface CoordinatorWorkloadRow {
+  coordinator: User;
+  total: number;
+  active: number;
+  pending: number;
+  completed: number;
+  totalHours: number;
+  totalEnrollments: number;
+}
+
+type ClientStatRow = [string, { batches: number; enrollments: number; hours: number; active: number }];
+
+interface TableColumn<T> {
+  key: string;
+  label: string;
+  /** Raw value the column sorts / filters / searches on. Missing = not sortable. */
+  accessor?: TableAccessor<T>;
+  sortable?: boolean;
+}
+
+function activeColumns<T>(columns: readonly TableColumn<T>[]) {
+  return columns.filter((column) => column.sortable !== false && !!column.accessor);
+}
+
+function buildSortAccessors<T>(columns: readonly TableColumn<T>[]): SortAccessors<T> {
+  const accessors: SortAccessors<T> = {};
+  activeColumns(columns).forEach((column) => {
+    if (column.accessor) accessors[column.key] = column.accessor;
+  });
+  return accessors;
+}
+
+function buildSortOptions<T>(columns: readonly TableColumn<T>[]) {
+  return activeColumns(columns).map((column) => ({ key: column.key, label: column.label }));
+}
+
+function buildFilterFields<T>(columns: readonly TableColumn<T>[], keys: readonly string[]): TableFilterField<T>[] {
+  return keys.flatMap((key) => {
+    const column = columns.find((c) => c.key === key);
+    return column?.accessor ? [{ key: column.key, accessor: column.accessor }] : [];
+  });
+}
+
+function buildSearchAccessor<T>(columns: readonly TableColumn<T>[]): TableAccessor<T> {
+  const accessors = activeColumns(columns).flatMap((column) => (column.accessor ? [column.accessor] : []));
+  return (row) =>
+    accessors
+      .map((accessor) => {
+        const value = accessor(row);
+        return isBlankTableValue(value) ? "" : String(value);
+      })
+      .join(" ");
+}
+
+const WORKLOAD_TH_STYLE: React.CSSProperties = { padding: "12px 16px" };
+
+const MANAGER_LEDGER_COLUMNS: readonly TableColumn<ManagerWorkloadRow>[] = [
+  { key: "manager", label: "Manager", accessor: (row) => row.manager.full_name || "" },
+  { key: "team", label: "Team", accessor: (row) => row.manager.team_name || "" },
+  { key: "active", label: "Active", accessor: (row) => row.active },
+  { key: "pending", label: "Pending", accessor: (row) => row.pending },
+  { key: "completed", label: "Completed", accessor: (row) => row.completed },
+  { key: "total", label: "Total", accessor: (row) => row.total },
+  { key: "hours", label: "Hours", accessor: (row) => row.totalHours },
+  { key: "enrollments", label: "Enrollments", accessor: (row) => row.totalEnrollments },
+  { key: "load", label: "Load %", accessor: (row) => (row.total > 0 ? Math.round((row.active / row.total) * 100) : 0) },
+];
+
+const MANAGER_LEDGER_SORT_ACCESSORS = buildSortAccessors(MANAGER_LEDGER_COLUMNS);
+const MANAGER_LEDGER_SORT_OPTIONS = buildSortOptions(MANAGER_LEDGER_COLUMNS);
+const MANAGER_LEDGER_SEARCH_ACCESSOR = buildSearchAccessor(MANAGER_LEDGER_COLUMNS);
+const MANAGER_LEDGER_FILTER_FIELDS = buildFilterFields(MANAGER_LEDGER_COLUMNS, ["team"]);
+
+const COORDINATOR_LEDGER_COLUMNS: readonly TableColumn<CoordinatorWorkloadRow>[] = [
+  { key: "coordinator", label: "Coordinator", accessor: (row) => row.coordinator.full_name || "" },
+  { key: "team", label: "Team", accessor: (row) => row.coordinator.team_name || "" },
+  { key: "active", label: "Active", accessor: (row) => row.active },
+  { key: "pipeline", label: "In Pipeline", accessor: (row) => row.pending },
+  { key: "completed", label: "Completed", accessor: (row) => row.completed },
+  { key: "total", label: "Total", accessor: (row) => row.total },
+  { key: "hours", label: "Hours", accessor: (row) => row.totalHours },
+  { key: "learners", label: "Enrollments", accessor: (row) => row.totalEnrollments },
+  { key: "capacity", label: "Load %", accessor: (row) => (row.total > 0 ? Math.round((row.active / row.total) * 100) : 0) },
+];
+
+const COORDINATOR_LEDGER_SORT_ACCESSORS = buildSortAccessors(COORDINATOR_LEDGER_COLUMNS);
+const COORDINATOR_LEDGER_SORT_OPTIONS = buildSortOptions(COORDINATOR_LEDGER_COLUMNS);
+const COORDINATOR_LEDGER_SEARCH_ACCESSOR = buildSearchAccessor(COORDINATOR_LEDGER_COLUMNS);
+const COORDINATOR_LEDGER_FILTER_FIELDS = buildFilterFields(COORDINATOR_LEDGER_COLUMNS, ["team"]);
+
+const CLIENT_PORTFOLIO_COLUMNS: readonly TableColumn<ClientStatRow>[] = [
+  { key: "index", label: "#", sortable: false },
+  { key: "client", label: "Client", accessor: (row) => row[0] },
+  { key: "batches", label: "Batches", accessor: (row) => row[1].batches },
+  { key: "active", label: "Active", accessor: (row) => row[1].active },
+  { key: "enrollments", label: "Enrollments", accessor: (row) => row[1].enrollments },
+  { key: "hours", label: "Hours", accessor: (row) => row[1].hours },
+];
+
+const CLIENT_PORTFOLIO_SORT_ACCESSORS = buildSortAccessors(CLIENT_PORTFOLIO_COLUMNS);
+const CLIENT_PORTFOLIO_SORT_OPTIONS = buildSortOptions(CLIENT_PORTFOLIO_COLUMNS);
+const CLIENT_PORTFOLIO_SEARCH_ACCESSOR = buildSearchAccessor(CLIENT_PORTFOLIO_COLUMNS);
+const CLIENT_PORTFOLIO_FILTER_FIELDS = buildFilterFields(CLIENT_PORTFOLIO_COLUMNS, ["client"]);
+
+const ACTIVITY_FEED_COLUMNS: readonly TableColumn<Batch>[] = [
+  { key: "batchId", label: "Batch ID", accessor: (row) => row.batch_id || "" },
+  { key: "client", label: "Client", accessor: (row) => row.client_name || "" },
+  { key: "program", label: "Program", accessor: (row) => row.program_name || "" },
+  { key: "domain", label: "Domain", accessor: (row) => row.domain || "" },
+  { key: "mode", label: "Mode", accessor: (row) => row.delivery_mode || "" },
+  { key: "startDate", label: "Start Date", accessor: (row) => row.start_date || "" },
+  { key: "enrollments", label: "Enrollments", accessor: (row) => Number(row.total_enrollments) || 0 },
+  { key: "hours", label: "Hours", accessor: (row) => Number(row.total_hours) || 0 },
+  { key: "status", label: "Status", accessor: (row) => row.status || "" },
+];
+
+const ACTIVITY_FEED_SORT_ACCESSORS = buildSortAccessors(ACTIVITY_FEED_COLUMNS);
+const ACTIVITY_FEED_SORT_OPTIONS = buildSortOptions(ACTIVITY_FEED_COLUMNS);
+const ACTIVITY_FEED_SEARCH_ACCESSOR = buildSearchAccessor(ACTIVITY_FEED_COLUMNS);
+const ACTIVITY_FEED_FILTER_FIELDS = buildFilterFields(ACTIVITY_FEED_COLUMNS, ["client", "domain", "mode", "status"]);
+const ACTIVITY_FEED_DESC_FIRST_KEYS = ["startDate"];
+
+const ACTIVITY_FEED_TH_STYLE: React.CSSProperties = { padding: "10px 14px" };
+
+/** The "Enrollments" and "Hours" cells are centred in the body, so their headings are too. */
+const ACTIVITY_NUMERIC_TH_STYLE: React.CSSProperties = { padding: "10px 14px", textAlign: "center" };
+
 export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoading, currentUser }: EnterpriseDashboardProps) {
   const [period, setPeriod] = useState<TimePeriod>("monthly");
   const [workloadTab, setWorkloadTab] = useState<"managers" | "coordinators">("managers");
@@ -813,7 +956,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     return Object.entries(map).sort((a, b) => b[1].active - a[1].active);
   }, [activeBatchesDataset]);
 
-  const managerWorkload = useMemo(
+  const managerWorkload: ManagerWorkloadRow[] = useMemo(
     () =>
       managers
         .map((m) => {
@@ -842,7 +985,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     return managerWorkload.slice(start, start + mgrPageSize);
   }, [managerWorkload, mgrPage, mgrPageSize]);
 
-  const coordinatorWorkload = useMemo(
+  const coordinatorWorkload: CoordinatorWorkloadRow[] = useMemo(
     () =>
       coordinators
         .map((c) => {
@@ -866,7 +1009,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     return coordinatorWorkload.slice(start, start + coordPageSize);
   }, [coordinatorWorkload, coordPage, coordPageSize]);
 
-  const clientStats = useMemo(() => {
+  const clientStats: ClientStatRow[] = useMemo(() => {
     const map: Record<string, { batches: number; enrollments: number; hours: number; active: number }> = {};
     activeBatchesDataset.forEach((b) => {
       const c = b.client_name || "Unassigned";
@@ -876,18 +1019,83 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
       map[c].hours += Number(b.total_hours) || 0;
       if (["Approved", "Upcoming", "Ongoing"].includes(b.status)) map[c].active++;
     });
-    return Object.entries(map).sort((a, b) => b[1].batches - a[1].batches);
+    return Object.entries(map);
   }, [activeBatchesDataset]);
 
+  // ── TABLE PIPELINES (raw rows → sorted → filtered → paginated) ────────────────
+
+  const managerSort = useTableSort(managerWorkload, MANAGER_LEDGER_SORT_ACCESSORS, {
+    initialKey: "active",
+    initialDir: "desc",
+  });
+  const managerFilters = useTableFilters(
+    managerSort.sortedRows,
+    MANAGER_LEDGER_FILTER_FIELDS,
+    MANAGER_LEDGER_SEARCH_ACCESSOR
+  );
+  const managerLedgerRows = managerFilters.filteredRows;
+  React.useEffect(() => {
+    setMgrPage(1);
+  }, [managerFilters.filtersVersion]);
+  const paginatedManagerLedger = useMemo(() => {
+    const start = (mgrPage - 1) * mgrPageSize;
+    return managerLedgerRows.slice(start, start + mgrPageSize);
+  }, [managerLedgerRows, mgrPage, mgrPageSize]);
+
+  const coordinatorSort = useTableSort(coordinatorWorkload, COORDINATOR_LEDGER_SORT_ACCESSORS, {
+    initialKey: "active",
+    initialDir: "desc",
+  });
+  const coordinatorFilters = useTableFilters(
+    coordinatorSort.sortedRows,
+    COORDINATOR_LEDGER_FILTER_FIELDS,
+    COORDINATOR_LEDGER_SEARCH_ACCESSOR
+  );
+  const coordinatorLedgerRows = coordinatorFilters.filteredRows;
+  React.useEffect(() => {
+    setCoordPage(1);
+  }, [coordinatorFilters.filtersVersion]);
+  const paginatedCoordinatorLedger = useMemo(() => {
+    const start = (coordPage - 1) * coordPageSize;
+    return coordinatorLedgerRows.slice(start, start + coordPageSize);
+  }, [coordinatorLedgerRows, coordPage, coordPageSize]);
+
+  const clientSort = useTableSort(clientStats, CLIENT_PORTFOLIO_SORT_ACCESSORS, {
+    initialKey: "batches",
+    initialDir: "desc",
+  });
+  const clientFilters = useTableFilters(
+    clientSort.sortedRows,
+    CLIENT_PORTFOLIO_FILTER_FIELDS,
+    CLIENT_PORTFOLIO_SEARCH_ACCESSOR
+  );
+  const clientPortfolioRows = clientFilters.filteredRows;
+  React.useEffect(() => {
+    setClientPage(1);
+  }, [clientFilters.filtersVersion]);
   const paginatedClientStats = useMemo(() => {
     const start = (clientPage - 1) * clientPageSize;
-    return clientStats.slice(start, start + clientPageSize);
-  }, [clientStats, clientPage, clientPageSize]);
+    return clientPortfolioRows.slice(start, start + clientPageSize);
+  }, [clientPortfolioRows, clientPage, clientPageSize]);
 
+  const activitySort = useTableSort(activeBatchesDataset, ACTIVITY_FEED_SORT_ACCESSORS, {
+    initialKey: null,
+    initialDir: null,
+    descFirstKeys: ACTIVITY_FEED_DESC_FIRST_KEYS,
+  });
+  const activityFilters = useTableFilters(
+    activitySort.sortedRows,
+    ACTIVITY_FEED_FILTER_FIELDS,
+    ACTIVITY_FEED_SEARCH_ACCESSOR
+  );
+  const activityFeedRows = activityFilters.filteredRows;
+  React.useEffect(() => {
+    setActivityPage(1);
+  }, [activityFilters.filtersVersion]);
   const paginatedActivityBatches = useMemo(() => {
     const start = (activityPage - 1) * activityPageSize;
-    return activeBatchesDataset.slice(start, start + activityPageSize);
-  }, [activeBatchesDataset, activityPage, activityPageSize]);
+    return activityFeedRows.slice(start, start + activityPageSize);
+  }, [activityFeedRows, activityPage, activityPageSize]);
 
   const modeStats = useMemo(() => {
     const map: Record<string, number> = {};
@@ -1919,177 +2127,316 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
       </div>
 
       {/* Detailed Manager Workload Ledger Table */}
-      <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "18px 22px", borderBottom: "1px solid var(--border-subtle)" }}>
-          <SectionHeader title="Manager Workload Ledger" sub={`${managers.length} manager(s) — detailed operational responsibility and allocation`} icon={Briefcase} />
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-            <thead>
-              <tr style={{ background: "#f8fafc", fontSize: "0.73rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                {["Manager", "Team", "Active", "Pending", "Completed", "Total", "Hours", "Enrollments", "Load %"].map((h) => (
-                  <th key={h} style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {managerWorkload.length === 0 ? (
-                <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                    No subordinate managers reporting under your direct line.
-                  </td>
-                </tr>
-              ) : (
-                paginatedManagerWorkload.map(({ manager, total, active, pending, completed, totalHours, totalEnrollments }) => {
-                  const load = total > 0 ? Math.round((active / total) * 100) : 0;
-                  const loadColor = load >= 75 ? "#ef4444" : load >= 45 ? "#f59e0b" : "#16a34a";
-                  return (
-                    <tr key={manager.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
-                      <td style={{ padding: "12px 16px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#0b5cab,#1d6ed8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
-                            {manager.full_name.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 700 }}>{manager.full_name}</div>
-                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{manager.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{manager.team_name || "—"}</td>
-                      <td style={{ padding: "12px 16px", fontWeight: 800, color: "#8b5cf6", fontSize: "1rem" }}>{active}</td>
-                      <td style={{ padding: "12px 16px" }}>
-                        {pending > 0 ? <span style={{ color: "#f59e0b", fontWeight: 700 }}>{pending}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
-                      </td>
-                      <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{completed}</td>
-                      <td style={{ padding: "12px 16px", fontWeight: 700 }}>{total}</td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
-                      <td style={{ padding: "12px 16px" }}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                          <div style={{ height: 6, width: 72, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
-                            <div style={{ width: `${load}%`, height: "100%", background: loadColor, borderRadius: 3, transition: "width 0.4s" }} />
-                          </div>
-                          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: loadColor }}>{load}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        {managerWorkload.length > 0 && (
-          <PaginationControls
-            currentPage={mgrPage}
-            totalItems={managerWorkload.length}
-            pageSize={mgrPageSize}
-            onPageChange={setMgrPage}
-            onPageSizeChange={setMgrPageSize}
-            pageSizeOptions={[5, 10, 20]}
-            color="#0b5cab"
+      <FullscreenTable
+        title={
+          <SectionHeader
+            title="Manager Workload Ledger"
+            sub={`${managers.length} manager(s) — detailed operational responsibility and allocation`}
+            icon={Briefcase}
           />
-        )}
-      </div>
+        }
+        titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
+        toolbar={
+          <TableFilters
+            search={{
+              value: managerFilters.search,
+              onChange: managerFilters.setSearch,
+              placeholder: "Search manager, team...",
+            }}
+            selects={[
+              {
+                key: "team",
+                label: "Team",
+                value: managerFilters.getFilter("team"),
+                onChange: (value) => managerFilters.setFilter("team", value),
+                options: managerFilters.optionsFor("team"),
+                allLabel: "All teams",
+              },
+            ]}
+            sort={{
+              options: MANAGER_LEDGER_SORT_OPTIONS,
+              sortKey: managerSort.sortKey,
+              sortDir: managerSort.sortDir,
+              onChange: managerSort.applySort,
+            }}
+            onClear={managerFilters.clearFilters}
+            hasActiveFilters={managerFilters.hasActiveFilters}
+            activeFilterCount={managerFilters.activeFilterCount}
+          />
+        }
+        footer={
+          managerWorkload.length > 0 ? (
+            <PaginationControls
+              currentPage={mgrPage}
+              totalItems={managerLedgerRows.length}
+              pageSize={mgrPageSize}
+              onPageChange={setMgrPage}
+              onPageSizeChange={setMgrPageSize}
+              pageSizeOptions={[5, 10, 20]}
+              color="#0b5cab"
+            />
+          ) : null
+        }
+      >
+        <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+          <thead>
+            <tr>
+              {MANAGER_LEDGER_COLUMNS.map((column) => (
+                <SortableHeaderCell
+                  key={column.key}
+                  columnKey={column.key}
+                  label={column.label}
+                  sortKey={managerSort.sortKey}
+                  sortDir={managerSort.sortDir}
+                  onSort={managerSort.toggleSort}
+                  style={WORKLOAD_TH_STYLE}
+                />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {managerLedgerRows.length === 0 ? (
+              <tr>
+                <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
+                  No subordinate managers reporting under your direct line.
+                </td>
+              </tr>
+            ) : (
+              paginatedManagerLedger.map(({ manager, total, active, pending, completed, totalHours, totalEnrollments }) => {
+                const load = total > 0 ? Math.round((active / total) * 100) : 0;
+                const loadColor = load >= 75 ? "#ef4444" : load >= 45 ? "#f59e0b" : "#16a34a";
+                return (
+                  <tr key={manager.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#0b5cab,#1d6ed8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
+                          {manager.full_name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{manager.full_name}</div>
+                          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{manager.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{manager.team_name || "—"}</td>
+                    <td style={{ padding: "12px 16px", fontWeight: 800, color: "#8b5cf6", fontSize: "1rem" }}>{active}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {pending > 0 ? <span style={{ color: "#f59e0b", fontWeight: 700 }}>{pending}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{completed}</td>
+                    <td style={{ padding: "12px 16px", fontWeight: 700 }}>{total}</td>
+                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
+                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                        <div style={{ height: 6, width: 72, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ width: `${load}%`, height: "100%", background: loadColor, borderRadius: 3, transition: "width 0.4s" }} />
+                        </div>
+                        <span style={{ fontSize: "0.68rem", fontWeight: 700, color: loadColor }}>{load}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </FullscreenTable>
 
       {/* Detailed Coordinator Workload Ledger Table */}
-      <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "18px 22px", borderBottom: "1px solid var(--border-subtle)" }}>
-          <SectionHeader title="Coordinator Workload Ledger" sub={`${coordinators.length} coordinator(s) in scope — operational capacity & batch tracking`} icon={Users} />
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-            <thead>
-              <tr style={{ background: "#f8fafc", fontSize: "0.73rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                {["Coordinator", "Team", "Active", "In Pipeline", "Completed", "Total", "Hours", "Learners", "Capacity %"].map((h) => (
-                  <th key={h} style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {coordinatorWorkload.length === 0 ? (
-                <tr>
-                  <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                    No coordinator data available in your scope.
-                  </td>
-                </tr>
-              ) : (
-                paginatedCoordinatorWorkload.map(({ coordinator, total, active, pending, completed, totalHours, totalEnrollments }) => {
-                  const capacity = total > 0 ? Math.round((active / total) * 100) : 0;
-                  const capColor = capacity >= 80 ? "#ef4444" : capacity >= 45 ? "#f59e0b" : "#06b6d4";
-                  return (
-                    <tr key={coordinator.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
-                      <td style={{ padding: "12px 16px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
-                            {coordinator.full_name.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 700 }}>{coordinator.full_name}</div>
-                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{coordinator.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{coordinator.team_name || "—"}</td>
-                      <td style={{ padding: "12px 16px", fontWeight: 800, color: "#06b6d4", fontSize: "1rem" }}>{active}</td>
-                      <td style={{ padding: "12px 16px" }}>
-                        {pending > 0 ? <span style={{ color: "#f59e0b", fontWeight: 700 }}>{pending}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
-                      </td>
-                      <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{completed}</td>
-                      <td style={{ padding: "12px 16px", fontWeight: 700 }}>{total}</td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
-                      <td style={{ padding: "12px 16px" }}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                          <div style={{ height: 6, width: 72, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
-                            <div style={{ width: `${capacity}%`, height: "100%", background: capColor, borderRadius: 3, transition: "width 0.4s" }} />
-                          </div>
-                          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: capColor }}>{capacity}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        {coordinatorWorkload.length > 0 && (
-          <PaginationControls
-            currentPage={coordPage}
-            totalItems={coordinatorWorkload.length}
-            pageSize={coordPageSize}
-            onPageChange={setCoordPage}
-            onPageSizeChange={setCoordPageSize}
-            pageSizeOptions={[5, 10, 20, 50]}
-            color="#06b6d4"
+      <FullscreenTable
+        title={
+          <SectionHeader
+            title="Coordinator Workload Ledger"
+            sub={`${coordinators.length} coordinator(s) in scope — operational capacity & batch tracking`}
+            icon={Users}
           />
-        )}
-      </div>
+        }
+        titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
+        toolbar={
+          <TableFilters
+            search={{
+              value: coordinatorFilters.search,
+              onChange: coordinatorFilters.setSearch,
+              placeholder: "Search coordinator, team...",
+            }}
+            selects={[
+              {
+                key: "team",
+                label: "Team",
+                value: coordinatorFilters.getFilter("team"),
+                onChange: (value) => coordinatorFilters.setFilter("team", value),
+                options: coordinatorFilters.optionsFor("team"),
+                allLabel: "All teams",
+              },
+            ]}
+            sort={{
+              options: COORDINATOR_LEDGER_SORT_OPTIONS,
+              sortKey: coordinatorSort.sortKey,
+              sortDir: coordinatorSort.sortDir,
+              onChange: coordinatorSort.applySort,
+            }}
+            onClear={coordinatorFilters.clearFilters}
+            hasActiveFilters={coordinatorFilters.hasActiveFilters}
+            activeFilterCount={coordinatorFilters.activeFilterCount}
+          />
+        }
+        footer={
+          coordinatorWorkload.length > 0 ? (
+            <PaginationControls
+              currentPage={coordPage}
+              totalItems={coordinatorLedgerRows.length}
+              pageSize={coordPageSize}
+              onPageChange={setCoordPage}
+              onPageSizeChange={setCoordPageSize}
+              pageSizeOptions={[5, 10, 20, 50]}
+              color="#06b6d4"
+            />
+          ) : null
+        }
+      >
+        <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+          <thead>
+            <tr>
+              {COORDINATOR_LEDGER_COLUMNS.map((column) => (
+                <SortableHeaderCell
+                  key={column.key}
+                  columnKey={column.key}
+                  label={column.label}
+                  sortKey={coordinatorSort.sortKey}
+                  sortDir={coordinatorSort.sortDir}
+                  onSort={coordinatorSort.toggleSort}
+                  style={WORKLOAD_TH_STYLE}
+                />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {coordinatorLedgerRows.length === 0 ? (
+              <tr>
+                <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
+                  No coordinator data available in your scope.
+                </td>
+              </tr>
+            ) : (
+              paginatedCoordinatorLedger.map(({ coordinator, total, active, pending, completed, totalHours, totalEnrollments }) => {
+                const capacity = total > 0 ? Math.round((active / total) * 100) : 0;
+                const capColor = capacity >= 80 ? "#ef4444" : capacity >= 45 ? "#f59e0b" : "#06b6d4";
+                return (
+                  <tr key={coordinator.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
+                          {coordinator.full_name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{coordinator.full_name}</div>
+                          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{coordinator.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{coordinator.team_name || "—"}</td>
+                    <td style={{ padding: "12px 16px", fontWeight: 800, color: "#06b6d4", fontSize: "1rem" }}>{active}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      {pending > 0 ? <span style={{ color: "#f59e0b", fontWeight: 700 }}>{pending}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{completed}</td>
+                    <td style={{ padding: "12px 16px", fontWeight: 700 }}>{total}</td>
+                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
+                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                        <div style={{ height: 6, width: 72, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ width: `${capacity}%`, height: "100%", background: capColor, borderRadius: 3, transition: "width 0.4s" }} />
+                        </div>
+                        <span style={{ fontSize: "0.68rem", fontWeight: 700, color: capColor }}>{capacity}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </FullscreenTable>
 
       {/* Client Portfolio + Executive Quality Panel */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-        <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ padding: "16px 22px", borderBottom: "1px solid var(--border-subtle)" }}>
-            <SectionHeader title="Client Portfolio" sub="Top clients by batch volume and active deployments" icon={Target} />
-          </div>
+        <FullscreenTable
+          title={
+            <SectionHeader
+              title="Client Portfolio"
+              sub="Top clients by batch volume and active deployments"
+              icon={Target}
+            />
+          }
+          titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
+          toolbar={
+            <TableFilters
+              search={{
+                value: clientFilters.search,
+                onChange: clientFilters.setSearch,
+                placeholder: "Search client...",
+              }}
+              selects={[
+                {
+                  key: "client",
+                  label: "Client",
+                  value: clientFilters.getFilter("client"),
+                  onChange: (value) => clientFilters.setFilter("client", value),
+                  options: clientFilters.optionsFor("client"),
+                  allLabel: "All clients",
+                },
+              ]}
+              sort={{
+                options: CLIENT_PORTFOLIO_SORT_OPTIONS,
+                sortKey: clientSort.sortKey,
+                sortDir: clientSort.sortDir,
+                onChange: clientSort.applySort,
+              }}
+              onClear={clientFilters.clearFilters}
+              hasActiveFilters={clientFilters.hasActiveFilters}
+              activeFilterCount={clientFilters.activeFilterCount}
+            />
+          }
+          footer={
+            clientPortfolioRows.length > clientPageSize ? (
+              <PaginationControls
+                currentPage={clientPage}
+                totalItems={clientPortfolioRows.length}
+                pageSize={clientPageSize}
+                onPageChange={setClientPage}
+                onPageSizeChange={setClientPageSize}
+                pageSizeOptions={[5, 10, 20]}
+                color="#0b5cab"
+              />
+            ) : null
+          }
+        >
           <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ background: "#f8fafc", fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>
-                {["#", "Client", "Batches", "Active", "Enrollments", "Hours"].map((h) => (
-                  <th key={h} style={{ padding: "10px 16px" }}>
-                    {h}
-                  </th>
-                ))}
+              <tr>
+                {CLIENT_PORTFOLIO_COLUMNS.map((column) =>
+                  column.sortable === false ? (
+                    <PlainHeaderCell key={column.key} style={{ padding: "10px 16px" }}>
+                      {column.label}
+                    </PlainHeaderCell>
+                  ) : (
+                    <SortableHeaderCell
+                      key={column.key}
+                      columnKey={column.key}
+                      label={column.label}
+                      sortKey={clientSort.sortKey}
+                      sortDir={clientSort.sortDir}
+                      onSort={clientSort.toggleSort}
+                      style={{ padding: "10px 16px" }}
+                    />
+                  )
+                )}
               </tr>
             </thead>
             <tbody>
-              {clientStats.length === 0 ? (
+              {clientPortfolioRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)" }}>
                     No client data available in this horizon.
@@ -2111,18 +2458,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               )}
             </tbody>
           </table>
-          {clientStats.length > clientPageSize && (
-            <PaginationControls
-              currentPage={clientPage}
-              totalItems={clientStats.length}
-              pageSize={clientPageSize}
-              onPageChange={setClientPage}
-              onPageSizeChange={setClientPageSize}
-              pageSizeOptions={[5, 10, 20]}
-              color="#0b5cab"
-            />
-          )}
-        </div>
+        </FullscreenTable>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {dashboardSummary && (
@@ -2180,74 +2516,136 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
       </div>
 
       {/* Period Activity Feed */}
-      <div className="glass-panel" style={{ padding: "20px 24px" }}>
-        <SectionHeader
-          title={`${PERIOD_LABELS[period]} — Batch Activity`}
-          sub={`${activeBatchesDataset.length} batch(es) in this horizon`}
-          icon={Calendar}
-        />
-        {activeBatchesDataset.length === 0 ? (
+      <FullscreenTable
+        title={
+          <SectionHeader
+            title={`${PERIOD_LABELS[period]} — Batch Activity`}
+            sub={`${activeBatchesDataset.length} batch(es) in this horizon`}
+            icon={Calendar}
+          />
+        }
+        titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
+        toolbar={
+          <TableFilters
+            search={{
+              value: activityFilters.search,
+              onChange: activityFilters.setSearch,
+              placeholder: "Search batch, client, program...",
+            }}
+            selects={[
+              {
+                key: "client",
+                label: "Client",
+                value: activityFilters.getFilter("client"),
+                onChange: (value) => activityFilters.setFilter("client", value),
+                options: activityFilters.optionsFor("client"),
+                allLabel: "All clients",
+              },
+              {
+                key: "domain",
+                label: "Domain",
+                value: activityFilters.getFilter("domain"),
+                onChange: (value) => activityFilters.setFilter("domain", value),
+                options: activityFilters.optionsFor("domain"),
+                allLabel: "All domains",
+              },
+              {
+                key: "mode",
+                label: "Mode",
+                value: activityFilters.getFilter("mode"),
+                onChange: (value) => activityFilters.setFilter("mode", value),
+                options: activityFilters.optionsFor("mode"),
+                allLabel: "All modes",
+              },
+              {
+                key: "status",
+                label: "Status",
+                value: activityFilters.getFilter("status"),
+                onChange: (value) => activityFilters.setFilter("status", value),
+                options: activityFilters.optionsFor("status"),
+                allLabel: "All statuses",
+              },
+            ]}
+            sort={{
+              options: ACTIVITY_FEED_SORT_OPTIONS,
+              sortKey: activitySort.sortKey,
+              sortDir: activitySort.sortDir,
+              onChange: activitySort.applySort,
+            }}
+            onClear={activityFilters.clearFilters}
+            hasActiveFilters={activityFilters.hasActiveFilters}
+            activeFilterCount={activityFilters.activeFilterCount}
+          />
+        }
+        footer={
+          activityFeedRows.length > 0 ? (
+            <PaginationControls
+              currentPage={activityPage}
+              totalItems={activityFeedRows.length}
+              pageSize={activityPageSize}
+              onPageChange={setActivityPage}
+              onPageSizeChange={setActivityPageSize}
+              pageSizeOptions={[10, 25, 50, 100]}
+              color="#0b5cab"
+            />
+          ) : null
+        }
+      >
+        {activityFeedRows.length === 0 ? (
           <div style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)", fontSize: "0.875rem" }}>
             No batch activity found for {PERIOD_LABELS[period].toLowerCase()}.
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
-              <thead>
-                <tr style={{ background: "#f8fafc", fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>
-                  {["Batch ID", "Client", "Program", "Domain", "Mode", "Start Date", "Enrollments", "Hours", "Status"].map((h) => (
-                    <th key={h} style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedActivityBatches.map((b) => (
-                  <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.81rem" }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0b5cab", whiteSpace: "nowrap" }}>{b.batch_id}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
-                    <td style={{ padding: "10px 14px", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.program_name}>
-                      {b.program_name}
-                    </td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.delivery_mode}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.start_date ? formatDate(b.start_date) : "—"}</td>
-                    <td style={{ padding: "10px 14px", textAlign: "center" }}>{b.total_enrollments}</td>
-                    <td style={{ padding: "10px 14px", textAlign: "center" }}>{b.total_hours}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                      <span
-                        style={{
-                          padding: "3px 9px",
-                          borderRadius: 12,
-                          fontSize: "0.7rem",
-                          fontWeight: 700,
-                          background: `${STATUS_COLORS[b.status] || "#94a3b8"}18`,
-                          color: STATUS_COLORS[b.status] || "#94a3b8",
-                          border: `1px solid ${STATUS_COLORS[b.status] || "#94a3b8"}40`,
-                        }}
-                      >
-                        {b.status}
-                      </span>
-                    </td>
-                  </tr>
+          <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+            <thead>
+              <tr>
+                {ACTIVITY_FEED_COLUMNS.map((column) => (
+                  <SortableHeaderCell
+                    key={column.key}
+                    columnKey={column.key}
+                    label={column.label}
+                    sortKey={activitySort.sortKey}
+                    sortDir={activitySort.sortDir}
+                    onSort={activitySort.toggleSort}
+                    style={column.key === "enrollments" || column.key === "hours" ? ACTIVITY_NUMERIC_TH_STYLE : ACTIVITY_FEED_TH_STYLE}
+                  />
                 ))}
-              </tbody>
-            </table>
-            {activeBatchesDataset.length > 0 && (
-              <PaginationControls
-                currentPage={activityPage}
-                totalItems={activeBatchesDataset.length}
-                pageSize={activityPageSize}
-                onPageChange={setActivityPage}
-                onPageSizeChange={setActivityPageSize}
-                pageSizeOptions={[10, 25, 50, 100]}
-                color="#0b5cab"
-              />
-            )}
-          </div>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedActivityBatches.map((b) => (
+                <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.81rem" }}>
+                  <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0b5cab", whiteSpace: "nowrap" }}>{b.batch_id}</td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.program_name}>
+                    {b.program_name}
+                  </td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.delivery_mode}</td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.start_date ? formatDate(b.start_date) : "—"}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>{b.total_enrollments}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "center" }}>{b.total_hours}</td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                    <span
+                      style={{
+                        padding: "3px 9px",
+                        borderRadius: 12,
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        background: `${STATUS_COLORS[b.status] || "#94a3b8"}18`,
+                        color: STATUS_COLORS[b.status] || "#94a3b8",
+                        border: `1px solid ${STATUS_COLORS[b.status] || "#94a3b8"}40`,
+                      }}
+                    >
+                      {b.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
-      </div>
+      </FullscreenTable>
     </div>
   );
 }

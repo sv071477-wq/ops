@@ -70,22 +70,14 @@ class GatekeeperService:
                 sched.status = "Completed"
                 sched.updated_at = datetime.now(timezone.utc)
 
-        # Recalculate batch feedback aggregates
-        completed = db.query(FacultyUtilization).filter(
-            FacultyUtilization.batch_id == session_obj.batch_id,
-            FacultyUtilization.feedback_rating.isnot(None),
-            FacultyUtilization.status == "Completed",
-        ).all()
-
-        if completed:
-            total = sum((s.feedback_rating for s in completed), Decimal("0"))
-            avg = round(total / Decimal(str(len(completed))), 2)
-            batch = db.query(Batch).filter(Batch.id == session_obj.batch_id).first()
-            if batch:
-                batch.batch_avg_feedback = Decimal(str(avg))
-                batch.updated_at = datetime.now(timezone.utc)
-
         db.commit()
+
+        # Delegate batch-level feedback calculation to the lifecycle service.
+        # It only writes batch_avg_feedback once every non-cancelled session for
+        # the batch is Completed, so callers never see a partial average.
+        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+        BatchLifecycleService(db).check_and_update_batch_feedback(session_obj.batch_id)
+
         db.refresh(session_obj)
 
         return {

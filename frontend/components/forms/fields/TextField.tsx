@@ -20,10 +20,12 @@ interface TextFieldProps<T extends FieldValues> extends Omit<ControllerProps<T>,
   leftIcon?: React.ReactNode;
   rightIcon?: React.ReactNode;
   rules?: ControllerProps<T>["rules"];
+  /** Applied to every keystroke (and paste) before the value reaches the form. */
+  sanitize?: (value: string) => string;
 }
 
 export const TextField = forwardRef<HTMLInputElement, TextFieldProps<any>>(
-  ({ name, label, placeholder, type = "text", required, disabled, helperText, className, leftIcon, rightIcon, error: propError, ...props }, ref) => {
+  ({ name, label, placeholder, type = "text", required, disabled, helperText, className, leftIcon, rightIcon, error: propError, sanitize, ...props }, ref) => {
     const { formState: { errors }, control } = useFormContext();
     const errorMessage = (propError || errors[name as string]?.message) as string | undefined;
 
@@ -62,6 +64,10 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps<any>>(
                 aria-describedby={errorMessage ? `${name}-error` : helperText ? `${name}-helper` : undefined}
                 {...field}
                 {...props}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  field.onChange(sanitize ? sanitize(next) : next);
+                }}
               />
             )}
           />

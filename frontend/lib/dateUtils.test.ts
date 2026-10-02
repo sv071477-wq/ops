@@ -1,4 +1,4 @@
-import { formatDate, formatDateTime, parseToISO } from '@/lib/dateUtils';
+import { formatDate, formatDateTime, parseToISO, calendarDaysBetween } from '@/lib/dateUtils';
 
 describe('dateUtils', () => {
   describe('formatDate', () => {
@@ -76,6 +76,38 @@ describe('dateUtils', () => {
 
     it('returns null for invalid date', () => {
       expect(parseToISO('invalid')).toBeNull();
+    });
+  });
+
+  describe('calendarDaysBetween', () => {
+    it('returns 0 when either date is missing', () => {
+      expect(calendarDaysBetween(null, '2024-01-15')).toBe(0);
+      expect(calendarDaysBetween('2024-01-15', null)).toBe(0);
+      expect(calendarDaysBetween(undefined, undefined)).toBe(0);
+    });
+
+    it('returns 0 for invalid dates', () => {
+      expect(calendarDaysBetween('invalid', '2024-01-15')).toBe(0);
+      expect(calendarDaysBetween('2024-01-15', 'nope')).toBe(0);
+    });
+
+    it('counts both endpoints inclusively (same day = 1)', () => {
+      expect(calendarDaysBetween('2024-01-15', '2024-01-15')).toBe(1);
+    });
+
+    it('counts inclusively across a range', () => {
+      expect(calendarDaysBetween('2024-01-01', '2024-01-05')).toBe(5);
+      expect(calendarDaysBetween('2024-01-01', '2024-01-31')).toBe(31);
+    });
+
+    it('returns 0 when end is before start', () => {
+      expect(calendarDaysBetween('2024-01-10', '2024-01-05')).toBe(0);
+    });
+
+    it('accepts Date objects', () => {
+      expect(
+        calendarDaysBetween(new Date('2024-01-01T00:00:00Z'), new Date('2024-01-05T00:00:00Z'))
+      ).toBe(5);
     });
   });
 });

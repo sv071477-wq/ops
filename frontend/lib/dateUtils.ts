@@ -111,3 +111,22 @@ export function parseToISO(dateValue?: string | Date | null): string | null {
   if (isNaN(d.getTime())) return null;
   return d.toISOString();
 }
+
+/**
+ * Inclusive calendar-day count between two dates.
+ * Both the start date and the end date are counted, so a same-day range
+ * returns 1 and a Jan 1 → Jan 5 range returns 5.
+ * Returns 0 when either value is missing/invalid.
+ */
+export function calendarDaysBetween(
+  start?: string | Date | null,
+  end?: string | Date | null
+): number {
+  if (!start || !end) return 0;
+  const s = new Date(start);
+  const e = new Date(end);
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return 0;
+  const msPerDay = 86400000;
+  const diff = Math.round((e.getTime() - s.getTime()) / msPerDay);
+  return Math.max(0, diff + 1);
+}

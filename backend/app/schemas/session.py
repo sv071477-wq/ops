@@ -95,8 +95,9 @@ class SessionBase(BaseModel):
     outcome_reason: Optional[str] = None
     outcome_at: Optional[datetime] = None
     outcome_by: Optional[UUID] = None
-    vertical: Optional[str] = None  # Internal/External/HOP, Internal/External
+    vertical: Optional[str] = None  # Delivery vertical, e.g. IT/ITES
     program_type_id: Optional[UUID] = None
+    faculty_type_id: Optional[UUID] = None  # Engagement type, from faculty_types
 
     @model_validator(mode="before")
     @classmethod
@@ -143,6 +144,7 @@ class SessionUpdate(BaseModel):
     outcome_by: Optional[UUID] = None
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
+    faculty_type_id: Optional[UUID] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -179,19 +181,25 @@ class SessionResponse(SessionBase):
     outcome_by: Optional[UUID] = None
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
+    faculty_type_id: Optional[UUID] = None
+    faculty_type_name: Optional[str] = None  # Resolved display name
     created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class SessionDetailResponse(SessionResponse):
     feedback: Optional[SessionFeedbackResponse] = None
-    # Batch-related fields for display
+    # Batch-related fields for display. `batch_id` is deliberately NOT redeclared
+    # here: SessionBase already types it as the batches.id UUID, and shadowing it
+    # with Optional[str] made every /sessions response fail validation against the
+    # ORM row. The human-readable code is `batch_code`.
     entity: Optional[str] = None
     category: Optional[str] = None
     client: Optional[str] = None
     program: Optional[str] = None
-    batch_id: Optional[str] = None
+    batch_code: Optional[str] = None
     coordinator: Optional[str] = None
     module_feedback: Optional[str] = None
 

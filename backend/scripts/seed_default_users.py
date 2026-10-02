@@ -25,6 +25,7 @@ DEFAULT_USERS = (
     ("Ramesh", "Coordinator", "Delivery", "Krishna"),
     ("Bhavy", "Coordinator", "Delivery", "Krishna"),
     ("Rajesh", "Manager", "Finance", "Ravish"),
+    ("sales", "Sales", "Sales", "Ravish"),
 )
 
 

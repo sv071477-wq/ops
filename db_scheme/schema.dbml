@@ -136,7 +136,6 @@ Table batches {
   sow_number varchar(100) [null]
   approval_id varchar(100) [null]
   category varchar(100) [not null, default: 'Bootcamp']
-  residential_type varchar(2) [null]
   entity_id uuid [null]
   category_id uuid [null]
   delivery_mode_id uuid [null]
@@ -150,7 +149,7 @@ Table batches {
   end_date timestamptz [null]
   batch_request_date timestamptz [not null]
   training_days integer [not null, default: 0]
-  calendar_days integer [null]
+  calendar_days integer [null, default: 0]
   total_hours numeric(8,2) [not null, default: 0.00]
   total_enrollments integer [not null, default: 0]
   residential_enrollments integer [not null, default: 0]
@@ -167,18 +166,17 @@ Table batches {
   coordinator_id uuid [null]
   sales_spoc_id uuid [null]
   faculty_members json [null]
+  faculty_assigned_text varchar(500) [null]  // Legacy raw faculty names string
   finance_status varchar(50) [not null, default: 'Pending']
   finance_status_check_date date [null]
   finance_check integer [null]
   batch_avg_feedback numeric(3,2) [null]
-  total_feedback_score numeric(10,2) [null]
   batch_nps numeric(6,2) [null]
   nps_total_responses integer [null]
   nps_promoters integer [null]
   nps_passives integer [null]
   nps_detractors integer [null]
   remarks text [null]
-  comments text [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
@@ -203,7 +201,6 @@ Table approval_configurations {
   id uuid [pk]
   approver_1_id uuid [null]
   approver_2_id uuid [null]
-  created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
 
@@ -252,9 +249,9 @@ Table faculty_utilization {
   outcome_reason text [null]
   outcome_at timestamptz [null]
   outcome_by uuid [null]
-  replacement_session_id uuid [null]
   vertical varchar(50) [null]
   program_type_id uuid [null]
+  faculty_type_id uuid [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
@@ -264,9 +261,8 @@ Table faculty_utilization {
     (faculty_name)
     (date_of_training)
     (status)
-    (outcome_by)
-    (replacement_session_id)
     (program_type_id)
+    (faculty_type_id)
   }
 }
 
@@ -297,5 +293,5 @@ Ref: training_sessions.batch_id > batches.id
 Ref: faculty_utilization.batch_id > batches.id
 Ref: faculty_utilization.training_session_id > training_sessions.id
 Ref: faculty_utilization.outcome_by > users.id
-Ref: faculty_utilization.replacement_session_id > faculty_utilization.id
 Ref: faculty_utilization.program_type_id > program_types.id
+Ref: faculty_utilization.faculty_type_id > faculty_types.id

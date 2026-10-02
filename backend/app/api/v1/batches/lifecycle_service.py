@@ -111,8 +111,14 @@ class BatchLifecycleService:
         if not all_completed:
             return None
 
-        # Collect feedback ratings from completed sessions
-        feedbacks = [s.feedback_rating for s in sessions if s.feedback_rating is not None]
+        # Feedback is captured on the delivery ledger, not on the planned timetable:
+        # `training_sessions` has no feedback columns, so reading them off the
+        # TrainingSession rows raised AttributeError on every fully-delivered batch.
+        feedbacks = [row.feedback_rating for row in self.db.query(FacultyUtilization).filter(
+            FacultyUtilization.batch_id == batch_id,
+            FacultyUtilization.status == "Completed",
+            FacultyUtilization.feedback_rating.isnot(None),
+        ).all()]
         if not feedbacks:
             return None
 

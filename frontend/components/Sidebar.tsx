@@ -4,13 +4,12 @@ import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  Search, Bell, Calendar, Zap, Layers, Settings, HelpCircle,
-  Plus, ChevronsUpDown, Shield, LogOut, KeyRound, Check, X,
+  Bell, Calendar, Zap, Layers, Settings, HelpCircle,
+  Plus, ChevronsUpDown, Shield, LogOut, KeyRound, Check,
   ExternalLink, Sparkles, ChevronLeft, Menu, X as XIcon
 } from "lucide-react";
 import { ChangePasswordModal } from "./ChangePasswordModal";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useIsMobile, useIsTablet } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
@@ -26,8 +25,6 @@ export type DashboardView =
 interface SidebarProps {
   activeView: DashboardView;
   setActiveView: (view: DashboardView) => void;
-  searchQuery?: string;
-  setSearchQuery?: (q: string) => void;
   onOpenCreateBatch?: () => void;
   pendingApprovalsCount?: number;
   onFilterCategory?: (category: string) => void;
@@ -37,8 +34,6 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeView,
   setActiveView,
-  searchQuery = "",
-  setSearchQuery,
   onOpenCreateBatch,
   pendingApprovalsCount = 0,
   onFilterCategory,
@@ -51,12 +46,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -88,10 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
-        if (e.key === "1") {
-          e.preventDefault();
-          searchInputRef.current?.focus();
-        } else if (e.key === "2") {
+        if (e.key === "2") {
           e.preventDefault();
           setActiveView("my_batches");
         } else if (e.key === "3") {
@@ -119,9 +109,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Click outside listener for dropdowns
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setIsUserMenuOpen(false);
-      }
       if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
         setIsWorkspaceMenuOpen(false);
       }
@@ -290,36 +277,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
         </div>
 
-        {/* Search Bar */}
-        <div className={cn("p-3 border-b border-border", isCollapsed && "px-2")}>
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            <Input
-              ref={searchInputRef}
-              type="text"
-              placeholder={isCollapsed ? "" : "Search batches..."}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery?.(e.target.value)}
-              className={cn(
-                "pl-9 h-9 text-sm",
-                isCollapsed && "w-9",
-              )}
-              aria-label="Search batches"
-            />
-            {searchQuery && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
-                onClick={() => setSearchQuery?.("")}
-                aria-label="Clear search"
-              >
-                <X size={14} className="text-muted-foreground" />
-              </Button>
-            )}
-          </div>
-        </div>
-
         {/* Add New Batch Button */}
         {canCreateBatch && onOpenCreateBatch && (
           <div className={cn("p-3", isCollapsed && "px-2")}>
@@ -425,20 +382,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Bottom User Profile Card */}
         <div
           className={cn("border-t border-border p-3", isCollapsed && "px-2")}
-          ref={userMenuRef}
         >
-          <Button
-            variant="ghost"
-            className={cn(
-              "relative w-full gap-3 rounded-xl font-medium transition-all duration-200",
-              "hover:bg-accent hover:text-accent-foreground",
-              isCollapsed ? "justify-center p-2.5" : "justify-start px-3 py-2.5",
-              isUserMenuOpen ? "bg-accent/50" : "",
-            )}
-            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-            aria-expanded={isUserMenuOpen}
-            aria-haspopup="true"
-          >
+          <div className="w-full gap-3 rounded-xl font-medium transition-all duration-200" style={{ display: "flex", flexDirection: isCollapsed ? "column" : "row", alignItems: "center" }}>
             <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-pink-200 to-pink-400 text-pink-900 font-semibold text-sm">
               {userInitial}
             </div>
@@ -452,67 +397,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </div>
             )}
-            {!isCollapsed && <ChevronsUpDown size={14} className="text-muted-foreground flex-shrink-0" />}
-          </Button>
+          </div>
 
-          {/* User Popover Dropdown */}
-          {isUserMenuOpen && !isCollapsed && (
-            <div
-              className="absolute top-full left-0 right-0 mt-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-fade-in"
-              role="menu"
-            >
-              <div className="px-2 py-2 border-b border-border">
-                <div className="font-semibold text-sm text-foreground">{user?.full_name}</div>
-                <div className="text-xs text-muted-foreground">
-                  {user?.role_detail?.name || user?.role} • {user?.team_name || "Ops"}
-                </div>
-              </div>
-
+          {/* Action Buttons - Always visible above profile */}
+          {!isCollapsed && (
+            <div className="mt-3 space-y-2 w-full" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <Button
                 variant="ghost"
-                className={cn(
-                  "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-all",
-                  "hover:bg-accent hover:text-accent-foreground",
-                )}
-                onClick={() => {
-                  setIsUserMenuOpen(false);
-                  setIsChangePasswordOpen(true);
-                }}
-                role="menuitem"
+                className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-all hover:bg-accent hover:text-accent-foreground"
+                onClick={() => setIsChangePasswordOpen(true)}
               >
                 <KeyRound size={15} className="text-primary" />
                 <span>Change My Password</span>
               </Button>
 
-              {isAdmin && (
-                <Button
-                  variant="ghost"
-                  className={cn(
-                    "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm transition-all",
-                    "hover:bg-accent hover:text-accent-foreground",
-                  )}
-                  onClick={() => {
-                    setIsUserMenuOpen(false);
-                    router.push("/admin");
-                  }}
-                  role="menuitem"
-                >
-                  <Shield size={15} className="text-primary" />
-                  <span>Admin Portal</span>
-                </Button>
-              )}
-
               <Button
                 variant="ghost"
-                className={cn(
-                  "w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive transition-all",
-                  "hover:bg-destructive/10",
-                )}
-                onClick={() => {
-                  setIsUserMenuOpen(false);
-                  logout();
-                }}
-                role="menuitem"
+                className="w-full justify-start gap-2 px-2 py-1.5 rounded-lg text-sm text-destructive transition-all hover:bg-destructive/10"
+                onClick={logout}
               >
                 <LogOut size={15} />
                 <span>Sign Out</span>

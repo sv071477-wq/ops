@@ -141,7 +141,7 @@
   }
 
   .glass-input {
-    @apply w-full bg-white/94 border border-input rounded-lg text-sm transition-all duration-150 outline-none;
+    @apply w-full bg-white/94 border border-input rounded-lg px-3 py-2 text-sm transition-all duration-150 outline-none;
   }
 
   .glass-input:focus {
@@ -353,6 +353,13 @@
     background-color: var(--color-muted-foreground);
   }
 
+  /* Full screen table panel */
+  .table-fullscreen-panel,
+  .table-fullscreen-panel:hover {
+    border-radius: 0;
+    transform: none;
+  }
+
   /* Button icon positioning utilities */
   .btn-icon-left {
     @apply flex items-center justify-center gap-2;
@@ -376,7 +383,7 @@
   }
 
   .form-field-input {
-    @apply w-full bg-white/94 border border-input rounded-lg text-sm transition-all duration-150 outline-none;
+    @apply w-full bg-white/94 border border-input rounded-lg px-3 py-2 text-sm transition-all duration-150 outline-none;
   }
 
   .form-field-input:focus {

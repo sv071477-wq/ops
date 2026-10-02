@@ -62,4 +62,40 @@ describe("CreateBatchModal faculty chip field", () => {
       expect(screen.getByText(/No items added yet/i)).toBeTruthy();
     });
   });
+
+  it("normalizes the batch identifier to the allowed charset while typing", async () => {
+    const user = userEvent.setup();
+    render(<CreateBatchModal isOpen onClose={() => {}} onBatchCreated={() => {}} />);
+
+    const input = (await screen.findByLabelText(/Batch Identifier/i)) as HTMLInputElement;
+    // Typed with spaces, which must never reach the form as-is.
+    await user.type(input, "DLTE_AI Strategist _Sep26_B29");
+    expect(input.value).toBe("DLTE_AI_Strategist_Sep26_B29");
+  });
+
+  it("keeps underscores typed by the user", async () => {
+    const user = userEvent.setup();
+    render(<CreateBatchModal isOpen onClose={() => {}} onBatchCreated={() => {}} />);
+
+    const input = (await screen.findByLabelText(/Batch Identifier/i)) as HTMLInputElement;
+    await user.type(input, "DEL_PYSPARK_2026_B1");
+    expect(input.value).toBe("DEL_PYSPARK_2026_B1");
+  });
+
+  it("shows the inclusive calendar-day count live while filling the schedule", async () => {
+    const user = userEvent.setup();
+    render(<CreateBatchModal isOpen onClose={() => {}} onBatchCreated={() => {}} />);
+
+    await screen.findByLabelText(/Commencement Date/i);
+    await user.type(screen.getByLabelText(/Commencement Date/i), "2024-01-01");
+    await user.type(screen.getByLabelText(/Conclusion Date/i), "2024-01-05");
+
+    await waitFor(() => {
+      const daysStrong = screen.getByText("5", { exact: true });
+      expect(daysStrong.tagName).toBe("STRONG");
+      expect(daysStrong.closest("p")?.textContent).toBe(
+        "Calendar days (inclusive of 01-01-2024 and 05-01-2024): 5"
+      );
+    });
+  });
 });

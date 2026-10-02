@@ -85,9 +85,8 @@ Stores the primary training batch lifecycle and governance information.
 | batch_id | VARCHAR(255) | No | Unique batch identifier |
 | sow_number | VARCHAR(100) | Yes | Client SOW number |
 | approval_id | VARCHAR(100) | Yes | Financial approval reference |
-| category | VARCHAR(100) | No | e.g. Bootcamp, RBT |
-| residential_type | VARCHAR(2) | Yes | 'R' or 'NR' (legacy) |
-| entity_id | UUID | Yes | FK to entities.id |
+ | category | VARCHAR(100) | No | e.g. Bootcamp, RBT |
+ | entity_id | UUID | Yes | FK to entities.id |
 | category_id | UUID | Yes | FK to batch_categories.id |
 | delivery_mode_id | UUID | Yes | FK to delivery_modes.id |
 | accommodation_id | UUID | Yes | FK to accommodations.id |
@@ -115,25 +114,24 @@ Stores the primary training batch lifecycle and governance information.
 | approver_2_approved_at | TIMESTAMPTZ | Yes | Approval timestamp |
 | primary_manager_id | UUID | Yes | Manager owner |
 | coordinator_id | UUID | Yes | Coordinator owner |
-| sales_spoc_id | UUID | Yes | Sales SPOC |
-| faculty_assigned_text | VARCHAR(500) | Yes | Legacy faculty text |
-| finance_status | VARCHAR(50) | No | Finance checkpoint |
+ | sales_spoc_id | UUID | Yes | Sales SPOC |
+ | faculty_members | JSON | Yes | Faculty member roster |
+ | faculty_assigned_text | VARCHAR(500) | Yes | Legacy faculty text |
+ | finance_status | VARCHAR(50) | No | Finance checkpoint |
 | finance_status_check_date | DATE | Yes | Finance check date |
 | finance_check | INTEGER | Yes | Finance check value |
-| batch_avg_feedback | NUMERIC(3,2) | Yes | Average feedback score |
-| total_feedback_score | NUMERIC(10,2) | Yes | Total feedback score |
-| batch_nps | NUMERIC(6,2) | Yes | NPS score (-100 to 100) |
+ | batch_avg_feedback | NUMERIC(3,2) | Yes | Average feedback score |
+ | batch_nps | NUMERIC(6,2) | Yes | NPS score (-100 to 100) |
 | nps_total_responses | INTEGER | Yes | Feedback response count |
 | nps_promoters | INTEGER | Yes | Promoter count |
 | nps_passives | INTEGER | Yes | Passive count |
 | nps_detractors | INTEGER | Yes | Detractor count |
-| remarks | TEXT | Yes | Batch remarks |
-| comments | TEXT | Yes | Operational comments |
-| created_at | TIMESTAMPTZ | No | Audit timestamp |
+ | remarks | TEXT | Yes | Batch remarks |
+ | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
-### 7. batch_categories, delivery_modes, accommodations, entities
-Common option/reference tables used for batch metadata.
+### 7. batch_categories, delivery_modes, accommodations, entities, faculty_types, verticals, program_types
+Common option/reference tables used for batch and faculty metadata.
 
 Each has the following shape:
 
@@ -153,9 +151,8 @@ Stores approval assignment configuration between approvers.
 |---|---|---:|---|
 | id | UUID | No | Primary key |
 | approver_1_id | UUID | Yes | FK to users.id |
-| approver_2_id | UUID | Yes | FK to users.id |
-| created_at | TIMESTAMPTZ | No | Audit timestamp |
-| updated_at | TIMESTAMPTZ | No | Audit timestamp |
+ | approver_2_id | UUID | Yes | FK to users.id |
+ | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
 ### 9. training_sessions
 Represents the planned day-wise schedule for a batch.
@@ -202,9 +199,8 @@ Tracks actual delivery and utilization records for faculty sessions.
 | feedback_notes | TEXT | Yes | Detailed feedback |
 | outcome_reason | TEXT | Yes | Outcome explanation |
 | outcome_at | TIMESTAMPTZ | Yes | Outcome timestamp |
-| outcome_by | UUID | Yes | FK to users.id |
-| replacement_session_id | UUID | Yes | FK to faculty_utilization.id (self-ref) |
-| created_at | TIMESTAMPTZ | No | Audit timestamp |
+ | outcome_by | UUID | Yes | FK to users.id |
+ | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
 ## Relationships summary
@@ -218,7 +214,6 @@ Tracks actual delivery and utilization records for faculty sessions.
 - Batch 1 --- * TrainingSession
 - Batch 1 --- * FacultyUtilization
 - TrainingSession 1 --- * FacultyUtilization
-- FacultyUtilization * --- 1 FacultyUtilization (replacement_session)
 
 ## Notes
 
@@ -240,7 +235,7 @@ The schema above is derived from the SQLAlchemy model files in the backend:
 
 ```dbml
 // Enterprise Operations Platform - Database Schema
-// Generated from actual SQLAlchemy models and Alembic migration
+// Generated from actual SQLAlchemy models
 
 Table users {
   id uuid [pk]
@@ -321,6 +316,7 @@ Table delivery_modes {
   name varchar(100) [not null, unique]
   description varchar(255) [null]
   is_active boolean [not null, default: true]
+  max_hours_per_day integer [not null, default: 8]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
@@ -343,13 +339,39 @@ Table entities {
   updated_at timestamptz [not null]
 }
 
+Table faculty_types {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table verticals {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table program_types {
+  id uuid [pk]
+  name varchar(100) [not null, unique]
+  description varchar(255) [null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
 Table batches {
   id uuid [pk]
   batch_id varchar(255) [not null, unique]
   sow_number varchar(100) [null]
   approval_id varchar(100) [null]
   category varchar(100) [not null, default: 'Bootcamp']
-  residential_type varchar(2) [null]
   entity_id uuid [null]
   category_id uuid [null]
   delivery_mode_id uuid [null]
@@ -363,7 +385,7 @@ Table batches {
   end_date timestamptz [null]
   batch_request_date timestamptz [not null]
   training_days integer [not null, default: 0]
-  calendar_days integer [null]
+  calendar_days integer [null, default: 0]
   total_hours numeric(8,2) [not null, default: 0.00]
   total_enrollments integer [not null, default: 0]
   residential_enrollments integer [not null, default: 0]
@@ -379,19 +401,18 @@ Table batches {
   primary_manager_id uuid [null]
   coordinator_id uuid [null]
   sales_spoc_id uuid [null]
-  faculty_assigned_text varchar(500) [null]
+  faculty_members json [null]
+  faculty_assigned_text varchar(500) [null]  // Legacy raw faculty names string
   finance_status varchar(50) [not null, default: 'Pending']
   finance_status_check_date date [null]
   finance_check integer [null]
   batch_avg_feedback numeric(3,2) [null]
-  total_feedback_score numeric(10,2) [null]
   batch_nps numeric(6,2) [null]
   nps_total_responses integer [null]
   nps_promoters integer [null]
   nps_passives integer [null]
   nps_detractors integer [null]
   remarks text [null]
-  comments text [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
@@ -416,7 +437,6 @@ Table approval_configurations {
   id uuid [pk]
   approver_1_id uuid [null]
   approver_2_id uuid [null]
-  created_at timestamptz [not null]
   updated_at timestamptz [not null]
 }
 
@@ -441,6 +461,7 @@ Table training_sessions {
     (session_date)
     (status)
     (trainer_name)
+    (batch_id, session_date, module) [unique]
   }
 }
 
@@ -457,15 +478,16 @@ Table faculty_utilization {
   venue varchar(255) [null]
   location_city varchar(100) [null]
   mode_of_delivery varchar(50) [not null, default: 'Online']
-  status varchar(30) [not null, default: 'Scheduled']
+  status varchar(30) [not null, default: 'Completed']
   feedback_submitted boolean [not null, default: false]
   feedback_rating numeric(3,2) [null]
   feedback_notes text [null]
   outcome_reason text [null]
   outcome_at timestamptz [null]
   outcome_by uuid [null]
-  replacement_session_id uuid [null]
   vertical varchar(50) [null]
+  program_type_id uuid [null]
+  faculty_type_id uuid [null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
@@ -475,8 +497,8 @@ Table faculty_utilization {
     (faculty_name)
     (date_of_training)
     (status)
-    (outcome_by)
-    (replacement_session_id)
+    (program_type_id)
+    (faculty_type_id)
   }
 }
 
@@ -507,5 +529,6 @@ Ref: training_sessions.batch_id > batches.id
 Ref: faculty_utilization.batch_id > batches.id
 Ref: faculty_utilization.training_session_id > training_sessions.id
 Ref: faculty_utilization.outcome_by > users.id
-Ref: faculty_utilization.replacement_session_id > faculty_utilization.id
+Ref: faculty_utilization.program_type_id > program_types.id
+Ref: faculty_utilization.faculty_type_id > faculty_types.id
 ```

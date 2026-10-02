@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.models.user import User
 from app.models.session import FacultyUtilization
+from app.models.batch import FacultyType
 from app.schemas.faculty import FacultyResponse, FacultyUtilizationOverview
 from app.api.deps import get_current_user, require_manager_or_admin, require_coordinator_or_above
 from app.api.deps_services import get_faculty_service
@@ -39,7 +40,6 @@ def get_faculty_utilization(
 
 @router.get("/utilization/export")
 def export_faculty_utilization_csv(
-    domain: Optional[str] = None,
     faculty_type: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -49,11 +49,14 @@ def export_faculty_utilization_csv(
 ) -> StreamingResponse:
     """Export faculty utilization ledger as CSV."""
     query = db.query(FacultyUtilization)
-    
-    if domain:
-        query = query.filter(FacultyUtilization.domain == domain)
+
+    # There is no `domain` column on the ledger, so that filter is unsupported and
+    # accepting the parameter only produced an AttributeError. Faculty type now
+    # lives behind faculty_type_id, so it needs the join to compare by name.
     if faculty_type:
-        query = query.filter(FacultyUtilization.faculty_type == faculty_type)
+        query = query.join(FacultyType, FacultyUtilization.faculty_type_id == FacultyType.id).filter(
+            FacultyType.name == faculty_type
+        )
     if start_date:
         query = query.filter(FacultyUtilization.date_of_training >= start_date)
     if end_date:
@@ -64,7 +67,7 @@ def export_faculty_utilization_csv(
     output = StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Date", "Faculty Name", "Topic", "Hours", "City", "Venue", "Mode",
+        "Date", "Faculty Name", "Faculty Type", "Topic", "Hours", "City", "Venue", "Mode",
         "Status", "Feedback Rating", "Feedback Notes", "Outcome Reason",
         "Outcome At"
     ])
@@ -73,6 +76,7 @@ def export_faculty_utilization_csv(
         writer.writerow([
             r.date_of_training.isoformat() if r.date_of_training else "",
             r.faculty_name,
+            r.faculty_type_name or "",
             r.topic or "",
             float(r.no_of_hours) if r.no_of_hours else "",
             r.location_city or "",

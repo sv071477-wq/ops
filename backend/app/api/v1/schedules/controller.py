@@ -92,7 +92,7 @@ async def ingest_timetable_file(
     service: ExcelIngestionService = Depends(get_excel_ingestion_service)
 ) -> Any:
     """Workflow 2: Extract timetable rows from Excel or CSV without persistence."""
-    file_bytes = validate_upload_file(file, allowed_extensions=ALLOWED_SCHEDULE_EXTENSIONS)
+    file_bytes = await validate_upload_file(file, allowed_extensions=ALLOWED_SCHEDULE_EXTENSIONS)
     filename = file.filename or "uploaded_schedule"
     result = service.ingest_schedule_file(
         file_contents=file_bytes,

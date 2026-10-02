@@ -1,15 +1,19 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail,
-  api, BatchOption, ScheduledSession, FacultyType, Vertical, ProgramType
+  api, BatchOption, ScheduledSession, FacultyType, Vertical
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
 import { notifyError } from "@/lib/notify";
 import { usePrompt } from "@/components/ConfirmProvider";
+import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useTableFilters, type TableFilterField } from "@/hooks/useTableFilters";
+import type { SortAccessors } from "@/lib/tableUtils";
 import {
   X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
   Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
@@ -17,6 +21,170 @@ import {
   Edit3, GraduationCap, ShieldCheck, Mail, Briefcase, Info, Hash,
   PauseCircle, Ban
 } from "lucide-react";
+
+const UTIL_LABEL: React.CSSProperties = {
+  display: "block",
+  fontSize: "0.8rem",
+  fontWeight: 600,
+  color: "var(--text-muted)",
+  marginBottom: 4,
+};
+
+const UTIL_HINT: React.CSSProperties = {
+  fontSize: "0.72rem",
+  color: "var(--text-dim)",
+  marginTop: 4,
+  display: "block",
+};
+
+/** Matches the ledger's `<th>` look so the shared sortable cells keep this table's density. */
+const LEDGER_TH_STYLE: React.CSSProperties = {
+  padding: "8px 10px",
+  fontWeight: 600,
+  fontSize: "0.675rem",
+};
+
+/** For the two headings whose body cells are centred. */
+const LEDGER_CENTERED_TH_STYLE: React.CSSProperties = { ...LEDGER_TH_STYLE, textAlign: "center" };
+
+const TIMETABLE_TH_STYLE: React.CSSProperties = {
+  padding: "8px 12px",
+};
+
+const LEDGER_COLUMNS = 19;
+const TIMETABLE_COLUMNS = 5;
+
+/** Flattened row for the "Faculty Utilization & Delivery Ledger" table. */
+interface UtilizationLedgerRow {
+  id: string;
+  seq: number;
+  session: TrainingSession;
+  entity: string;
+  category: string;
+  vertical: string;
+  client: string;
+  program: string;
+  batchId: string;
+  dateOfTraining: string;
+  topic: string;
+  facultyName: string;
+  facultyVertical: string;
+  facultyType: string;
+  hours: number | null;
+  moduleFeedback: string;
+  venue: string;
+  locationCity: string;
+  modeOfDelivery: string;
+  coordinator: string;
+  status: string;
+}
+
+/** Keeps the original index so inline row editing never follows a re-sorted row. */
+interface ExtractedTimetableRowView {
+  row: ExtractedScheduleRow;
+  index: number;
+}
+
+const resolveFacultyType = (vertical?: string | null): string =>
+  vertical?.includes("Internal") && !vertical?.includes("External")
+    ? "Internal"
+    : vertical?.includes("External") && !vertical?.includes("Internal")
+      ? "External"
+      : vertical?.includes("HOP")
+        ? "HOP"
+        : "Mixed";
+
+const LEDGER_ACCESSORS: SortAccessors<UtilizationLedgerRow> = {
+  seq: (row) => row.seq,
+  entity: (row) => row.entity,
+  category: (row) => row.category,
+  vertical: (row) => row.vertical,
+  client: (row) => row.client,
+  program: (row) => row.program,
+  batchId: (row) => row.batchId,
+  date: (row) => row.dateOfTraining,
+  topic: (row) => row.topic,
+  faculty: (row) => row.facultyName,
+  facultyVertical: (row) => row.facultyVertical,
+  facultyType: (row) => row.facultyType,
+  hours: (row) => row.hours,
+  feedback: (row) => row.moduleFeedback,
+  venue: (row) => row.venue,
+  city: (row) => row.locationCity,
+  mode: (row) => row.modeOfDelivery,
+  coordinator: (row) => row.coordinator,
+  status: (row) => row.status,
+};
+
+// Every ledger column feeds the free-text haystack; only the low-cardinality
+// ones surface as dropdowns.
+const LEDGER_FILTER_FIELDS: readonly TableFilterField<UtilizationLedgerRow>[] = [
+  { key: "entity", accessor: LEDGER_ACCESSORS.entity },
+  { key: "category", accessor: LEDGER_ACCESSORS.category },
+  { key: "vertical", accessor: LEDGER_ACCESSORS.vertical },
+  { key: "client", accessor: LEDGER_ACCESSORS.client },
+  { key: "program", accessor: LEDGER_ACCESSORS.program },
+  { key: "batchId", accessor: LEDGER_ACCESSORS.batchId },
+  { key: "date", accessor: LEDGER_ACCESSORS.date },
+  { key: "topic", accessor: LEDGER_ACCESSORS.topic },
+  { key: "faculty", accessor: LEDGER_ACCESSORS.faculty },
+  { key: "facultyVertical", accessor: LEDGER_ACCESSORS.facultyVertical },
+  { key: "facultyType", accessor: LEDGER_ACCESSORS.facultyType },
+  { key: "hours", accessor: LEDGER_ACCESSORS.hours },
+  { key: "feedback", accessor: LEDGER_ACCESSORS.feedback },
+  { key: "venue", accessor: LEDGER_ACCESSORS.venue },
+  { key: "city", accessor: LEDGER_ACCESSORS.city },
+  { key: "mode", accessor: LEDGER_ACCESSORS.mode },
+  { key: "coordinator", accessor: LEDGER_ACCESSORS.coordinator },
+  { key: "status", accessor: LEDGER_ACCESSORS.status },
+];
+
+const LEDGER_SORT_OPTIONS = [
+  { key: "seq", label: "#" },
+  { key: "entity", label: "Entity" },
+  { key: "category", label: "Category" },
+  { key: "vertical", label: "Vertical" },
+  { key: "client", label: "Client" },
+  { key: "program", label: "Program" },
+  { key: "batchId", label: "Batch ID" },
+  { key: "date", label: "Date of Training" },
+  { key: "topic", label: "Topic" },
+  { key: "faculty", label: "Faculty Full Name" },
+  { key: "facultyVertical", label: "Faculty Vertical" },
+  { key: "facultyType", label: "Internal/External" },
+  { key: "hours", label: "No. of Hours" },
+  { key: "feedback", label: "Module Feedback" },
+  { key: "venue", label: "Venue" },
+  { key: "city", label: "Location/City" },
+  { key: "mode", label: "Mode of Delivery" },
+  { key: "coordinator", label: "Coordinator" },
+  { key: "status", label: "Session Status" },
+];
+
+const LEDGER_DESC_FIRST_KEYS = ["date", "hours", "seq"];
+
+const TIMETABLE_ACCESSORS: SortAccessors<ExtractedTimetableRowView> = {
+  date: (view) => view.row.date_of_training || "",
+  topic: (view) => view.row.topic || "",
+  faculty: (view) => view.row.faculty_name || "",
+  hours: (view) => (typeof view.row.no_of_hours === "number" ? view.row.no_of_hours : null),
+};
+
+const TIMETABLE_FILTER_FIELDS: readonly TableFilterField<ExtractedTimetableRowView>[] = [
+  { key: "date", accessor: TIMETABLE_ACCESSORS.date },
+  { key: "topic", accessor: TIMETABLE_ACCESSORS.topic },
+  { key: "faculty", accessor: TIMETABLE_ACCESSORS.faculty },
+  { key: "hours", accessor: TIMETABLE_ACCESSORS.hours },
+];
+
+const TIMETABLE_SORT_OPTIONS = [
+  { key: "date", label: "Date" },
+  { key: "topic", label: "Topic" },
+  { key: "faculty", label: "Faculty" },
+  { key: "hours", label: "Hours" },
+];
+
+const TIMETABLE_DESC_FIRST_KEYS = ["date"];
 
 interface ParsedRemarkItem {
   id: number;
@@ -128,8 +296,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     delivery_modes: BatchOption[];
     faculty_types: FacultyType[];
     verticals: Vertical[];
-    program_types: ProgramType[];
-  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], verticals: [], program_types: [] });
+  }>({ entities: [], categories: [], accommodations: [], delivery_modes: [], faculty_types: [], verticals: [] });
 
   const requestText = usePrompt();
 
@@ -158,9 +325,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         api.getBatchOptions("delivery-modes").catch(() => []),
         api.getFacultyTypes().catch(() => []),
         api.getVerticals().catch(() => []),
-        api.getProgramTypes().catch(() => []),
-      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, verticals, program_types]) => {
-        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, verticals, program_types });
+      ]).then(([entities, categories, accommodations, delivery_modes, faculty_types, verticals]) => {
+        setOptions({ entities, categories, accommodations, delivery_modes, faculty_types, verticals });
       });
     }
   }, [isOpen]);
@@ -290,6 +456,38 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const completedSessions = sessions.filter((s) => s.status === "Completed").length;
   const allSessionsCompleted = sessions.length > 0 && completedSessions === sessions.length;
 
+  // Ledger rows carry the raw values (ISO dates, numeric hours, enum strings) so
+  // sorting and filtering never run on the DD-MM-YYYY / badge rendering.
+  const ledgerRows = useMemo<UtilizationLedgerRow[]>(() => {
+    const source = currentBatch || batch;
+    return sessions.map((s, idx) => ({
+      id: s.id,
+      seq: idx + 1,
+      session: s,
+      entity: source?.entity?.name || source?.entity_id || "",
+      category: source?.category || "",
+      vertical: s.vertical || "",
+      client: source?.client_name || "",
+      program: source?.program_name || "",
+      batchId: source?.batch_id || "",
+      dateOfTraining: s.date_of_training || "",
+      topic: s.topic || "",
+      facultyName: s.faculty_name || "",
+      facultyVertical: s.vertical || "",
+      facultyType: resolveFacultyType(s.vertical),
+      hours: typeof s.no_of_hours === "number" && !Number.isNaN(s.no_of_hours) ? s.no_of_hours : null,
+      moduleFeedback: s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : ""),
+      venue: s.venue || "",
+      locationCity: s.location_city || source?.location_city || "",
+      modeOfDelivery: s.mode_of_delivery || "",
+      coordinator: source?.coordinator?.full_name || source?.coordinator_id || "",
+      status: s.status || "",
+    }));
+  }, [sessions, currentBatch, batch]);
+
+  const ledgerSort = useTableSort(ledgerRows, LEDGER_ACCESSORS, { descFirstKeys: LEDGER_DESC_FIRST_KEYS });
+  const ledgerFilters = useTableFilters(ledgerSort.sortedRows, LEDGER_FILTER_FIELDS);
+
   // Log Faculty Utilization on Session Day Modal
   const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
   const [selectedScheduleDay, setSelectedScheduleDay] = useState<ScheduledSession | null>(null);
@@ -304,17 +502,57 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [utilCity, setUtilCity] = useState("");
   const [utilStatus, setUtilStatus] = useState("Completed");
   const [utilFeedbackCollected, setUtilFeedbackCollected] = useState<"yes" | "no" | null>(null);
-  const [utilFeedbackRating, setUtilFeedbackRating] = useState(4.5);
+  const [utilFeedbackRating, setUtilFeedbackRating] = useState("");
   const [utilFeedbackNotes, setUtilFeedbackNotes] = useState("");
   const [utilOutcomeReason, setUtilOutcomeReason] = useState("");
   const [utilVertical, setUtilVertical] = useState("");
-  const [utilProgramTypeId, setUtilProgramTypeId] = useState("");
+  const [utilFacultyTypeId, setUtilFacultyTypeId] = useState("");
   const [isSubmittingUtil, setIsSubmittingUtil] = useState(false);
   const [utilError, setUtilError] = useState<string | null>(null);
+  const [utilConflicts, setUtilConflicts] = useState<string[]>([]);
+  const [showDiscardPrompt, setShowDiscardPrompt] = useState(false);
+  const utilDialogRef = useRef<HTMLDivElement | null>(null);
+  const utilTopicRef = useRef<HTMLInputElement | null>(null);
+  const [isUtilDirty, setIsUtilDirty] = useState(false);
+
+  // Trainer names to suggest: everyone on the faculty roster first, then names
+  // already present in the ledger. The ledger stores a free-text name, so a typo
+  // silently forks a trainer into two identities and splits their utilization.
+  const [rosteredFacultyNames, setRosteredFacultyNames] = useState<string[]>([]);
+  const [ledgerFacultyNames, setLedgerFacultyNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!isLogUtilizationOpen) return;
+    api.getFacultyList()
+      .then((list) => setRosteredFacultyNames(list.map((f) => f.full_name).filter(Boolean)))
+      .catch(() => setRosteredFacultyNames([]));
+    api.getSessions()
+      .then((rows) => setLedgerFacultyNames([...new Set(rows.map((r) => r.faculty_name).filter(Boolean))] as string[]))
+      .catch(() => setLedgerFacultyNames([]));
+  }, [isLogUtilizationOpen]);
+
+  const facultyNameSuggestions = useMemo(() => {
+    const merged = [...rosteredFacultyNames, ...ledgerFacultyNames];
+    return [...new Set(merged)].sort((a, b) => a.localeCompare(b));
+  }, [rosteredFacultyNames, ledgerFacultyNames]);
+
+  const markUtilDirty = () => setIsUtilDirty(true);
+
+  const closeUtilModal = (force = false) => {
+    if (!force && isUtilDirty) {
+      setShowDiscardPrompt(true);
+      return;
+    }
+    setIsLogUtilizationOpen(false);
+    setIsUtilDirty(false);
+    setShowDiscardPrompt(false);
+    setUtilError(null);
+    setUtilConflicts([]);
+  };
 
   const openLogUtilizationModal = (day: ScheduledSession) => {
-    setSelectedScheduleDay(day);
     const target = currentBatch || batch;
+    setSelectedScheduleDay(day);
     setUtilFacultyName(day.trainer_name || target?.faculty_assigned_text || "");
     setUtilDate(String(day.session_date).slice(0, 10));
     setUtilStartTime(day.start_time ? String(day.start_time).slice(0, 5) : "09:30");
@@ -323,18 +561,63 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setUtilHours(Number(day.duration_hours) || 8);
     const defMode = target?.delivery_mode || (target?.delivery_mode_id ? options.delivery_modes.find(m => m.id === target.delivery_mode_id)?.name : null) || "Online";
     setUtilDeliveryMode(defMode);
-    setUtilVenue(target?.location_city ? `${target.location_city} Center` : "Virtual MS Teams");
+    // Venue is free text and is not derivable from the batch. Inventing
+    // "<city> Center" or "Virtual MS Teams" wrote plausible-looking fiction
+    // into the ledger, so it starts empty and the coordinator fills it in.
+    setUtilVenue("");
     setUtilCity(target?.location_city || "");
     setUtilStatus("Completed");
     setUtilFeedbackCollected(null);
-    setUtilFeedbackRating(4.5);
+    setUtilFeedbackRating("");
     setUtilFeedbackNotes("");
     setUtilOutcomeReason("");
     setUtilVertical("");
-    setUtilProgramTypeId("");
+    setUtilFacultyTypeId("");
     setUtilError(null);
+    setUtilConflicts([]);
+    setShowDiscardPrompt(false);
+    setIsUtilDirty(false);
     setIsLogUtilizationOpen(true);
   };
+
+  useEffect(() => {
+    if (!isLogUtilizationOpen) return;
+    utilTopicRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isLogUtilizationOpen]);
+
+  useEffect(() => {
+    if (!isLogUtilizationOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeUtilModal();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isLogUtilizationOpen, isUtilDirty]);
+
+  // The time window must be a real interval. The conflict engine only tests for
+  // overlap, so an inverted window was persisted and then matched against every
+  // other booking on the day.
+  const utilTimeError = useMemo(() => {
+    if (!utilStartTime || !utilEndTime) return null;
+    if (utilEndTime <= utilStartTime) {
+      return "End time must be later than start time.";
+    }
+    const start = new Date(`2000-01-01T${utilStartTime}:00`);
+    const end = new Date(`2000-01-01T${utilEndTime}:00`);
+    const hours = (end.getTime() - start.getTime()) / 3_600_000;
+    if (Math.abs(hours - utilHours) > 0.01) {
+      return `Hours (${utilHours}) does not match the ${utilStartTime}–${utilEndTime} window (${hours}h).`;
+    }
+    return null;
+  }, [utilStartTime, utilEndTime, utilHours]);
 
   const handleLogUtilizationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -344,19 +627,48 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       setUtilError("Please select whether feedback was collected");
       return;
     }
-    if (utilStatus === "Cancelled" || utilStatus === "Not Conducted") {
-      if (!utilOutcomeReason.trim() || utilOutcomeReason.trim().length < 3) {
-        setUtilError("Outcome reason is required when status is Cancelled or Not Conducted (minimum 3 characters)");
-        return;
-      }
+    if (!utilFacultyName.trim()) {
+      setUtilError("Faculty / trainer name is required");
+      return;
+    }
+    if (!utilTopic.trim()) {
+      setUtilError("Training topic is required");
+      return;
+    }
+    if (utilTimeError) {
+      setUtilError(utilTimeError);
+      return;
+    }
+    if ((utilStatus === "Cancelled" || utilStatus === "Not Conducted") && utilOutcomeReason.trim().length < 3) {
+      setUtilError("Outcome reason is required when status is Cancelled or Not Conducted (minimum 3 characters)");
+      return;
+    }
+    if (!options.verticals.length) {
+      setUtilError("No delivery verticals are configured. Ask an admin to add one in Settings, then reload.");
+      return;
+    }
+    if (!utilVertical) {
+      setUtilError("Vertical is required");
+      return;
     }
     setIsSubmittingUtil(true);
     setUtilError(null);
+    setUtilConflicts([]);
     try {
-      const rawDate = utilDate ? `${utilDate}T${utilStartTime || "09:00"}:00` : new Date().toISOString();
-      const parsedD = new Date(rawDate);
-      const dateOfTrainingIso = isNaN(parsedD.getTime()) ? new Date().toISOString() : parsedD.toISOString();
-      const feedbackEntered = utilFeedbackCollected === "yes" && (utilFeedbackNotes.trim().length > 0 || Number(utilFeedbackRating) > 0);
+      // date_of_training is a timestamptz but is only ever used as a calendar day
+      // (daily-hours bucketing, filters, display) — the clock time lives in
+      // start_time/end_time. Building it from the browser's local timezone made
+      // the stored day shift by the user's UTC offset, so anchor it at UTC
+      // midnight and keep the day they actually taught.
+      const dateOfTrainingIso = utilDate
+        ? `${utilDate}T00:00:00.000Z`
+        : new Date().toISOString();
+      const ratingValue = utilFeedbackRating.trim() === "" ? null : Number(utilFeedbackRating);
+      if (ratingValue !== null && (Number.isNaN(ratingValue) || ratingValue < 1 || ratingValue > 5)) {
+        setUtilError("Feedback rating must be between 1 and 5");
+        return;
+      }
+      const feedbackEntered = utilFeedbackCollected === "yes" && ratingValue !== null;
       const payload: any = {
         batch_id: target.id,
         training_session_id: selectedScheduleDay.id,
@@ -364,27 +676,38 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         start_time: utilStartTime,
         end_time: utilEndTime,
         topic: utilTopic.trim(),
-        faculty_name: utilFacultyName.trim() || target.faculty_assigned_text || "Faculty assigned",
+        faculty_name: utilFacultyName.trim(),
         no_of_hours: Number(utilHours) || 8,
         venue: utilVenue.trim() || undefined,
         location_city: utilCity.trim() || target.location_city || undefined,
         mode_of_delivery: utilDeliveryMode,
         status: utilStatus,
         feedback_submitted: feedbackEntered,
-        feedback_rating: feedbackEntered ? Number(utilFeedbackRating) || undefined : undefined,
-        feedback_notes: feedbackEntered && utilFeedbackNotes.trim() ? utilFeedbackNotes.trim() : undefined,
-        vertical: utilVertical.trim() || undefined,
-        program_type_id: utilProgramTypeId.trim() || undefined,
+        feedback_rating: feedbackEntered ? ratingValue : undefined,
+        feedback_notes: utilFeedbackCollected === "yes" && utilFeedbackNotes.trim() ? utilFeedbackNotes.trim() : undefined,
+        vertical: utilVertical,
+        faculty_type_id: utilFacultyTypeId || undefined,
       };
       if (utilStatus === "Cancelled" || utilStatus === "Not Conducted") {
         payload.outcome_reason = utilOutcomeReason.trim();
       }
       await api.createSession(payload);
       setIsLogUtilizationOpen(false);
+      setIsUtilDirty(false);
+      setUtilError(null);
+      setUtilConflicts([]);
       await loadSessions();
       if (onBatchUpdated) onBatchUpdated();
     } catch (err: any) {
       setUtilError(err.message || "Failed to log faculty utilization");
+      // The conflict engine returns a list of structured conflicts; rendering the
+      // raw JSON blob in a one-line error box told the coordinator nothing.
+      const details = Array.isArray(err?.details) ? err.details : null;
+      if (details) {
+        setUtilConflicts(
+          details.map((d: any) => d?.message || d?.reason || "Scheduling conflict").filter(Boolean)
+        );
+      }
     } finally {
       setIsSubmittingUtil(false);
     }
@@ -442,6 +765,31 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [ingestError, setIngestError] = useState<string | null>(null);
   const [ingestSummary, setIngestSummary] = useState<{ message: string; extractedRows: number; failedRows: number; errors: string[] } | null>(null);
   const [editingParsedRow, setEditingParsedRow] = useState<number | null>(null);
+
+  // Each view keeps its original index, so sorting/filtering the preview can
+  // never make an in-flight edit write into a different row.
+  const timetableRows = useMemo<ExtractedTimetableRowView[]>(
+    () => extractedRows.map((row, index) => ({ row, index })),
+    [extractedRows]
+  );
+  const timetableSort = useTableSort(timetableRows, TIMETABLE_ACCESSORS, {
+    descFirstKeys: TIMETABLE_DESC_FIRST_KEYS,
+  });
+  const timetableFilters = useTableFilters(timetableSort.sortedRows, TIMETABLE_FILTER_FIELDS);
+  const timetableSortedFilteredRows = timetableFilters.filteredRows;
+  const timetableVisibleSet = useMemo(
+    () => new Set(timetableSortedFilteredRows),
+    [timetableSortedFilteredRows]
+  );
+  // While a row is being edited the display order is pinned to the ingest order
+  // so the focused inputs never jump out from under the caret.
+  const timetableVisibleRows = useMemo(
+    () =>
+      editingParsedRow === null
+        ? timetableSortedFilteredRows
+        : timetableRows.filter((view) => timetableVisibleSet.has(view)),
+    [editingParsedRow, timetableSortedFilteredRows, timetableRows, timetableVisibleSet]
+  );
 
   const openScheduledSessionEdit = (session: ScheduledSession) => {
     setEditingScheduledSession(session);
@@ -931,8 +1279,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="modal-scroll-content flex-1 px-6 py-6 space-y-6">
+        {/* Modal Body — positioned so `strategy="absolute"` fullscreen tables fill the drawer, not the viewport. */}
+        <div className="modal-scroll-content flex-1 px-6 py-6 space-y-6" style={{ position: "relative" }}>
 
           {/* TAB 1: OVERVIEW */}
           {activeTab === "overview" && (
@@ -1576,10 +1924,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                         </div>
                         <div style={{ display: "flex", gap: 12, fontSize: "0.775rem" }}>
                           <span style={{ color: "#166534", fontWeight: 700, background: "#dcfce7", padding: "2px 8px", borderRadius: 12 }}>
-                            ✓ {scheduledSessions.filter((s) => s.utilization_logged).length} Delivered
+                            {scheduledSessions.filter((s) => s.utilization_logged).length} Delivered
                           </span>
                           <span style={{ color: "#b45309", fontWeight: 700, background: "#fef3c7", padding: "2px 8px", borderRadius: 12 }}>
-                            ⏳ {scheduledSessions.filter((s) => !s.utilization_logged).length} Pending
+                            {scheduledSessions.filter((s) => !s.utilization_logged).length} Pending
                           </span>
                         </div>
                       </div>
@@ -1625,11 +1973,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                                 {s.module}
                               </div>
                               <div style={{ fontSize: "0.775rem", color: "var(--text-muted)", marginTop: 3, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                                <span>📅 {formatDate(s.session_date)} ({s.day_name || ""})</span>
-                                <span>•</span>
-                                <span>⏱️ {s.start_time ? String(s.start_time).slice(0, 5) : "09:30"} - {s.end_time ? String(s.end_time).slice(0, 5) : "17:30"} ({s.duration_hours} hrs)</span>
-                                <span>•</span>
-                                <span>👨‍🏫 Scheduled: <strong>{s.trainer_name || activeBatch.faculty_assigned_text || "Faculty assigned"}</strong></span>
+                                <span style={{ fontSize: "0.775rem", color: "var(--text-muted)" }}> {formatDate(s.session_date)} ({s.day_name || ""}) |  {s.start_time ? String(s.start_time).slice(0, 5) : "09:30"} - {s.end_time ? String(s.end_time).slice(0, 5) : "17:30"} ({s.duration_hours} hrs) |  Scheduled: {s.trainer_name || activeBatch.faculty_assigned_text || "Faculty assigned"}</span>
                               </div>
                             </div>
                           </div>
@@ -1717,164 +2061,248 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                           Faculty Utilization & Delivery Ledger ({sessions.length} Recorded)
                         </span>
                       </div>
-                      <div style={{ overflowX: "auto" }}>
+                      <FullscreenTable
+                        panelClassName=""
+                        strategy="absolute"
+                        style={{ border: "1px solid var(--border-subtle)", borderRadius: 8, background: "#ffffff" }}
+                        toolbar={
+                          <TableFilters
+                            search={{
+                              value: ledgerFilters.search,
+                              onChange: ledgerFilters.setSearch,
+                              placeholder: "Search faculty, topic, venue...",
+                              width: 230,
+                            }}
+                            selects={[
+                              {
+                                key: "category",
+                                label: "Category",
+                                value: ledgerFilters.getFilter("category"),
+                                onChange: (value) => ledgerFilters.setFilter("category", value),
+                                options: ledgerFilters.optionsFor("category"),
+                                width: 145,
+                              },
+                              {
+                                key: "vertical",
+                                label: "Vertical",
+                                value: ledgerFilters.getFilter("vertical"),
+                                onChange: (value) => ledgerFilters.setFilter("vertical", value),
+                                options: ledgerFilters.optionsFor("vertical"),
+                                width: 150,
+                              },
+                              {
+                                key: "facultyType",
+                                label: "Faculty Type",
+                                value: ledgerFilters.getFilter("facultyType"),
+                                onChange: (value) => ledgerFilters.setFilter("facultyType", value),
+                                options: ledgerFilters.optionsFor("facultyType"),
+                                width: 150,
+                              },
+                              {
+                                key: "mode",
+                                label: "Mode of Delivery",
+                                value: ledgerFilters.getFilter("mode"),
+                                onChange: (value) => ledgerFilters.setFilter("mode", value),
+                                options: ledgerFilters.optionsFor("mode"),
+                                width: 165,
+                              },
+                              {
+                                key: "feedback",
+                                label: "Module Feedback",
+                                value: ledgerFilters.getFilter("feedback"),
+                                onChange: (value) => ledgerFilters.setFilter("feedback", value),
+                                options: ledgerFilters.optionsFor("feedback"),
+                                width: 170,
+                              },
+                              {
+                                key: "status",
+                                label: "Status",
+                                value: ledgerFilters.getFilter("status"),
+                                onChange: (value) => ledgerFilters.setFilter("status", value),
+                                options: ledgerFilters.optionsFor("status"),
+                                width: 150,
+                              },
+                            ]}
+                            sort={{
+                              options: LEDGER_SORT_OPTIONS,
+                              sortKey: ledgerSort.sortKey,
+                              sortDir: ledgerSort.sortDir,
+                              onChange: ledgerSort.applySort,
+                            }}
+                            onClear={ledgerFilters.clearFilters}
+                            hasActiveFilters={ledgerFilters.hasActiveFilters}
+                            activeFilterCount={ledgerFilters.activeFilterCount}
+                          />
+                        }
+                      >
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.775rem" }}>
                           <thead>
-                            <tr style={{ background: "#f8fafc", textAlign: "left", borderBottom: "2px solid var(--border-subtle)" }}>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>#</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Entity</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Category</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Vertical</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Client</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Program</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Batch ID</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Date of Training</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Topic</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Faculty Full Name</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Faculty Vertical</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Internal/External</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>No. of Hours</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Module Feedback</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Venue</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Location/City</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Mode of Delivery</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Coordinator</th>
-                              <th style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", fontSize: "0.675rem" }}>Actions</th>
+                            <tr style={{ background: "#f8fafc", borderBottom: "1px solid var(--border-subtle)" }}>
+                              <SortableHeaderCell columnKey="seq" label="#" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="entity" label="Entity" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="category" label="Category" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="vertical" label="Vertical" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="client" label="Client" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="program" label="Program" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="batchId" label="Batch ID" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="date" label="Date of Training" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="topic" label="Topic" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="faculty" label="Faculty Full Name" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="facultyVertical" label="Faculty Vertical" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="facultyType" label="Internal/External" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_CENTERED_TH_STYLE} />
+                              <SortableHeaderCell columnKey="hours" label="No. of Hours" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_CENTERED_TH_STYLE} />
+                              <SortableHeaderCell columnKey="feedback" label="Module Feedback" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="venue" label="Venue" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="city" label="Location/City" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="mode" label="Mode of Delivery" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <SortableHeaderCell columnKey="coordinator" label="Coordinator" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
+                              <PlainHeaderCell style={LEDGER_TH_STYLE}>Actions</PlainHeaderCell>
                             </tr>
                           </thead>
                           <tbody>
-                            {sessions.map((s, idx) => (
-                              <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                                <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{idx + 1}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.entity?.name || activeBatch.entity_id || "—"}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.category || "—"}</td>
+                            {ledgerFilters.filteredRows.length === 0 ? (
+                              <tr>
+                                <td colSpan={LEDGER_COLUMNS} style={{ padding: "32px 10px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                                  No ledger rows match the current search or filters.
+                                </td>
+                              </tr>
+                            ) : (
+                              ledgerFilters.filteredRows.map((row) => {
+                                const s = row.session;
+                                return (
+                                  <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                                    <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{row.seq}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.entity?.name || activeBatch.entity_id || "—"}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.category || "—"}</td>
                                 <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
-                                  <span style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                    padding: "2px 8px",
-                                    borderRadius: 4,
-                                    fontSize: "0.7rem",
-                                    fontWeight: 600,
-                                    background: s.vertical ? "#e8f2fb" : "#f1f5f9",
-                                    color: s.vertical ? "#0b5cab" : "var(--text-dim)",
-                                    border: s.vertical ? "1px solid #bfdbfe" : "1px solid var(--border-subtle)"
-                                  }}>
-                                    {s.vertical || "—"}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.client_name || "—"}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.program_name || "—"}</td>
-                                <td style={{ padding: "8px 10px", fontWeight: 600, color: "#0b5cab", fontFamily: "monospace", fontSize: "0.75rem" }}>{activeBatch.batch_id}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)", whiteSpace: "nowrap" }}>{formatDate(s.date_of_training)}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{s.topic}</td>
-                                <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{s.faculty_name}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
-                                  <span style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                    padding: "2px 8px",
-                                    borderRadius: 4,
-                                    fontSize: "0.7rem",
-                                    fontWeight: 600,
-                                    background: "#fff7ed",
-                                    color: "#9a3412",
-                                    border: "1px solid #fed7aa"
-                                  }}>
-                                    {s.vertical || "—"}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center" }}>
-                                  <span style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                    padding: "2px 8px",
-                                    borderRadius: 4,
-                                    fontSize: "0.7rem",
-                                    fontWeight: 600,
-                                    background: s.vertical?.includes("External") ? "#fef2f2" : "#f0fdf4",
-                                    color: s.vertical?.includes("External") ? "#b91c1c" : "#166534",
-                                    border: s.vertical?.includes("External") ? "1px solid #fecaca" : "1px solid #bbf7d0"
-                                  }}>
-                                    {s.vertical?.includes("Internal") && !s.vertical?.includes("External") ? "Internal" : s.vertical?.includes("External") && !s.vertical?.includes("Internal") ? "External" : s.vertical?.includes("HOP") ? "HOP" : "Mixed"}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center", fontWeight: 600 }}>{s.no_of_hours} hrs</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                                  {s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : "—")}
-                                </td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.venue || "—"}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.location_city || activeBatch.location_city || "—"}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
-                                  <span style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                    padding: "2px 8px",
-                                    borderRadius: 4,
-                                    fontSize: "0.7rem",
-                                    fontWeight: 600,
-                                    background: "#f8fafc",
-                                    color: "var(--text-main)",
-                                    border: "1px solid var(--border-subtle)"
-                                  }}>
-                                    {s.mode_of_delivery}
-                                  </span>
-                                </td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.coordinator?.full_name || activeBatch.coordinator_id || "—"}</td>
-                                <td style={{ padding: "8px 10px" }}>
-                                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                    {!(["Completed", "Cancelled", "Not Conducted"].includes(s.status)) && (
-                                      <>
-                                        <button onClick={() => handleEditSession(s)} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Edit">
-                                          Edit
-                                        </button>
-                                        <button onClick={() => handleSessionOutcome(s, "not-conducted")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Not Conducted">
-                                          Not Conducted
-                                        </button>
-                                        <button onClick={() => handleSessionOutcome(s, "cancel")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Cancel">
-                                          Cancel
-                                        </button>
-                                      </>
-                                    )}
-                                    {s.status === "Completed" ? (
                                       <span style={{
                                         display: "inline-flex",
                                         alignItems: "center",
                                         gap: 4,
-                                        background: "#f0fdf4",
-                                        color: "#16a34a",
-                                        border: "1px solid #bbf7d0",
+                                        padding: "2px 8px",
                                         borderRadius: 4,
-                                        padding: "3px 8px",
                                         fontSize: "0.7rem",
-                                        fontWeight: 700
+                                        fontWeight: 600,
+                                        background: s.vertical ? "#e8f2fb" : "#f1f5f9",
+                                        color: s.vertical ? "#0b5cab" : "var(--text-dim)",
+                                        border: s.vertical ? "1px solid #bfdbfe" : "1px solid var(--border-subtle)"
                                       }}>
-                                        <CheckCircle2 size={11} /> Completed
+                                        {s.vertical || "—"}
                                       </span>
-                                    ) : (
-                                      <button
-                                        onClick={() => {
-                                          setCompletingSession(s);
-                                          setGate1Rating(4.5);
-                                          setGate1Feedback("");
-                                        }}
-                                        className="btn btn-primary"
-                                        style={{ padding: "4px 8px", fontSize: "0.7rem" }}
-                                      >
-                                        Gate 1 Complete
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
+                                    </td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.client_name || "—"}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.program_name || "—"}</td>
+                                    <td style={{ padding: "8px 10px", fontWeight: 600, color: "#0b5cab", fontFamily: "monospace", fontSize: "0.75rem" }}>{activeBatch.batch_id}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", whiteSpace: "nowrap" }}>{formatDate(s.date_of_training)}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{s.topic}</td>
+                                    <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{s.faculty_name}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
+                                      <span style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 4,
+                                        padding: "2px 8px",
+                                        borderRadius: 4,
+                                        fontSize: "0.7rem",
+                                        fontWeight: 600,
+                                        background: "#fff7ed",
+                                        color: "#9a3412",
+                                        border: "1px solid #fed7aa"
+                                      }}>
+                                        {s.vertical || "—"}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center" }}>
+                                      <span style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 4,
+                                        padding: "2px 8px",
+                                        borderRadius: 4,
+                                        fontSize: "0.7rem",
+                                        fontWeight: 600,
+                                        background: s.vertical?.includes("External") ? "#fef2f2" : "#f0fdf4",
+                                        color: s.vertical?.includes("External") ? "#b91c1c" : "#166534",
+                                        border: s.vertical?.includes("External") ? "1px solid #fecaca" : "1px solid #bbf7d0"
+                                      }}>
+                                        {s.vertical?.includes("Internal") && !s.vertical?.includes("External") ? "Internal" : s.vertical?.includes("External") && !s.vertical?.includes("Internal") ? "External" : s.vertical?.includes("HOP") ? "HOP" : "Mixed"}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center", fontWeight: 600 }}>{s.no_of_hours} hrs</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                                      {s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : "—")}
+                                    </td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.venue || "—"}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.location_city || activeBatch.location_city || "—"}</td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
+                                      <span style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 4,
+                                        padding: "2px 8px",
+                                        borderRadius: 4,
+                                        fontSize: "0.7rem",
+                                        fontWeight: 600,
+                                        background: "#f8fafc",
+                                        color: "var(--text-main)",
+                                        border: "1px solid var(--border-subtle)"
+                                      }}>
+                                        {s.mode_of_delivery}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.coordinator?.full_name || activeBatch.coordinator_id || "—"}</td>
+                                    <td style={{ padding: "8px 10px" }}>
+                                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                        {!(["Completed", "Cancelled", "Not Conducted"].includes(s.status)) && (
+                                          <>
+                                            <button onClick={() => handleEditSession(s)} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Edit">
+                                              Edit
+                                            </button>
+                                            <button onClick={() => handleSessionOutcome(s, "not-conducted")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Not Conducted">
+                                              Not Conducted
+                                            </button>
+                                            <button onClick={() => handleSessionOutcome(s, "cancel")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Cancel">
+                                              Cancel
+                                            </button>
+                                          </>
+                                        )}
+                                        {s.status === "Completed" ? (
+                                          <span style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 4,
+                                            background: "#f0fdf4",
+                                            color: "#16a34a",
+                                            border: "1px solid #bbf7d0",
+                                            borderRadius: 4,
+                                            padding: "3px 8px",
+                                            fontSize: "0.7rem",
+                                            fontWeight: 700
+                                          }}>
+                                            <CheckCircle2 size={11} /> Completed
+                                          </span>
+                                        ) : (
+                                          <button
+                                            onClick={() => {
+                                              setCompletingSession(s);
+                                              setGate1Rating(4.5);
+                                              setGate1Feedback("");
+                                            }}
+                                            className="btn btn-primary"
+                                            style={{ padding: "4px 8px", fontSize: "0.7rem" }}
+                                          >
+                                            Gate 1 Complete
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
                           </tbody>
                         </table>
-                      </div>
+                      </FullscreenTable>
                     </div>
                   )}
                 </div>
@@ -2559,7 +2987,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           zIndex: 1050,
           padding: 16
         }} onClick={() => setIsIngestModalOpen(false)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
+          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div>
                 <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
@@ -2746,43 +3174,85 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 )}
 
                 {/* Table of extracted rows */}
-                <div style={{ flex: 1, overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: 6 }}>
+                <FullscreenTable
+                  panelClassName=""
+                  strategy="absolute"
+                  style={{ flex: 1, minHeight: 0, border: "1px solid var(--border-subtle)", borderRadius: 6, background: "#ffffff" }}
+                  contentStyle={{ flex: 1, overflowY: "auto", minHeight: 0 }}
+                  toolbar={
+                    <TableFilters
+                      search={{
+                        value: timetableFilters.search,
+                        onChange: timetableFilters.setSearch,
+                        placeholder: "Search topic or faculty...",
+                        width: 210,
+                      }}
+                      selects={[
+                        {
+                          key: "faculty",
+                          label: "Faculty",
+                          value: timetableFilters.getFilter("faculty"),
+                          onChange: (value) => timetableFilters.setFilter("faculty", value),
+                          options: timetableFilters.optionsFor("faculty"),
+                          width: 170,
+                        },
+                      ]}
+                      sort={{
+                        options: TIMETABLE_SORT_OPTIONS,
+                        sortKey: timetableSort.sortKey,
+                        sortDir: timetableSort.sortDir,
+                        onChange: timetableSort.applySort,
+                      }}
+                      onClear={timetableFilters.clearFilters}
+                      hasActiveFilters={timetableFilters.hasActiveFilters}
+                      activeFilterCount={timetableFilters.activeFilterCount}
+                    />
+                  }
+                >
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
                     <thead>
-                      <tr style={{ background: "#f8fafc", textAlign: "left" }}>
-                        <th style={{ padding: "8px 12px" }}>Date</th>
-                        <th style={{ padding: "8px 12px" }}>Topic</th>
-                        <th style={{ padding: "8px 12px" }}>Faculty</th>
-                        <th style={{ padding: "8px 12px" }}>Hours</th>
-                        <th style={{ padding: "8px 12px" }}>Action</th>
+                      <tr style={{ background: "#f8fafc", borderBottom: "1px solid var(--border-subtle)" }}>
+                        <SortableHeaderCell columnKey="date" label="Date" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
+                        <SortableHeaderCell columnKey="topic" label="Topic" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
+                        <SortableHeaderCell columnKey="faculty" label="Faculty" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
+                        <SortableHeaderCell columnKey="hours" label="Hours" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
+                        <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Action</PlainHeaderCell>
                       </tr>
                     </thead>
                     <tbody>
-                      {extractedRows.map((r, i) => (
-                        <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                          <td style={{ padding: "8px 12px", fontWeight: 600 }}>
-                            {editingParsedRow === i ? <input type="date" value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            {editingParsedRow === i ? <input value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            {editingParsedRow === i ? <input value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            {editingParsedRow === i ? <input type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
-                              {editingParsedRow === i ? <Check size={13} /> : <Edit3 size={13} />}
-                              {editingParsedRow === i ? "Done" : "Edit"}
-                            </button>
+                      {timetableVisibleRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={TIMETABLE_COLUMNS} style={{ padding: "28px 12px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                            No timetable rows match the current search or filters.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        timetableVisibleRows.map(({ row: r, index: i }) => (
+                          <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                            <td style={{ padding: "8px 12px", fontWeight: 600 }}>
+                              {editingParsedRow === i ? <input type="date" value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
+                            </td>
+                            <td style={{ padding: "8px 12px" }}>
+                              {editingParsedRow === i ? <input value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
+                            </td>
+                            <td style={{ padding: "8px 12px" }}>
+                              {editingParsedRow === i ? <input value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
+                            </td>
+                            <td style={{ padding: "8px 12px" }}>
+                              {editingParsedRow === i ? <input type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
+                            </td>
+                            <td style={{ padding: "8px 12px" }}>
+                              <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
+                                {editingParsedRow === i ? <Check size={13} /> : <Edit3 size={13} />}
+                                {editingParsedRow === i ? "Done" : "Edit"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
-                </div>
+                </FullscreenTable>
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
                   <button
@@ -3277,6 +3747,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       {/* Modal: Log Faculty Utilization on Session Day */}
       {isLogUtilizationOpen && selectedScheduleDay && (
         <div
+          onClick={(e) => e.stopPropagation()}
           style={{
             position: "fixed",
             top: 0,
@@ -3291,17 +3762,29 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             zIndex: 1100,
             padding: 16,
           }}
-          onClick={() => setIsLogUtilizationOpen(false)}
         >
+          {/* This modal is a sibling of the drawer panel, not a child of it, so the
+              drawer's click-to-close overlay is its parent. Every click in this form
+              therefore bubbled to that overlay and unmounted the whole drawer the
+              moment anyone pressed a field — including the native popups (faculty
+              datalist, selects, date and time pickers), whose presses on Windows land
+              outside the field. The guard above keeps every press inside the dialog,
+              backdrop included, from reaching the drawer. X, Cancel and Escape all
+              route through the discard guard, so nothing is lost without a prompt. */}
           <div
-            onClick={(e) => e.stopPropagation()}
+            ref={utilDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="util-modal-title"
             style={{
-              maxWidth: 540,
+              maxWidth: 720,
               width: "100%",
               maxHeight: "calc(100vh - 32px)",
               background: "#ffffff",
               borderRadius: 14,
-              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
               boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
               border: "1px solid var(--border-subtle)",
             }}
@@ -3309,15 +3792,17 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             {/* Modal Header */}
             <div
               style={{
-                padding: "18px 22px",
+                padding: "16px 22px",
                 borderBottom: "1px solid var(--border-subtle)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
+                gap: 12,
                 background: "#f8fafc",
+                flexShrink: 0,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                 <div
                   style={{
                     width: 36,
@@ -3328,219 +3813,317 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    flexShrink: 0,
                   }}
                 >
                   <Calendar size={20} />
                 </div>
-                <div>
-                  <h3 style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
+                <div style={{ minWidth: 0 }}>
+                  <h3 id="util-modal-title" style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
                     Log Faculty Utilization
                   </h3>
                   <p style={{ fontSize: "0.775rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                    Day {selectedScheduleDay.sequence_number} • {formatDate(selectedScheduleDay.session_date)}
+                    Day {selectedScheduleDay.sequence_number} &bull; {formatDate(selectedScheduleDay.session_date)}
+                    {activeBatch?.batch_id ? ` • ${activeBatch.batch_id}` : ""}
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsLogUtilizationOpen(false);
-                }}
-                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}
+                onClick={() => closeUtilModal()}
+                aria-label="Close"
+                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4, flexShrink: 0 }}
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Error Message */}
-            {utilError && (
-              <div style={{ margin: "16px 22px 0", background: "#fef2f2", border: "1px solid #fecaca", color: "#e11d48", padding: "10px 14px", borderRadius: 8, fontSize: "0.825rem" }}>
-                {utilError}
-              </div>
-            )}
-
-            {/* Pre-filled Curriculum Context Banner */}
-            <div style={{ margin: "16px 22px", padding: "12px 14px", borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: "0.825rem" }}>
-              <div style={{ fontWeight: 700, color: "#166534", marginBottom: 4 }}>
-                Curriculum Topic / Module:
-              </div>
-              <div style={{ color: "#1e293b", fontWeight: 600 }}>
-                {selectedScheduleDay.module}
-              </div>
-              <div style={{ display: "flex", gap: 14, marginTop: 6, color: "#475569", fontSize: "0.775rem" }}>
-                <span>Scheduled Trainer: <strong>{selectedScheduleDay.trainer_name || activeBatch.faculty_assigned_text || "Unassigned"}</strong></span>
-                <span>•</span>
-                <span>Planned Hours: <strong>{selectedScheduleDay.duration_hours} hrs</strong></span>
-              </div>
-            </div>
-
-            {/* Form */}
-            <form onSubmit={handleLogUtilizationSubmit} style={{ padding: "0 22px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Training Topic / Module *
-                </label>
-                <input
-                  type="text"
-                  value={utilTopic}
-                  onChange={(e) => setUtilTopic(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Training Date *</label>
-                  <input type="date" value={utilDate} onChange={(e) => setUtilDate(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+            {/* Scrollable body. The submit button lives in the sticky footer and
+                targets this form, so Enter-to-submit still works. */}
+            <form
+              id="log-utilization-form"
+              onSubmit={handleLogUtilizationSubmit}
+              style={{ overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}
+            >
+              {utilError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", padding: "10px 14px", borderRadius: 8, fontSize: "0.825rem" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600 }}>{utilError}</div>
+                      {utilConflicts.length > 0 && (
+                        <ul style={{ margin: "6px 0 0 0", paddingLeft: 18 }}>
+                          {utilConflicts.map((conflict, i) => (
+                            <li key={i} style={{ marginTop: 2 }}>{conflict}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Start Time *</label>
-                  <input type="time" value={utilStartTime} onChange={(e) => setUtilStartTime(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>End Time *</label>
-                  <input type="time" value={utilEndTime} onChange={(e) => setUtilEndTime(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
+              )}
+
+              {/* Batch context, read-only. These are facts about the batch, so the
+                  ledger resolves them through the relationship rather than asking
+                  the coordinator to retype them on every delivery. */}
+              <div style={{ padding: "12px 14px", borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe", fontSize: "0.825rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px 16px" }}>
+                  {[
+                    ["Batch ID", activeBatch?.batch_id],
+                    ["Client", activeBatch?.client_name],
+                    ["Category", activeBatch?.category],
+                    ["Vertical", utilVertical || "— set below —"],
+                    ["Coordinator", activeBatch?.coordinator?.full_name || "Unassigned"],
+                  ].map(([label, value]) => (
+                    <div key={label as string} style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#1d4ed8", fontWeight: 700 }}>
+                        {label}
+                      </div>
+                      <div style={{ color: "#1e293b", fontWeight: 600, overflowWrap: "anywhere" }}>
+                        {value || "—"}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Actual Faculty / Trainer Name *
-                </label>
-                <input
-                  type="text"
-                  value={utilFacultyName}
-                  onChange={(e) => setUtilFacultyName(e.target.value)}
-                  placeholder="Trainer full name"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
+              {/* Planned values, read-only. Everything below is the actual delivery. */}
+              <div style={{ padding: "12px 14px", borderRadius: 8, background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: "0.825rem" }}>
+                <div style={{ fontWeight: 700, color: "#475569", textTransform: "uppercase", fontSize: "0.7rem", letterSpacing: "0.05em" }}>
+                  Planned &mdash; from the timetable
+                </div>
+                <div style={{ color: "#1e293b", fontWeight: 600, marginTop: 4 }}>
+                  {selectedScheduleDay.module || "—"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 5, color: "#475569", fontSize: "0.775rem" }}>
+                  <span>Trainer: <strong>{selectedScheduleDay.trainer_name || activeBatch?.faculty_assigned_text || "Unassigned"}</strong></span>
+                  <span>&bull;</span>
+                  <span>Hours: <strong>{selectedScheduleDay.duration_hours}</strong></span>
+                  <span>&bull;</span>
+                  <span>
+                    Window: <strong>{utilStartTime}&ndash;{utilEndTime}</strong>
+                  </span>
+                </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+              {/* Delivery */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Actual Hours Delivered *
+                  <label htmlFor="util-topic" style={UTIL_LABEL}>
+                    Training Topic / Module *
                   </label>
                   <input
+                    id="util-topic"
+                    ref={utilTopicRef}
+                    type="text"
+                    value={utilTopic}
+                    onChange={(e) => { setUtilTopic(e.target.value); markUtilDirty(); }}
+                    placeholder={selectedScheduleDay.module || "Topic delivered"}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label htmlFor="util-date" style={UTIL_LABEL}>Training Date *</label>
+                      <input
+                        id="util-date"
+                        type="date"
+                        value={utilDate}
+                        onChange={(e) => { setUtilDate(e.target.value); markUtilDirty(); }}
+                        className="glass-input"
+                        style={{ width: "100%" }}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="util-start" style={UTIL_LABEL}>Start Time *</label>
+                      <input
+                        id="util-start"
+                        type="time"
+                        value={utilStartTime}
+                        onChange={(e) => { setUtilStartTime(e.target.value); markUtilDirty(); }}
+                        className="glass-input"
+                        style={{ width: "100%" }}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="util-end" style={UTIL_LABEL}>End Time *</label>
+                      <input
+                        id="util-end"
+                        type="time"
+                        value={utilEndTime}
+                        onChange={(e) => { setUtilEndTime(e.target.value); markUtilDirty(); }}
+                        className="glass-input"
+                        style={{ width: "100%" }}
+                        aria-invalid={Boolean(utilTimeError)}
+                        required
+                      />
+                    </div>
+                  </div>
+                  {utilTimeError && (
+                    <div style={{ fontSize: "0.75rem", color: "#b91c1c", marginTop: 5, display: "flex", alignItems: "center", gap: 5 }}>
+                      <AlertTriangle size={13} style={{ flexShrink: 0 }} />
+                      {utilTimeError}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="util-hours" style={UTIL_LABEL}>Actual Hours Delivered *</label>
+                  <input
+                    id="util-hours"
                     type="number"
                     step="0.5"
                     min="0.5"
                     max="24"
                     value={utilHours}
-                    onChange={(e) => setUtilHours(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => { setUtilHours(parseFloat(e.target.value) || 0); markUtilDirty(); }}
                     className="glass-input"
-                    style={{ width: "100%" }}
+                    style={{ width: 160 }}
                     required
                   />
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginLeft: 8 }}>
+                    Partial days are fine &mdash; log the hours actually delivered.
+                  </span>
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Location City
-                  </label>
+                  <label htmlFor="util-faculty" style={UTIL_LABEL}>Actual Faculty / Trainer *</label>
                   <input
+                    id="util-faculty"
                     type="text"
-                    value={utilCity}
-                    onChange={(e) => setUtilCity(e.target.value)}
-                    placeholder="e.g. Bengaluru"
+                    list="util-faculty-options"
+                    value={utilFacultyName}
+                    onChange={(e) => { setUtilFacultyName(e.target.value); markUtilDirty(); }}
+                    placeholder="Start typing a trainer name"
                     className="glass-input"
                     style={{ width: "100%" }}
+                    autoComplete="off"
+                    required
                   />
+                  <datalist id="util-faculty-options">
+                    {facultyNameSuggestions.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
+                    {facultyNameSuggestions.length > 0
+                      ? "Pick an existing trainer where possible — a new spelling creates a separate trainer in the ledger."
+                      : "No existing trainers found. This name will be added to the ledger as typed."}
+                  </span>
                 </div>
 
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Delivery Mode *
-                  </label>
-                  <select
-                    value={utilDeliveryMode}
-                    onChange={(e) => setUtilDeliveryMode(e.target.value)}
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                    required
-                  >
-                    {options.delivery_modes.length > 0 ? (
-                      options.delivery_modes.map((m) => (
-                        <option key={m.id} value={m.name}>{m.name}</option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="Online">Online</option>
-                        <option value="F2F">F2F</option>
-                        <option value="Blended">Blended</option>
-                      </>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label htmlFor="util-faculty-type" style={UTIL_LABEL}>Faculty Type</label>
+                    <select
+                      id="util-faculty-type"
+                      value={utilFacultyTypeId}
+                      onChange={(e) => { setUtilFacultyTypeId(e.target.value); markUtilDirty(); }}
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                    >
+                      <option value="">Not specified</option>
+                      {options.faculty_types.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                    {options.faculty_types.length === 0 && (
+                      <span style={{ fontSize: "0.72rem", color: "#b45309", marginTop: 4, display: "block" }}>
+                        No faculty types configured. An admin can add them in Settings.
+                      </span>
                     )}
-                  </select>
+                  </div>
+
+                  <div>
+                    <label htmlFor="util-vertical" style={UTIL_LABEL}>Vertical *</label>
+                    <select
+                      id="util-vertical"
+                      value={utilVertical}
+                      onChange={(e) => { setUtilVertical(e.target.value); markUtilDirty(); }}
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                      required
+                    >
+                      <option value="">Select Vertical</option>
+                      {options.verticals.map((v) => (
+                        <option key={v.id} value={v.name}>
+                          {v.name}
+                        </option>
+                      ))}
+                    </select>
+                    {options.verticals.length === 0 && (
+                      <span style={{ fontSize: "0.72rem", color: "#b91c1c", marginTop: 4, display: "block" }}>
+                        No verticals configured. An admin must add one in Settings before utilization can be logged.
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label htmlFor="util-mode" style={UTIL_LABEL}>Delivery Mode *</label>
+                    <select
+                      id="util-mode"
+                      value={utilDeliveryMode}
+                      onChange={(e) => { setUtilDeliveryMode(e.target.value); markUtilDirty(); }}
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                      required
+                    >
+                      {options.delivery_modes.length > 0 ? (
+                        options.delivery_modes.map((m) => (
+                          <option key={m.id} value={m.name}>{m.name}</option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="Online">Online</option>
+                          <option value="F2F">F2F</option>
+                          <option value="Blended">Blended</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="util-city" style={UTIL_LABEL}>Location City</label>
+                    <input
+                      id="util-city"
+                      type="text"
+                      value={utilCity}
+                      onChange={(e) => { setUtilCity(e.target.value); markUtilDirty(); }}
+                      placeholder="e.g. Bengaluru"
+                      className="glass-input"
+                      style={{ width: "100%" }}
+                    />
+                  </div>
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Vertical *
-                  </label>
-                  <select
-                    value={utilVertical}
-                    onChange={(e) => setUtilVertical(e.target.value)}
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                    required
-                  >
-                    <option value="">Select Vertical</option>
-                    {options.verticals.map((v) => (
-                      <option key={v.id} value={v.name}>
-                        {v.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Program Type *
-                  </label>
-                  <select
-                    value={utilProgramTypeId}
-                    onChange={(e) => setUtilProgramTypeId(e.target.value)}
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                    required
-                  >
-                    <option value="">Select Program Type</option>
-                    {options.program_types?.map((p: any) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Venue / Room
-                  </label>
+                  <label htmlFor="util-venue" style={UTIL_LABEL}>Venue / Room</label>
                   <input
+                    id="util-venue"
                     type="text"
                     value={utilVenue}
-                    onChange={(e) => setUtilVenue(e.target.value)}
-                    placeholder="e.g. MS Teams Room 1 / Lab 3"
+                    onChange={(e) => { setUtilVenue(e.target.value); markUtilDirty(); }}
+                    placeholder="e.g. Lab 3, or the meeting link for online delivery"
                     className="glass-input"
                     style={{ width: "100%" }}
                   />
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Delivery Status *
-                  </label>
+                  <label htmlFor="util-status" style={UTIL_LABEL}>Delivery Status *</label>
                   <select
+                    id="util-status"
                     value={utilStatus}
-                    onChange={(e) => setUtilStatus(e.target.value)}
+                    onChange={(e) => { setUtilStatus(e.target.value); markUtilDirty(); }}
                     className="glass-input"
                     style={{ width: "100%" }}
                     required
@@ -3552,108 +4135,151 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <option value="Not Conducted">Not Conducted</option>
                   </select>
                 </div>
-              </div>
 
-              {(utilStatus === "Cancelled" || utilStatus === "Not Conducted") && (
-                <div>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Outcome Reason *
-                  </label>
-                  <textarea
-                    value={utilOutcomeReason}
-                    onChange={(e) => setUtilOutcomeReason(e.target.value)}
-                    placeholder="Reason for cancellation or non-conduct (e.g. Faculty unavailable, client cancelled, rescheduled to another date)"
-                    className="glass-input"
-                    style={{ width: "100%", minHeight: 72, resize: "vertical" }}
-                    required
-                  />
-                  <span style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 4, display: "block" }}>
-                    Required when status is Cancelled or Not Conducted (minimum 3 characters)
-                  </span>
-                </div>
-              )}
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Was Feedback Collected? *
-                </label>
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                    <input
-                      type="radio"
-                      value="yes"
-                      checked={utilFeedbackCollected === "yes"}
-                      onChange={(e) => setUtilFeedbackCollected("yes")}
-                      style={{ accentColor: "#0b5cab" }}
-                    />
-                    <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>Yes</span>
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                    <input
-                      type="radio"
-                      value="no"
-                      checked={utilFeedbackCollected === "no"}
-                      onChange={(e) => setUtilFeedbackCollected("no")}
-                      style={{ accentColor: "#0b5cab" }}
-                    />
-                    <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>No</span>
-                  </label>
-                </div>
-              </div>
-
-              {utilFeedbackCollected === "yes" && (
-                <>
+                {(utilStatus === "Cancelled" || utilStatus === "Not Conducted") && (
                   <div>
-                    <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                      Feedback Rating (1-5) *
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="5"
-                      step="0.5"
-                      value={utilFeedbackRating}
-                      onChange={(e) => setUtilFeedbackRating(Number(e.target.value) || 0)}
-                      className="glass-input"
-                      style={{ width: "100%" }}
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                      Feedback Notes
-                    </label>
+                    <label htmlFor="util-outcome" style={UTIL_LABEL}>Outcome Reason *</label>
                     <textarea
-                      value={utilFeedbackNotes}
-                      onChange={(e) => setUtilFeedbackNotes(e.target.value)}
-                      placeholder="Session summary, observations, learner uptake, or notes for later audit review"
+                      id="util-outcome"
+                      value={utilOutcomeReason}
+                      onChange={(e) => { setUtilOutcomeReason(e.target.value); markUtilDirty(); }}
+                      placeholder="Reason for cancellation or non-conduct (e.g. Faculty unavailable, client cancelled)"
                       className="glass-input"
                       style={{ width: "100%", minHeight: 72, resize: "vertical" }}
+                      required
                     />
+                    <span style={UTIL_HINT}>
+                      Required when status is Cancelled or Not Conducted (minimum 3 characters)
+                    </span>
                   </div>
-                </>
-              )}
+                )}
+              </div>
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
-                <button
-                  type="button"
-                  onClick={() => setIsLogUtilizationOpen(false)}
-                  className="btn btn-secondary"
-                  style={{ padding: "8px 14px", fontSize: "0.85rem" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingUtil || !utilFacultyName.trim()}
-                  className="btn btn-primary"
-                  style={{ padding: "8px 18px", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  {isSubmittingUtil ? "Saving..." : "Save Faculty Utilization"}
-                </button>
+              {/* Feedback */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
+                <div>
+                  <span style={UTIL_LABEL}>Was Feedback Collected? *</span>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(["yes", "no"] as const).map((value) => {
+                      const selected = utilFeedbackCollected === value;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => { setUtilFeedbackCollected(value); markUtilDirty(); }}
+                          aria-pressed={selected}
+                          style={{
+                            padding: "7px 16px",
+                            borderRadius: 8,
+                            border: `1px solid ${selected ? "#0b5cab" : "var(--border-subtle)"}`,
+                            background: selected ? "#e8f2fb" : "#ffffff",
+                            color: selected ? "#0b5cab" : "var(--text-main)",
+                            fontWeight: selected ? 700 : 500,
+                            fontSize: "0.85rem",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {value === "yes" ? "Yes" : "No"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {utilFeedbackCollected === "yes" && (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 12, alignItems: "start" }}>
+                      <div>
+                        <label htmlFor="util-rating" style={UTIL_LABEL}>Rating (1-5)</label>
+                        <select
+                          id="util-rating"
+                          value={utilFeedbackRating}
+                          onChange={(e) => { setUtilFeedbackRating(e.target.value); markUtilDirty(); }}
+                          className="glass-input"
+                          style={{ width: "100%" }}
+                        >
+                          <option value="">Not rated</option>
+                          {[5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1].map((score) => (
+                            <option key={score} value={score}>{score}</option>
+                          ))}
+                        </select>
+                        <span style={UTIL_HINT}>Feeds the batch average.</span>
+                      </div>
+                      <div>
+                        <label htmlFor="util-module-feedback" style={UTIL_LABEL}>Module Feedback</label>
+                        <textarea
+                          id="util-module-feedback"
+                          value={utilFeedbackNotes}
+                          onChange={(e) => { setUtilFeedbackNotes(e.target.value); markUtilDirty(); }}
+                          placeholder="Feedback on the module delivered: learner uptake, observations, anything for audit review"
+                          className="glass-input"
+                          style={{ width: "100%", minHeight: 72, resize: "vertical" }}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </form>
+
+            {/* Sticky footer */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: 10,
+                padding: "14px 22px",
+                borderTop: "1px solid var(--border-subtle)",
+                background: "#f8fafc",
+                flexShrink: 0,
+              }}
+            >
+              {showDiscardPrompt ? (
+                <>
+                  <span style={{ fontSize: "0.825rem", color: "#b45309", fontWeight: 600, marginRight: "auto" }}>
+                    Discard the changes you made?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiscardPrompt(false)}
+                    className="btn btn-secondary"
+                    style={{ padding: "8px 14px", fontSize: "0.85rem" }}
+                  >
+                    Keep Editing
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeUtilModal(true)}
+                    className="btn btn-primary"
+                    style={{ padding: "8px 14px", fontSize: "0.85rem", background: "#b91c1c", borderColor: "#b91c1c" }}
+                  >
+                    Discard
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => closeUtilModal()}
+                    className="btn btn-secondary"
+                    style={{ padding: "8px 14px", fontSize: "0.85rem" }}
+                    disabled={isSubmittingUtil}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    form="log-utilization-form"
+                    disabled={isSubmittingUtil || Boolean(utilTimeError) || options.verticals.length === 0}
+                    className="btn btn-primary"
+                    style={{ padding: "8px 18px", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    {isSubmittingUtil ? "Saving..." : "Save Faculty Utilization"}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

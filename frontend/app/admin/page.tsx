@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
-  api, Role, Team, User, UserHierarchyNode, BatchOption, FacultyType, Vertical, FmsSyncLog, CoordinatorMappingRecord
+  api, Role, Team, User, UserHierarchyNode, BatchOption, FmsSyncLog, CoordinatorMappingRecord
 } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { notifyError, notifySuccess, errorMessage } from "@/lib/notify";
@@ -13,13 +13,413 @@ import { useConfirm } from "@/components/ConfirmProvider";
 import { Navbar } from "@/components/Navbar";
 import { ChangePasswordModal } from "@/components/ChangePasswordModal";
 import { PaginationControls } from "@/components/PaginationControls";
+import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import { useTableFilters, type TableFilterField } from "@/hooks/useTableFilters";
+import { useTableSort } from "@/hooks/useTableSort";
+import type { SortAccessors, TableAccessor } from "@/lib/tableUtils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Shield, Users, Tag, UserPlus, Plus, Trash2, CheckCircle2,
-  AlertCircle, RefreshCw, GitFork, Briefcase, Layers, Building2,
-  Sliders, ArrowRightLeft, Check, Sparkles, Database, Edit2, Link2, KeyRound, Search
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
+} from "@/components/ui/dialog";
+import {
+  AlertCircle, ArrowRightLeft, Briefcase, Building2, CheckCircle2, Database, Edit2,
+  GitFork, KeyRound, Layers, Link2, Network, Plus, RefreshCw, Search, Shield, Sliders,
+  Tag, Trash2, UserCheck, UserPlus, Users
 } from "lucide-react";
+
+type AdminTabKey = "teams" | "roles" | "options" | "users" | "fms" | "hierarchy" | "mappings";
+type OptionTypeKey =
+  | "categories" | "delivery-modes" | "accommodations" | "entities" | "faculty-types" | "verticals";
+
+const OPTION_TYPE_LABELS: Record<OptionTypeKey, string> = {
+  categories: "Categories",
+  "delivery-modes": "Delivery Modes",
+  accommodations: "Accommodations",
+  entities: "Legal Entities",
+  "faculty-types": "Faculty Types",
+  verticals: "Verticals",
+};
+
+const TD = "px-5 py-3.5 text-sm align-middle";
+
+const PANEL_CLASS = "overflow-hidden rounded-2xl border border-border bg-card shadow-sm";
+
+// The shared header cells render inline styles, so `TABLE_TH_STYLE` overrides the
+// shared heading typography to match the Tailwind look of this portal, and sets
+// the heading padding to match `TD`.
+const TABLE_TH_STYLE: React.CSSProperties = {
+  padding: "14px 20px",
+  fontSize: "0.75rem",
+  fontWeight: 600,
+  color: "var(--color-muted-foreground)",
+};
+
+const TABLE_TH_RIGHT_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, textAlign: "right" };
+
+const SORT_ACCENT = "var(--color-primary)";
+
+const PANEL_HEADER_STYLE: React.CSSProperties = {
+  padding: "16px 20px",
+  borderBottom: "1px solid color-mix(in srgb, var(--color-border) 70%, transparent)",
+};
+
+const PANEL_TITLE_STYLE: React.CSSProperties = { whiteSpace: "normal", flex: "1 1 260px" };
+
+const activeStatusLabel = (isActive: boolean) => (isActive ? "Active" : "Inactive");
+
+function joinTableText(values: (string | number | null | undefined)[]): string {
+  return values
+    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "")
+    .join(" ");
+}
+
+const TEAM_SORT_ACCESSORS: SortAccessors<Team> = {
+  name: (t) => t.name,
+  description: (t) => t.description,
+  members: (t) => t.member_count ?? 0,
+  status: (t) => activeStatusLabel(t.is_active),
+  createdAt: (t) => t.created_at,
+};
+
+const TEAM_SORT_OPTIONS = [
+  { key: "name", label: "Team Name" },
+  { key: "description", label: "Description" },
+  { key: "members", label: "Active Members" },
+  { key: "status", label: "Status" },
+  { key: "createdAt", label: "Created At" },
+];
+
+const TEAM_DESC_FIRST_KEYS = ["createdAt"];
+
+const TEAM_FILTER_FIELDS: readonly TableFilterField<Team>[] = [
+  { key: "status", accessor: TEAM_SORT_ACCESSORS.status },
+];
+
+const TEAM_SEARCH: TableAccessor<Team> = (t) => joinTableText([t.name, t.description, t.department]);
+
+const ROLE_SORT_ACCESSORS: SortAccessors<Role> = {
+  name: (r) => r.name,
+  systemRole: (r) => r.system_role,
+  status: (r) => activeStatusLabel(r.is_active),
+  createdAt: (r) => r.created_at,
+};
+
+const ROLE_SORT_OPTIONS = [
+  { key: "name", label: "Position Title / Role Name" },
+  { key: "systemRole", label: "Base System Capability" },
+  { key: "status", label: "Status" },
+  { key: "createdAt", label: "Created At" },
+];
+
+const ROLE_DESC_FIRST_KEYS = ["createdAt"];
+
+const ROLE_FILTER_FIELDS: readonly TableFilterField<Role>[] = [
+  { key: "systemRole", accessor: ROLE_SORT_ACCESSORS.systemRole },
+  { key: "status", accessor: ROLE_SORT_ACCESSORS.status },
+];
+
+const ROLE_SEARCH: TableAccessor<Role> = (r) => joinTableText([r.name, r.system_role]);
+
+const OPTION_SORT_ACCESSORS: SortAccessors<BatchOption> = {
+  name: (o) => o.name,
+  description: (o) => o.description,
+  status: (o) => activeStatusLabel(o.is_active),
+};
+
+const OPTION_SORT_OPTIONS = [
+  { key: "name", label: "Option Name" },
+  { key: "description", label: "Description" },
+  { key: "status", label: "Status" },
+];
+
+const OPTION_FILTER_FIELDS: readonly TableFilterField<BatchOption>[] = [
+  { key: "status", accessor: OPTION_SORT_ACCESSORS.status },
+];
+
+const OPTION_SEARCH: TableAccessor<BatchOption> = (o) => joinTableText([o.name, o.description]);
+
+const USER_SORT_ACCESSORS: SortAccessors<User> = {
+  fullName: (u) => u.full_name,
+  email: (u) => u.email,
+  role: (u) => u.role_detail?.name || u.role,
+  team: (u) => u.team_detail?.name || u.team_name,
+  manager: (u) => u.manager_name,
+  reports: (u) => u.direct_reports_count ?? 0,
+  status: (u) => activeStatusLabel(u.is_active),
+};
+
+const USER_SORT_OPTIONS = [
+  { key: "fullName", label: "Full Name" },
+  { key: "email", label: "Corporate Email" },
+  { key: "role", label: "Assigned Role / Title" },
+  { key: "team", label: "Assigned Team (Dept)" },
+  { key: "manager", label: "Reports To (Manager)" },
+  { key: "reports", label: "Direct Reports" },
+  { key: "status", label: "Status" },
+];
+
+const USER_FILTER_FIELDS: readonly TableFilterField<User>[] = [
+  { key: "role", accessor: USER_SORT_ACCESSORS.role },
+  { key: "team", accessor: USER_SORT_ACCESSORS.team },
+  { key: "status", accessor: USER_SORT_ACCESSORS.status },
+];
+
+const USER_SEARCH: TableAccessor<User> = (u) =>
+  joinTableText([u.full_name, u.email, u.role, u.team_name, u.manager_name]);
+
+const FMS_SORT_ACCESSORS: SortAccessors<FmsSyncLog> = {
+  facultyId: (log) => log.faculty_id,
+  eventType: (log) => log.event_type,
+  status: (log) => log.status,
+  timestamp: (log) => log.timestamp,
+  message: (log) => log.message,
+};
+
+const FMS_SORT_OPTIONS = [
+  { key: "facultyId", label: "Faculty ID" },
+  { key: "eventType", label: "Event Type" },
+  { key: "status", label: "Status" },
+  { key: "timestamp", label: "Timestamp" },
+  { key: "message", label: "Message" },
+];
+
+const FMS_DESC_FIRST_KEYS = ["timestamp"];
+
+const FMS_FILTER_FIELDS: readonly TableFilterField<FmsSyncLog>[] = [
+  { key: "eventType", accessor: FMS_SORT_ACCESSORS.eventType },
+  { key: "status", accessor: FMS_SORT_ACCESSORS.status },
+];
+
+const FMS_SEARCH: TableAccessor<FmsSyncLog> = (log) =>
+  joinTableText([log.faculty_id, log.event_type, log.status, log.message]);
+
+const MAPPING_SORT_ACCESSORS: SortAccessors<CoordinatorMappingRecord> = {
+  coordinator: (m) => m.coordinator_name,
+  manager: (m) => m.manager_name,
+  assignedAt: (m) => m.assigned_at,
+};
+
+const MAPPING_SORT_OPTIONS = [
+  { key: "coordinator", label: "Coordinator" },
+  { key: "manager", label: "Mapped Manager" },
+  { key: "assignedAt", label: "Assigned On" },
+];
+
+const MAPPING_DESC_FIRST_KEYS = ["assignedAt"];
+
+const MAPPING_FILTER_FIELDS: readonly TableFilterField<CoordinatorMappingRecord>[] = [
+  { key: "coordinator", accessor: MAPPING_SORT_ACCESSORS.coordinator },
+  { key: "manager", accessor: MAPPING_SORT_ACCESSORS.manager },
+];
+
+const MAPPING_SEARCH: TableAccessor<CoordinatorMappingRecord> = (m) =>
+  joinTableText([m.coordinator_name, m.coordinator_email, m.manager_name, m.manager_email]);
+
+type Tone = "primary" | "info" | "success" | "warning" | "violet";
+
+const TONE_ICON: Record<Tone, string> = {
+  primary: "bg-primary/10 text-primary",
+  info: "bg-info/10 text-info",
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/15 text-warning",
+  violet: "bg-violet-500/10 text-violet-600",
+};
+
+const TONE_VALUE: Record<Tone, string> = {
+  primary: "text-primary",
+  info: "text-info",
+  success: "text-success",
+  warning: "text-amber-600",
+  violet: "text-violet-600",
+};
+
+function StatCard({
+  icon,
+  label,
+  value,
+  hint,
+  tone = "primary",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  hint: React.ReactNode;
+  tone?: Tone;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm transition-all duration-200 hover:border-primary/30 hover:shadow-md">
+      <div className="min-w-0">
+        <p className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+        <p className={cn("mt-1 text-[1.75rem] font-extrabold leading-none tracking-tight", TONE_VALUE[tone])}>
+          {value}
+        </p>
+        <p className="mt-1.5 truncate text-xs text-muted-foreground/80">{hint}</p>
+      </div>
+      <span className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl", TONE_ICON[tone])}>
+        {icon}
+      </span>
+    </div>
+  );
+}
+
+function PanelHeading({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-4 border-b border-border/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="min-w-0">
+        <h2 className="text-lg font-bold tracking-tight text-foreground">{title}</h2>
+        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+      </div>
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+function TablePanelTitle({
+  title,
+  description,
+}: {
+  title: string;
+  description?: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <h2 className="text-lg font-bold tracking-tight text-foreground">{title}</h2>
+      {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+    </div>
+  );
+}
+
+function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <section className={cn(PANEL_CLASS, className)}>
+      {children}
+    </section>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  description,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 px-6 py-14 text-center">
+      <span className="mb-1 flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        {icon}
+      </span>
+      <p className="text-sm font-semibold text-foreground">{title}</p>
+      {description && <p className="max-w-sm text-sm text-muted-foreground">{description}</p>}
+    </div>
+  );
+}
+
+function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-sm text-muted-foreground">
+      <RefreshCw className="h-5 w-5 animate-spin text-primary" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function FormField({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-sm font-medium text-foreground">
+        {label}
+        {required && <span className="ml-0.5 text-destructive">*</span>}
+      </label>
+      {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/25 bg-destructive-light px-4 py-3 text-sm text-destructive"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function AdminDialog({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+  maxWidth = "sm:max-w-md",
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  description?: React.ReactNode;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  maxWidth?: string;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className={cn("flex max-h-[90vh] flex-col overflow-hidden p-0", maxWidth)}>
+        <DialogHeader className="shrink-0 border-b border-border/70 bg-muted/40 px-6 py-5 pr-14">
+          <DialogTitle className="text-lg font-bold tracking-tight">{title}</DialogTitle>
+          {description && <DialogDescription className="text-sm text-muted-foreground">{description}</DialogDescription>}
+        </DialogHeader>
+        <div className="modal-scroll-content flex-1 space-y-4 px-6 py-5">{children}</div>
+        {footer && (
+          <DialogFooter className="shrink-0 gap-3 border-t border-border/70 bg-muted/40 px-6 py-4 sm:justify-end">
+            {footer}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StatusPill({ active }: { active: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 text-xs font-semibold",
+        active ? "text-success" : "text-muted-foreground/70"
+      )}
+    >
+      <span className={cn("h-2 w-2 rounded-full", active ? "bg-success" : "bg-muted-foreground/50")} />
+      {active ? "Active" : "Inactive"}
+    </span>
+  );
+}
+
+const ROW_ACTIONS = "flex items-center justify-end gap-1";
 
 // Recursive Org Tree Node Component
 const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ node, depth = 0 }) => {
@@ -27,111 +427,59 @@ const OrgTreeNode: React.FC<{ node: UserHierarchyNode; depth?: number }> = ({ no
   const isManager = hasChildren || node.role?.toLowerCase() === "manager" || node.role?.toLowerCase() === "admin";
 
   return (
-    <div style={{ marginLeft: depth > 0 ? 24 : 0, marginTop: 12, position: "relative" }}>
+    <div className="relative" style={{ marginTop: depth > 0 ? 12 : 0, marginLeft: depth > 0 ? 28 : 0 }}>
       {depth > 0 && (
-        <div style={{
-          position: "absolute",
-          left: -14,
-          top: 20,
-          width: 14,
-          height: 2,
-          background: "var(--border-subtle)"
-        }} />
+        <span className="absolute -left-4 top-6 h-px w-4 bg-border" aria-hidden="true" />
       )}
 
-      <div style={{
-        background: isManager ? "#ffffff" : "#f8fafc",
-        border: `1px solid ${isManager ? "#0b5cab" : "var(--border-subtle)"}`,
-        borderLeft: isManager ? "4px solid #0b5cab" : "1px solid var(--border-subtle)",
-        borderRadius: 6,
-        padding: "12px 16px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        flexWrap: "wrap",
-        gap: 12,
-        width: "100%",
-        maxWidth: "100%",
-        boxShadow: isManager ? "0 1px 3px rgba(0,0,0,0.05)" : "none"
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{
-            width: 32,
-            height: 32,
-            borderRadius: 4,
-            background: isManager ? "#e8f2fb" : "#f1f5f9",
-            color: isManager ? "#0b5cab" : "#64748b",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontWeight: 700,
-            fontSize: "0.85rem"
-          }}>
-            {node.full_name ? node.full_name.charAt(0) : "U"}
-          </div>
+      <div
+        className={cn(
+          "flex w-full flex-wrap items-center justify-between gap-4 rounded-xl border px-4 py-3 transition-colors sm:px-5",
+          isManager
+            ? "border-primary/30 border-l-4 border-l-primary bg-card shadow-sm"
+            : "border-border/70 bg-muted/30"
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className={cn(
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold",
+              isManager ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+            )}
+          >
+            {node.full_name ? node.full_name.charAt(0).toUpperCase() : "U"}
+          </span>
 
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--text-main)" }}>
-                {node.full_name}
-              </span>
-              <span style={{
-                fontSize: "0.75rem",
-                fontWeight: 600,
-                padding: "2px 8px",
-                borderRadius: 4,
-                background: isManager ? "#e8f2fb" : "#f1f5f9",
-                color: isManager ? "#0b5cab" : "#64748b"
-              }}>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate text-sm font-bold text-foreground">{node.full_name}</span>
+              <span
+                className={cn(
+                  "rounded-md px-2 py-0.5 text-[0.7rem] font-semibold",
+                  isManager ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                )}
+              >
                 {node.role_name || node.role}
               </span>
-              {node.team_name && (
-                <span style={{
-                  fontSize: "0.725rem",
-                  fontWeight: 600,
-                  padding: "2px 8px",
-                  borderRadius: 4,
-                  background: "#e0f2fe",
-                  color: "#0369a1",
-                  border: "1px solid #bae6fd"
-                }}>
-                  {node.team_name}
-                </span>
-              )}
+              {node.team_name && <Badge variant="info" size="sm">{node.team_name}</Badge>}
             </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-              {node.email}
-            </div>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{node.email}</p>
           </div>
         </div>
 
-        <div>
+        <div className="shrink-0">
           {hasChildren ? (
-            <span style={{
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              padding: "3px 8px",
-              borderRadius: 10,
-              background: "#f0fdf4",
-              color: "#16a34a",
-              border: "1px solid #bbf7d0"
-            }}>
-              Manages {node.direct_reports.length} direct report(s)
-            </span>
+            <Badge variant="success" size="sm">
+              Manages {node.direct_reports.length} direct report{node.direct_reports.length === 1 ? "" : "s"}
+            </Badge>
           ) : (
-            <span style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>
-              Individual Contributor
-            </span>
+            <span className="text-xs text-muted-foreground/70">Individual contributor</span>
           )}
         </div>
       </div>
 
       {hasChildren && (
-        <div style={{
-          borderLeft: "2px solid #e2e8f0",
-          marginLeft: 16,
-          paddingLeft: 4
-        }}>
+        <div className="ml-3.5 border-l-2 border-border pl-4 sm:ml-4">
           {node.direct_reports.map((child) => (
             <OrgTreeNode key={child.id} node={child} depth={depth + 1} />
           ))}
@@ -146,7 +494,7 @@ export default function AdminPortalPage() {
   const router = useRouter();
   const confirmAction = useConfirm();
 
-  const [activeTab, setActiveTab] = useState<"teams" | "roles" | "options" | "users" | "fms" | "hierarchy" | "mappings">("teams");
+  const [activeTab, setActiveTab] = useState<AdminTabKey>("teams");
   const [teams, setTeams] = useState<Team[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -157,7 +505,7 @@ export default function AdminPortalPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Batch Taxonomy Options state
-  const [selectedOptionType, setSelectedOptionType] = useState<"categories" | "delivery-modes" | "accommodations" | "entities" | "faculty-types" | "verticals">("categories");
+  const [selectedOptionType, setSelectedOptionType] = useState<OptionTypeKey>("categories");
   const [batchOptions, setBatchOptions] = useState<BatchOption[]>([]);
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
   const [isCreateOptionOpen, setIsCreateOptionOpen] = useState(false);
@@ -219,7 +567,6 @@ export default function AdminPortalPage() {
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [editUserEmail, setEditUserEmail] = useState("");
   const [editUserFullName, setEditUserFullName] = useState("");
-  const [editUserPassword, setEditUserPassword] = useState("");
   const [editUserRoleId, setEditUserRoleId] = useState("");
   const [editUserTeamId, setEditUserTeamId] = useState("");
   const [editUserReportsToId, setEditUserReportsToId] = useState("");
@@ -238,7 +585,6 @@ export default function AdminPortalPage() {
   // Pagination states for all admin tables
   const [userPage, setUserPage] = useState(1);
   const [userPageSize, setUserPageSize] = useState(10);
-  const [userSearch, setUserSearch] = useState("");
 
   const [teamPage, setTeamPage] = useState(1);
   const [teamPageSize, setTeamPageSize] = useState(10);
@@ -255,20 +601,60 @@ export default function AdminPortalPage() {
   const [mappingPage, setMappingPage] = useState(1);
   const [mappingPageSize, setMappingPageSize] = useState(10);
 
-  // Derived filtered & paginated records
-  const filteredUsers = useMemo(() => {
-    const q = userSearch.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(
-      (u) =>
-        u.full_name?.toLowerCase().includes(q) ||
-        u.email?.toLowerCase().includes(q) ||
-        u.role?.toLowerCase().includes(q) ||
-        u.team_name?.toLowerCase().includes(q) ||
-        u.manager_name?.toLowerCase().includes(q)
-    );
-  }, [users, userSearch]);
+  // Table sort + filter state for all admin tables: raw rows -> sorted -> filtered -> paginated
+  const teamSort = useTableSort(teams, TEAM_SORT_ACCESSORS, {
+    initialKey: "createdAt",
+    initialDir: "desc",
+    descFirstKeys: TEAM_DESC_FIRST_KEYS,
+  });
+  const teamFilters = useTableFilters(teamSort.sortedRows, TEAM_FILTER_FIELDS, TEAM_SEARCH);
+  const filteredTeams = teamFilters.filteredRows;
 
+  const roleSort = useTableSort(roles, ROLE_SORT_ACCESSORS, {
+    initialKey: "createdAt",
+    initialDir: "desc",
+    descFirstKeys: ROLE_DESC_FIRST_KEYS,
+  });
+  const roleFilters = useTableFilters(roleSort.sortedRows, ROLE_FILTER_FIELDS, ROLE_SEARCH);
+  const filteredRoles = roleFilters.filteredRows;
+
+  const optionSort = useTableSort(batchOptions, OPTION_SORT_ACCESSORS);
+  const optionFilters = useTableFilters(optionSort.sortedRows, OPTION_FILTER_FIELDS, OPTION_SEARCH);
+  const filteredOptions = optionFilters.filteredRows;
+
+  const userSort = useTableSort(users, USER_SORT_ACCESSORS);
+  const userFilters = useTableFilters(userSort.sortedRows, USER_FILTER_FIELDS, USER_SEARCH);
+  const filteredUsers = userFilters.filteredRows;
+
+  const fmsSort = useTableSort(fmsLogs, FMS_SORT_ACCESSORS, {
+    initialKey: "timestamp",
+    initialDir: "desc",
+    descFirstKeys: FMS_DESC_FIRST_KEYS,
+  });
+  const fmsFilters = useTableFilters(fmsSort.sortedRows, FMS_FILTER_FIELDS, FMS_SEARCH);
+  const filteredFmsLogs = fmsFilters.filteredRows;
+
+  const mappingSort = useTableSort(mappings, MAPPING_SORT_ACCESSORS, {
+    initialKey: "assignedAt",
+    initialDir: "desc",
+    descFirstKeys: MAPPING_DESC_FIRST_KEYS,
+  });
+  const mappingFilters = useTableFilters(
+    mappingSort.sortedRows,
+    MAPPING_FILTER_FIELDS,
+    MAPPING_SEARCH
+  );
+  const filteredMappings = mappingFilters.filteredRows;
+
+  // Reset to the first page whenever a table's search or filters change
+  useEffect(() => { setTeamPage(1); }, [teamFilters.filtersVersion]);
+  useEffect(() => { setRolePage(1); }, [roleFilters.filtersVersion]);
+  useEffect(() => { setOptionPage(1); }, [optionFilters.filtersVersion]);
+  useEffect(() => { setUserPage(1); }, [userFilters.filtersVersion]);
+  useEffect(() => { setFmsLogPage(1); }, [fmsFilters.filtersVersion]);
+  useEffect(() => { setMappingPage(1); }, [mappingFilters.filtersVersion]);
+
+  // Derived paginated records
   const paginatedUsers = useMemo(() => {
     const start = (userPage - 1) * userPageSize;
     return filteredUsers.slice(start, start + userPageSize);
@@ -276,28 +662,28 @@ export default function AdminPortalPage() {
 
   const paginatedTeams = useMemo(() => {
     const start = (teamPage - 1) * teamPageSize;
-    return teams.slice(start, start + teamPageSize);
-  }, [teams, teamPage, teamPageSize]);
+    return filteredTeams.slice(start, start + teamPageSize);
+  }, [filteredTeams, teamPage, teamPageSize]);
 
   const paginatedRoles = useMemo(() => {
     const start = (rolePage - 1) * rolePageSize;
-    return roles.slice(start, start + rolePageSize);
-  }, [roles, rolePage, rolePageSize]);
+    return filteredRoles.slice(start, start + rolePageSize);
+  }, [filteredRoles, rolePage, rolePageSize]);
 
   const paginatedOptions = useMemo(() => {
     const start = (optionPage - 1) * optionPageSize;
-    return batchOptions.slice(start, start + optionPageSize);
-  }, [batchOptions, optionPage, optionPageSize]);
+    return filteredOptions.slice(start, start + optionPageSize);
+  }, [filteredOptions, optionPage, optionPageSize]);
 
   const paginatedFmsLogs = useMemo(() => {
     const start = (fmsLogPage - 1) * fmsLogPageSize;
-    return fmsLogs.slice(start, start + fmsLogPageSize);
-  }, [fmsLogs, fmsLogPage, fmsLogPageSize]);
+    return filteredFmsLogs.slice(start, start + fmsLogPageSize);
+  }, [filteredFmsLogs, fmsLogPage, fmsLogPageSize]);
 
   const paginatedMappings = useMemo(() => {
     const start = (mappingPage - 1) * mappingPageSize;
-    return mappings.slice(start, start + mappingPageSize);
-  }, [mappings, mappingPage, mappingPageSize]);
+    return filteredMappings.slice(start, start + mappingPageSize);
+  }, [filteredMappings, mappingPage, mappingPageSize]);
 
   // Security Check
   useEffect(() => {
@@ -487,7 +873,7 @@ export default function AdminPortalPage() {
       await api.deleteTeam(teamId);
       notifySuccess("Team deleted");
       await fetchData();
-    } catch (err: any) {
+    } catch (err) {
       notifyError("Failed to delete team", err);
     }
   };
@@ -560,7 +946,7 @@ export default function AdminPortalPage() {
       await api.deleteRole(roleId);
       notifySuccess("Position title deleted");
       await fetchData();
-    } catch (err: any) {
+    } catch (err) {
       notifyError("Failed to delete role", err);
     }
   };
@@ -618,7 +1004,7 @@ export default function AdminPortalPage() {
       }
       notifySuccess("Option deactivated");
       await fetchBatchOptions();
-    } catch (err: any) {
+    } catch (err) {
       notifyError("Failed to delete option", err);
     }
   };
@@ -673,7 +1059,6 @@ export default function AdminPortalPage() {
     setEditingUser(staffUser);
     setEditUserEmail(staffUser.email);
     setEditUserFullName(staffUser.full_name);
-    setEditUserPassword("");
     setEditUserRoleId(staffUser.role_id || "");
     setEditUserTeamId(staffUser.team_id || "");
     setEditUserReportsToId(staffUser.manager_id || "");
@@ -723,17 +1108,17 @@ export default function AdminPortalPage() {
       await api.deleteUser(staffUser.id);
       notifySuccess("Staff member deleted");
       await fetchData();
-    } catch (err: any) {
+    } catch (err) {
       notifyError("Failed to delete staff member", err);
     }
   };
 
   if (isAuthLoading || !user || user.role?.toLowerCase() !== "admin") {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-          <RefreshCw className="animate-spin" size={32} color="#0b5cab" />
-          <span style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Verifying Administrator Privileges...</span>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="h-8 w-8 animate-spin text-primary" />
+          <span className="text-sm text-muted-foreground">Verifying Administrator Privileges...</span>
         </div>
       </div>
     );
@@ -741,810 +1126,853 @@ export default function AdminPortalPage() {
 
   const managerCount = users.filter((u) => u.is_manager || (u.direct_reports_count && u.direct_reports_count > 0)).length;
   const opsTeamCount = teams.filter((t) => (t.department || "").toLowerCase() === "ops").length;
+  const approverCandidates = users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager"));
+  const coordinatorCandidates = users.filter((u) => u.role === "Coordinator" && u.is_active);
+  const managerCandidates = users.filter((u) => (u.role === "Manager" || u.role === "Admin") && u.is_active);
+
+  const tabs: { key: AdminTabKey; label: string; icon: React.ElementType; count?: number }[] = [
+    { key: "teams", label: "Ops Teams", icon: Layers, count: teams.length },
+    { key: "roles", label: "Roles & Titles", icon: Tag, count: roles.length },
+    { key: "options", label: "Batch Taxonomy", icon: Sliders, count: batchOptions.length },
+    { key: "users", label: "Staff Directory", icon: Users, count: users.length },
+    { key: "fms", label: "FMS External Sync", icon: ArrowRightLeft },
+    { key: "hierarchy", label: "Hierarchy Tree", icon: GitFork, count: hierarchy.length },
+    { key: "mappings", label: "Coordinator Mappings", icon: Link2, count: mappings.length },
+  ];
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div className="flex min-h-screen flex-col bg-background">
       <Navbar />
 
-      <main style={{ width: "100%", padding: "28px 24px", flex: 1, margin: 0, display: "block" }}>
-        {/* Header Title */}
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 16,
-          marginBottom: 24
-        }}>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{
-                background: "#e8f2fb",
-                color: "#0b5cab",
-                padding: "6px 10px",
-                borderRadius: 6,
-                fontSize: "0.75rem",
-                fontWeight: 700,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6
-              }}>
-                <Shield size={14} />
-                ADMINISTRATION & GOVERNANCE
-              </div>
+      <main className="w-full flex-1">
+        <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+          {/* Page header */}
+          <div className="flex flex-col gap-6 border-b border-border/70 pb-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[0.7rem] font-bold uppercase tracking-wider text-primary">
+                <Shield className="h-3.5 w-3.5" />
+                Administration &amp; Governance
+              </span>
+              <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">
+                Enterprise Governance &amp; Taxonomy Center
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                Manage Ops teams, position titles, batch taxonomy options, staff directory, and FMS integrations.
+              </p>
             </div>
-            <h1 style={{
-              fontSize: "1.75rem",
-              fontWeight: 800,
-              fontFamily: "var(--font-display)",
-              color: "var(--text-main)",
-              marginTop: 6
-            }}>
-              Enterprise Governance & Taxonomy Center
-            </h1>
-            <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>
-              Manage Ops teams, position titles, batch taxonomy options, staff directory, and FMS integrations.
-            </p>
-          </div>
-        </div>
 
-        {/* Stats Grid */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 16,
-          marginBottom: 28
-        }}>
-          <div className="glass-panel" style={{ padding: "16px 20px" }}>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Configured Teams
-            </div>
-            <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#0284c7", marginTop: 4 }}>
-              {teams.length}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Delivery • Sales • Finance
+            <div className="flex shrink-0 items-center gap-2">
+              <Button variant="outline" onClick={fetchData} disabled={isLoading}>
+                <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+                <span>{isLoading ? "Refreshing..." : "Refresh"}</span>
+              </Button>
             </div>
           </div>
 
-          <div className="glass-panel" style={{ padding: "16px 20px" }}>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Configured Roles
-            </div>
-            <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#0b5cab", marginTop: 4 }}>
-              {roles.length}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Dynamic position titles
-            </div>
+          {/* Stats */}
+          <div className="grid grid-cols-1 gap-4 py-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <StatCard
+              icon={<Building2 className="h-5 w-5" />}
+              label="Configured Teams"
+              value={teams.length}
+              hint={`${opsTeamCount} in Ops department`}
+              tone="info"
+            />
+            <StatCard
+              icon={<Briefcase className="h-5 w-5" />}
+              label="Configured Roles"
+              value={roles.length}
+              hint="Dynamic position titles"
+              tone="primary"
+            />
+            <StatCard
+              icon={<Users className="h-5 w-5" />}
+              label="Registered Staff"
+              value={users.length}
+              hint="Active employees"
+              tone="violet"
+            />
+            <StatCard
+              icon={<UserCheck className="h-5 w-5" />}
+              label="Managers / Leads"
+              value={managerCount}
+              hint="With direct reports"
+              tone="success"
+            />
+            <StatCard
+              icon={<Network className="h-5 w-5" />}
+              label="Reporting Trees"
+              value={hierarchy.length}
+              hint="Root leadership branches"
+              tone="warning"
+            />
           </div>
 
-          <div className="glass-panel" style={{ padding: "16px 20px" }}>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Registered Staff
-            </div>
-            <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "var(--text-main)", marginTop: 4 }}>
-              {users.length}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Active employees
-            </div>
+          {/* Tab navigation */}
+          <div className="mb-6 overflow-x-auto pb-1 scrollbar-thin">
+            <nav
+              aria-label="Administration sections"
+              className="inline-flex min-w-full items-center gap-1 rounded-xl border border-border bg-card p-1.5 shadow-sm"
+            >
+              {tabs.map((tab) => {
+                const isActive = activeTab === tab.key;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setActiveTab(tab.key)}
+                    aria-current={isActive ? "page" : undefined}
+                    className={cn(
+                      "flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors",
+                      isActive
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span>{tab.label}</span>
+                    {typeof tab.count === "number" && (
+                      <span
+                        className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[0.7rem] font-bold",
+                          isActive ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                        )}
+                      >
+                        {tab.count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
           </div>
 
-          <div className="glass-panel" style={{ padding: "16px 20px" }}>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Managers / Leads
-            </div>
-            <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
-              {managerCount}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              With direct reports
-            </div>
-          </div>
-
-          <div className="glass-panel" style={{ padding: "16px 20px" }}>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-              Reporting Trees
-            </div>
-            <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#9333ea", marginTop: 4 }}>
-              {hierarchy.length}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-              Root leadership branches
-            </div>
-          </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div style={{
-          display: "flex",
-          borderBottom: "1px solid var(--border-subtle)",
-          marginBottom: 24,
-          gap: 8,
-          overflowX: "auto"
-        }}>
-          <button
-            onClick={() => setActiveTab("teams")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "teams" ? "2px solid #0284c7" : "2px solid transparent",
-              color: activeTab === "teams" ? "#0284c7" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <Layers size={18} />
-            <span>Ops Teams</span>
-            <span style={{
-              background: activeTab === "teams" ? "#e0f2fe" : "#f1f5f9",
-              color: activeTab === "teams" ? "#0284c7" : "var(--text-dim)",
-              padding: "2px 8px",
-              borderRadius: 10,
-              fontSize: "0.75rem"
-            }}>
-              {teams.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("roles")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "roles" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "roles" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <Tag size={18} />
-            <span>Organization Roles & Titles</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("options")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "options" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "options" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <Sliders size={18} />
-            <span>Batch Taxonomy & Options</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("users")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "users" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "users" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <Users size={18} />
-            <span>Staff Directory</span>
-            <span style={{
-              background: activeTab === "users" ? "#e8f2fb" : "#f1f5f9",
-              color: activeTab === "users" ? "#0b5cab" : "var(--text-dim)",
-              padding: "2px 8px",
-              borderRadius: 10,
-              fontSize: "0.75rem"
-            }}>
-              {users.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("fms")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "fms" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "fms" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <ArrowRightLeft size={18} />
-            <span>FMS External Sync</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("hierarchy")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "hierarchy" ? "2px solid #0b5cab" : "2px solid transparent",
-              color: activeTab === "hierarchy" ? "#0b5cab" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <GitFork size={18} />
-            <span>Hierarchy Tree</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("mappings")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 18px",
-              borderBottom: activeTab === "mappings" ? "2px solid #7c3aed" : "2px solid transparent",
-              color: activeTab === "mappings" ? "#7c3aed" : "var(--text-muted)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              cursor: "pointer",
-              whiteSpace: "nowrap"
-            }}
-          >
-            <Link2 size={18} />
-            <span>Coordinator Mappings</span>
-            <span style={{
-              background: activeTab === "mappings" ? "#ede9fe" : "#f1f5f9",
-              color: activeTab === "mappings" ? "#7c3aed" : "var(--text-dim)",
-              padding: "2px 8px",
-              borderRadius: 10,
-              fontSize: "0.75rem"
-            }}>
-              {mappings.length}
-            </span>
-          </button>
-        </div>
-
-        {/* TAB 1: OPS TEAMS */}
-        {activeTab === "teams" && (
-          <div className="glass-panel" style={{ padding: "24px" }}>
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 20,
-              flexWrap: "wrap",
-              gap: 12
-            }}>
-              <div>
-                <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Ops Teams Management
-                </h2>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Functional delivery, sales, and finance teams operating within the Operations Department.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setIsCreateTeamOpen(true)}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
+          <div className="space-y-6 pb-10">
+            {/* TAB: OPS TEAMS */}
+            {activeTab === "teams" && (
+              <FullscreenTable
+                panelClassName={PANEL_CLASS}
+                headerStyle={PANEL_HEADER_STYLE}
+                titleStyle={PANEL_TITLE_STYLE}
+                title={
+                  <TablePanelTitle
+                    title="Ops Teams Management"
+                    description="Functional delivery, sales, and finance teams operating within the Operations Department."
+                  />
+                }
+                toolbar={
+                  <TableFilters
+                    search={{
+                      value: teamFilters.search,
+                      onChange: teamFilters.setSearch,
+                      placeholder: "Search teams by name or description...",
+                    }}
+                    selects={[
+                      {
+                        key: "status",
+                        label: "Status",
+                        value: teamFilters.getFilter("status"),
+                        onChange: (value) => teamFilters.setFilter("status", value),
+                        options: teamFilters.optionsFor("status"),
+                        allLabel: "All statuses",
+                      },
+                    ]}
+                    sort={{
+                      options: TEAM_SORT_OPTIONS,
+                      sortKey: teamSort.sortKey,
+                      sortDir: teamSort.sortDir,
+                      onChange: teamSort.applySort,
+                    }}
+                    onClear={teamFilters.clearFilters}
+                    hasActiveFilters={teamFilters.hasActiveFilters}
+                    activeFilterCount={teamFilters.activeFilterCount}
+                  />
+                }
+                actions={
+                  <Button onClick={() => setIsCreateTeamOpen(true)}>
+                    <Plus className="h-4 w-4" />
+                    <span>Create New Team</span>
+                  </Button>
+                }
+                footer={
+                  <PaginationControls
+                    currentPage={teamPage}
+                    totalItems={filteredTeams.length}
+                    pageSize={teamPageSize}
+                    onPageChange={setTeamPage}
+                    onPageSizeChange={(newSize) => {
+                      setTeamPageSize(newSize);
+                      setTeamPage(1);
+                    }}
+                  />
+                }
               >
-                <Plus size={16} />
-                <span>Create New Team</span>
-              </button>
-            </div>
-
-            {/* Teams Table */}
-            <div style={{ overflowX: "auto" }}>
-              <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                    <th style={{ padding: "12px 16px" }}>Team Name</th>
-                    <th style={{ padding: "12px 16px" }}>Description</th>
-                    <th style={{ padding: "12px 16px" }}>Active Members</th>
-                    <th style={{ padding: "12px 16px" }}>Status</th>
-                    <th style={{ padding: "12px 16px" }}>Created At</th>
-                    <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {teams.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: "center", padding: "32px", color: "var(--text-muted)" }}>
-                        No teams created yet. Click <strong>Create New Team</strong> to add operational teams.
-                      </td>
-                    </tr>
-                  ) : (
-                    paginatedTeams.map((t) => (
-                      <tr key={t.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
-                          {t.name}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.825rem", maxWidth: 280 }}>
-                          {t.description || "—"}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{
-                            display: "inline-block",
-                            padding: "2px 8px",
-                            borderRadius: 10,
-                            fontSize: "0.75rem",
-                            fontWeight: 700,
-                            background: (t.member_count || 0) > 0 ? "#f0fdf4" : "#f8fafc",
-                            color: (t.member_count || 0) > 0 ? "#16a34a" : "#94a3b8",
-                            border: (t.member_count || 0) > 0 ? "1px solid #bbf7d0" : "1px solid #e2e8f0"
-                          }}>
-                            {t.member_count || 0} member(s)
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            color: t.is_active ? "#16a34a" : "#94a3b8",
-                            fontSize: "0.8rem",
-                            fontWeight: 600
-                          }}>
-                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: t.is_active ? "#16a34a" : "#94a3b8" }} />
-                            {t.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                          {formatDate(t.created_at)}
-                        </td>
-                        <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <button
-                              onClick={() => handleOpenEditTeam(t)}
-                              style={{
-                                background: "#f1f5f9",
-                                border: "1px solid var(--border-subtle)",
-                                color: "#0b5cab",
-                                cursor: "pointer",
-                                padding: "6px 8px",
-                                borderRadius: 4,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 4,
-                                fontSize: "0.775rem",
-                                fontWeight: 600
-                              }}
-                              title="Edit Team"
-                            >
-                              <Edit2 size={13} />
-                              <span>Edit</span>
-                            </button>
-                            <button
-                              onClick={() => handleDeleteTeam(t.id, t.name)}
-                              style={{
-                                background: "transparent",
-                                border: "1px solid transparent",
-                                color: "#f43f5e",
-                                cursor: "pointer",
-                                padding: "6px",
-                                borderRadius: 4
-                              }}
-                              title="Delete Team"
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-                        </td>
+                {teams.length === 0 ? (
+                  <EmptyState
+                    icon={<Layers className="h-5 w-5" />}
+                    title="No teams created yet"
+                    description="Use “Create New Team” to add your first operational team."
+                  />
+                ) : (
+                  <table className="glass-table w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <SortableHeaderCell
+                          columnKey="name"
+                          label="Team Name"
+                          style={TABLE_TH_STYLE}
+                          sortKey={teamSort.sortKey}
+                          sortDir={teamSort.sortDir}
+                          onSort={teamSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="description"
+                          label="Description"
+                          style={TABLE_TH_STYLE}
+                          sortKey={teamSort.sortKey}
+                          sortDir={teamSort.sortDir}
+                          onSort={teamSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="members"
+                          label="Active Members"
+                          style={TABLE_TH_STYLE}
+                          sortKey={teamSort.sortKey}
+                          sortDir={teamSort.sortDir}
+                          onSort={teamSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="status"
+                          label="Status"
+                          style={TABLE_TH_STYLE}
+                          sortKey={teamSort.sortKey}
+                          sortDir={teamSort.sortDir}
+                          onSort={teamSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="createdAt"
+                          label="Created At"
+                          style={TABLE_TH_STYLE}
+                          sortKey={teamSort.sortKey}
+                          sortDir={teamSort.sortDir}
+                          onSort={teamSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <PlainHeaderCell style={TABLE_TH_RIGHT_STYLE}>Actions</PlainHeaderCell>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {paginatedTeams.map((t) => (
+                        <tr key={t.id} className="border-b border-border/70 last:border-0">
+                          <td className={cn(TD, "font-semibold text-foreground")}>{t.name}</td>
+                          <td className={cn(TD, "max-w-[280px] truncate text-muted-foreground")} title={t.description || ""}>
+                            {t.description || "—"}
+                          </td>
+                          <td className={TD}>
+                            <Badge variant={t.member_count ? "success" : "secondary"}>
+                              {t.member_count || 0} member{t.member_count === 1 ? "" : "s"}
+                            </Badge>
+                          </td>
+                          <td className={TD}><StatusPill active={t.is_active} /></td>
+                          <td className={cn(TD, "whitespace-nowrap text-muted-foreground")}>{formatDate(t.created_at)}</td>
+                          <td className={cn(TD, "text-right")}>
+                            <div className={ROW_ACTIONS}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenEditTeam(t)}
+                                title="Edit Team"
+                                aria-label={`Edit ${t.name}`}
+                                className="h-8 gap-1.5 px-2 text-primary hover:bg-primary/10 hover:text-primary"
+                              >
+                                <Edit2 className="h-3.5 w-3.5" />
+                                <span>Edit</span>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteTeam(t.id, t.name)}
+                                title="Delete Team"
+                                aria-label={`Delete ${t.name}`}
+                                className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </FullscreenTable>
+            )}
 
-              <PaginationControls
-                currentPage={teamPage}
-                totalItems={teams.length}
-                pageSize={teamPageSize}
-                onPageChange={setTeamPage}
-                onPageSizeChange={(newSize) => {
-                  setTeamPageSize(newSize);
-                  setTeamPage(1);
-                }}
-              />
-            </div>
-          </div>
-        )}
+            {/* TAB: ROLES & APPROVAL CONFIG */}
+            {activeTab === "roles" && (
+              <div className="space-y-6">
+                <Panel>
+                  <PanelHeading
+                    title="Batch Approval Configuration"
+                    description="Designate the two approvers every batch passes through before it can be scheduled."
+                  />
 
-        {/* TAB 2: ROLES & APPROVAL CONFIG */}
-        {activeTab === "roles" && (
-          <div className="glass-panel" style={{ padding: "24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div>
-                <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Roles & Position Titles
-                </h2>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Create and manage the official organizational titles recognized in the platform.
-                </p>
-              </div>
+                  <div className="grid grid-cols-1 gap-4 px-5 py-5 sm:px-6 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+                    <FormField label="Approver 1 — Level 1">
+                      <select
+                        value={approver1Id}
+                        onChange={(e) => setApprover1Id(e.target.value)}
+                        className="glass-input"
+                      >
+                        <option value="">Select approver 1</option>
+                        {approverCandidates.map((u) => (
+                          <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>
+                        ))}
+                      </select>
+                    </FormField>
+                    <FormField label="Approver 2 — Level 2">
+                      <select
+                        value={approver2Id}
+                        onChange={(e) => setApprover2Id(e.target.value)}
+                        className="glass-input"
+                      >
+                        <option value="">Select approver 2</option>
+                        {approverCandidates.map((u) => (
+                          <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>
+                        ))}
+                      </select>
+                    </FormField>
+                    <Button
+                      onClick={handleSaveApprovers}
+                      loading={isSavingApprovers}
+                      className="lg:mb-0.5"
+                    >
+                      <span>Save Approvers</span>
+                    </Button>
+                  </div>
+                </Panel>
 
-              <button
-                onClick={() => setIsCreateRoleOpen(true)}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <Plus size={16} />
-                <span>Add Position Title</span>
-              </button>
-            </div>
-
-            <div style={{ border: "1px solid var(--border-subtle)", padding: 16, marginBottom: 24, background: "#f8fafc", borderRadius: 6 }}>
-              <h3 style={{ margin: "0 0 12px", fontSize: "1rem", color: "var(--text-main)" }}>Batch Approval Configuration</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
-                <label style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  Approver 1
-                  <select value={approver1Id} onChange={(e) => setApprover1Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6, width: "100%" }}>
-                    <option value="">Select approver 1</option>
-                    {users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager")).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
-                  </select>
-                </label>
-                <label style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  Approver 2
-                  <select value={approver2Id} onChange={(e) => setApprover2Id(e.target.value)} className="glass-input" style={{ display: "block", marginTop: 6, width: "100%" }}>
-                    <option value="">Select approver 2</option>
-                    {users.filter((u) => u.is_active && (u.role === "Admin" || u.role === "Manager")).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role})</option>)}
-                  </select>
-                </label>
-                <button onClick={handleSaveApprovers} disabled={isSavingApprovers} className="btn btn-primary">
-                  {isSavingApprovers ? "Saving..." : "Save Approvers"}
-                </button>
-              </div>
-            </div>
-
-            <div style={{ overflowX: "auto" }}>
-              <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                    <th style={{ padding: "12px 16px" }}>Position Title / Role Name</th>
-                    <th style={{ padding: "12px 16px" }}>Base System Capability</th>
-                    <th style={{ padding: "12px 16px" }}>Status</th>
-                    <th style={{ padding: "12px 16px" }}>Created At</th>
-                    <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedRoles.map((r) => (
-                    <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                      <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
-                        {r.name}
-                      </td>
-                      <td style={{ padding: "14px 16px" }}>
-                        <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 4, fontSize: "0.75rem", fontWeight: 600, background: "#e8f2fb", color: "#0b5cab" }}>
-                          {r.system_role}
-                        </span>
-                      </td>
-                      <td style={{ padding: "14px 16px" }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: r.is_active ? "#16a34a" : "#94a3b8", fontSize: "0.8rem", fontWeight: 600 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: r.is_active ? "#16a34a" : "#94a3b8" }} />
-                          {r.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td style={{ padding: "14px 16px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                        {formatDate(r.created_at)}
-                      </td>
-                     <td className="px-4 py-3 text-right">
-                       <Button
-                         variant="ghost"
-                         size="sm"
-                         onClick={() => handleDeleteRole(r.id, r.name)}
-                         title="Deactivate Role"
-                         className="h-8 w-8 p-0 text-destructive hover:text-destructive/80 hover:bg-destructive/10"
-                       >
-                         <Trash2 size={16} />
-                       </Button>
-                     </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <PaginationControls
-                currentPage={rolePage}
-                totalItems={roles.length}
-                pageSize={rolePageSize}
-                onPageChange={setRolePage}
-                onPageSizeChange={(newSize) => {
-                  setRolePageSize(newSize);
-                  setRolePage(1);
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: BATCH TAXONOMY & DYNAMIC OPTIONS */}
-        {activeTab === "options" && (
-          <div className="glass-panel" style={{ padding: "24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Batch Taxonomy & Option Management
-                </h2>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Configure predefined categories, delivery modes, accommodations, and legal entities.
-                </p>
-              </div>
-
-              <button
-                onClick={() => setIsCreateOptionOpen(true)}
-                className="btn btn-primary"
-                style={{ display: "flex", alignItems: "center", gap: 6 }}
-              >
-                <Plus size={16} />
-                <span>Add Taxonomy Option</span>
-              </button>
-            </div>
-
-            {/* Sub-tabs for option types */}
-            <div className="flex flex-wrap gap-1 p-1 bg-muted/50 rounded-lg mb-4">
-              {[
-                { key: "categories", label: "Categories" },
-                { key: "delivery-modes", label: "Delivery Modes" },
-                { key: "accommodations", label: "Accommodations" },
-                { key: "entities", label: "Legal Entities" },
-                { key: "faculty-types", label: "Faculty Types" },
-                { key: "verticals", label: "Verticals" },
-              ].map((tab) => (
-                <Button
-                  key={tab.key}
-                  variant={selectedOptionType === tab.key ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => setSelectedOptionType(tab.key as any)}
-                  className={cn(
-                    "text-xs font-semibold transition-all",
-                    selectedOptionType === tab.key
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
+                <FullscreenTable
+                  panelClassName={PANEL_CLASS}
+                  headerStyle={PANEL_HEADER_STYLE}
+                  titleStyle={PANEL_TITLE_STYLE}
+                  title={
+                    <TablePanelTitle
+                      title="Roles & Position Titles"
+                      description="Create and manage the official organizational titles recognized in the platform."
+                    />
+                  }
+                  toolbar={
+                    <TableFilters
+                      search={{
+                        value: roleFilters.search,
+                        onChange: roleFilters.setSearch,
+                        placeholder: "Search position titles...",
+                      }}
+                      selects={[
+                        {
+                          key: "systemRole",
+                          label: "Base System Capability",
+                          value: roleFilters.getFilter("systemRole"),
+                          onChange: (value) => roleFilters.setFilter("systemRole", value),
+                          options: roleFilters.optionsFor("systemRole"),
+                          allLabel: "All capabilities",
+                          width: 175,
+                        },
+                        {
+                          key: "status",
+                          label: "Status",
+                          value: roleFilters.getFilter("status"),
+                          onChange: (value) => roleFilters.setFilter("status", value),
+                          options: roleFilters.optionsFor("status"),
+                          allLabel: "All statuses",
+                        },
+                      ]}
+                      sort={{
+                        options: ROLE_SORT_OPTIONS,
+                        sortKey: roleSort.sortKey,
+                        sortDir: roleSort.sortDir,
+                        onChange: roleSort.applySort,
+                      }}
+                      onClear={roleFilters.clearFilters}
+                      hasActiveFilters={roleFilters.hasActiveFilters}
+                      activeFilterCount={roleFilters.activeFilterCount}
+                    />
+                  }
+                  actions={
+                    <Button onClick={() => setIsCreateRoleOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      <span>Add Position Title</span>
+                    </Button>
+                  }
+                  footer={
+                    <PaginationControls
+                      currentPage={rolePage}
+                      totalItems={filteredRoles.length}
+                      pageSize={rolePageSize}
+                      onPageChange={setRolePage}
+                      onPageSizeChange={(newSize) => {
+                        setRolePageSize(newSize);
+                        setRolePage(1);
+                      }}
+                    />
+                  }
                 >
-                  {tab.label}
-                </Button>
-              ))}
-            </div>
-
-            {isLoadingOptions ? (
-              <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                <RefreshCw className="animate-spin" size={24} color="#0b5cab" style={{ margin: "0 auto 8px" }} />
-                <div>Loading taxonomy options...</div>
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                      <th style={{ padding: "12px 16px" }}>Option Name</th>
-                      <th style={{ padding: "12px 16px" }}>Description</th>
-                      <th style={{ padding: "12px 16px" }}>Status</th>
-                      <th style={{ padding: "12px 16px", textAlign: "right" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedOptions.map((opt) => (
-                      <tr key={opt.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                        <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--text-main)" }}>
-                          {opt.name}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: "var(--text-muted)" }}>
-                          {opt.description || "—"}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{ color: opt.is_active ? "#16a34a" : "#94a3b8", fontWeight: 600, fontSize: "0.8rem" }}>
-                            {opt.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                          <button
-                            onClick={() => handleDeleteOption(opt.id, opt.name)}
-                            style={{ background: "transparent", border: "none", color: "#f43f5e", cursor: "pointer", padding: "6px" }}
-                            title="Deactivate Option"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                <PaginationControls
-                  currentPage={optionPage}
-                  totalItems={batchOptions.length}
-                  pageSize={optionPageSize}
-                  onPageChange={setOptionPage}
-                  onPageSizeChange={(newSize) => {
-                    setOptionPageSize(newSize);
-                    setOptionPage(1);
-                  }}
-                />
+                  {roles.length === 0 ? (
+                    <EmptyState
+                      icon={<Tag className="h-5 w-5" />}
+                      title="No position titles defined"
+                      description="Add a position title to start assigning roles to staff."
+                    />
+                  ) : (
+                    <table className="glass-table w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <SortableHeaderCell
+                            columnKey="name"
+                            label="Position Title / Role Name"
+                            style={TABLE_TH_STYLE}
+                            sortKey={roleSort.sortKey}
+                            sortDir={roleSort.sortDir}
+                            onSort={roleSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="systemRole"
+                            label="Base System Capability"
+                            style={TABLE_TH_STYLE}
+                            sortKey={roleSort.sortKey}
+                            sortDir={roleSort.sortDir}
+                            onSort={roleSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="status"
+                            label="Status"
+                            style={TABLE_TH_STYLE}
+                            sortKey={roleSort.sortKey}
+                            sortDir={roleSort.sortDir}
+                            onSort={roleSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="createdAt"
+                            label="Created At"
+                            style={TABLE_TH_STYLE}
+                            sortKey={roleSort.sortKey}
+                            sortDir={roleSort.sortDir}
+                            onSort={roleSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <PlainHeaderCell style={TABLE_TH_RIGHT_STYLE}>Actions</PlainHeaderCell>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedRoles.map((r) => (
+                          <tr key={r.id} className="border-b border-border/70 last:border-0">
+                            <td className={cn(TD, "font-semibold text-foreground")}>{r.name}</td>
+                            <td className={TD}>
+                              <Badge variant="default" className="normal-case tracking-normal">
+                                {r.system_role}
+                              </Badge>
+                            </td>
+                            <td className={TD}><StatusPill active={r.is_active} /></td>
+                            <td className={cn(TD, "whitespace-nowrap text-muted-foreground")}>{formatDate(r.created_at)}</td>
+                            <td className={cn(TD, "text-right")}>
+                              <div className={ROW_ACTIONS}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteRole(r.id, r.name)}
+                                  title="Deactivate Role"
+                                  aria-label={`Delete ${r.name}`}
+                                  className="ml-auto h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </FullscreenTable>
               </div>
             )}
-          </div>
-        )}
 
-        {/* TAB 4: STAFF DIRECTORY */}
-        {activeTab === "users" && (
-          <div className="glass-panel panel-md">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-foreground">
-                  Organization Staff Directory
-                </h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Provision new employees, assign position titles, assign teams (Ops, etc.), and configure reporting managers.
-                </p>
-              </div>
+            {/* TAB: BATCH TAXONOMY & DYNAMIC OPTIONS */}
+            {activeTab === "options" && (
+              <FullscreenTable
+                panelClassName={PANEL_CLASS}
+                headerStyle={PANEL_HEADER_STYLE}
+                titleStyle={PANEL_TITLE_STYLE}
+                title={
+                  <TablePanelTitle
+                    title="Batch Taxonomy & Option Management"
+                    description="Configure predefined categories, delivery modes, accommodations, and legal entities."
+                  />
+                }
+                toolbar={
+                  <TableFilters
+                    search={{
+                      value: optionFilters.search,
+                      onChange: optionFilters.setSearch,
+                      placeholder: "Search options by name or description...",
+                    }}
+                    selects={[
+                      {
+                        key: "status",
+                        label: "Status",
+                        value: optionFilters.getFilter("status"),
+                        onChange: (value) => optionFilters.setFilter("status", value),
+                        options: optionFilters.optionsFor("status"),
+                        allLabel: "All statuses",
+                      },
+                    ]}
+                    sort={{
+                      options: OPTION_SORT_OPTIONS,
+                      sortKey: optionSort.sortKey,
+                      sortDir: optionSort.sortDir,
+                      onChange: optionSort.applySort,
+                    }}
+                    onClear={optionFilters.clearFilters}
+                    hasActiveFilters={optionFilters.hasActiveFilters}
+                    activeFilterCount={optionFilters.activeFilterCount}
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      <span className="pl-0.5 text-[0.62rem] font-extrabold uppercase tracking-[0.06em] text-muted-foreground">
+                        Option Set
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(Object.keys(OPTION_TYPE_LABELS) as OptionTypeKey[]).map((key) => {
+                          const isActive = selectedOptionType === key;
+                          return (
+                            <Button
+                              key={key}
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedOptionType(key);
+                                setOptionPage(1);
+                              }}
+                              aria-pressed={isActive}
+                              className={cn(
+                                "rounded-full px-3.5 text-xs font-semibold",
+                                isActive
+                                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                              )}
+                            >
+                              {OPTION_TYPE_LABELS[key]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </TableFilters>
+                }
+                actions={
+                  <Button onClick={() => setIsCreateOptionOpen(true)}>
+                    <Plus className="h-4 w-4" />
+                    <span>Add Taxonomy Option</span>
+                  </Button>
+                }
+                footer={
+                  isLoadingOptions || paginatedOptions.length === 0 ? undefined : (
+                    <PaginationControls
+                      currentPage={optionPage}
+                      totalItems={filteredOptions.length}
+                      pageSize={optionPageSize}
+                      onPageChange={setOptionPage}
+                      onPageSizeChange={(newSize) => {
+                        setOptionPageSize(newSize);
+                        setOptionPage(1);
+                      }}
+                    />
+                  )
+                }
+              >
+                {isLoadingOptions ? (
+                  <LoadingState label="Loading taxonomy options..." />
+                ) : paginatedOptions.length === 0 ? (
+                  <EmptyState
+                    icon={<Sliders className="h-5 w-5" />}
+                    title={`No ${OPTION_TYPE_LABELS[selectedOptionType].toLowerCase()} configured`}
+                    description="Add an option so it becomes selectable when a batch is created."
+                  />
+                ) : (
+                  <table className="glass-table w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <SortableHeaderCell
+                          columnKey="name"
+                          label="Option Name"
+                          style={TABLE_TH_STYLE}
+                          sortKey={optionSort.sortKey}
+                          sortDir={optionSort.sortDir}
+                          onSort={optionSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="description"
+                          label="Description"
+                          style={TABLE_TH_STYLE}
+                          sortKey={optionSort.sortKey}
+                          sortDir={optionSort.sortDir}
+                          onSort={optionSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="status"
+                          label="Status"
+                          style={TABLE_TH_STYLE}
+                          sortKey={optionSort.sortKey}
+                          sortDir={optionSort.sortDir}
+                          onSort={optionSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <PlainHeaderCell style={TABLE_TH_RIGHT_STYLE}>Actions</PlainHeaderCell>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedOptions.map((opt) => (
+                        <tr key={opt.id} className="border-b border-border/70 last:border-0">
+                          <td className={cn(TD, "font-semibold text-foreground")}>{opt.name}</td>
+                          <td className={cn(TD, "max-w-[380px] truncate text-muted-foreground")} title={opt.description || ""}>
+                            {opt.description || "—"}
+                          </td>
+                          <td className={TD}><StatusPill active={opt.is_active} /></td>
+                          <td className={cn(TD, "text-right")}>
+                            <div className={ROW_ACTIONS}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteOption(opt.id, opt.name)}
+                                title="Deactivate Option"
+                                aria-label={`Deactivate ${opt.name}`}
+                                className="ml-auto h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </FullscreenTable>
+            )}
 
-                <div className="flex gap-2 flex-wrap items-center">
-                  <div className="relative min-w-64">
-                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" aria-hidden="true" />
-                    <input
-                      type="text"
-                      placeholder="Search staff by name, email, role, team..."
-                      value={userSearch}
-                      onChange={(e) => {
-                        setUserSearch(e.target.value);
+            {/* TAB: STAFF DIRECTORY */}
+            {activeTab === "users" && (
+              <FullscreenTable
+                panelClassName={PANEL_CLASS}
+                headerStyle={PANEL_HEADER_STYLE}
+                titleStyle={PANEL_TITLE_STYLE}
+                title={
+                  <TablePanelTitle
+                    title="Organization Staff Directory"
+                    description="Provision new employees, assign position titles, assign teams (Ops, etc.), and configure reporting managers."
+                  />
+                }
+                toolbar={
+                  <TableFilters
+                    search={{
+                      value: userFilters.search,
+                      onChange: userFilters.setSearch,
+                      placeholder: "Search staff by name, email, role, team...",
+                      width: 256,
+                    }}
+                    selects={[
+                      {
+                        key: "role",
+                        label: "Role",
+                        value: userFilters.getFilter("role"),
+                        onChange: (value) => userFilters.setFilter("role", value),
+                        options: userFilters.optionsFor("role"),
+                        allLabel: "All roles",
+                      },
+                      {
+                        key: "team",
+                        label: "Team",
+                        value: userFilters.getFilter("team"),
+                        onChange: (value) => userFilters.setFilter("team", value),
+                        options: userFilters.optionsFor("team"),
+                        allLabel: "All teams",
+                      },
+                      {
+                        key: "status",
+                        label: "Status",
+                        value: userFilters.getFilter("status"),
+                        onChange: (value) => userFilters.setFilter("status", value),
+                        options: userFilters.optionsFor("status"),
+                        allLabel: "All statuses",
+                      },
+                    ]}
+                    sort={{
+                      options: USER_SORT_OPTIONS,
+                      sortKey: userSort.sortKey,
+                      sortDir: userSort.sortDir,
+                      onChange: userSort.applySort,
+                    }}
+                    onClear={userFilters.clearFilters}
+                    hasActiveFilters={userFilters.hasActiveFilters}
+                    activeFilterCount={userFilters.activeFilterCount}
+                  />
+                }
+                actions={
+                  <>
+                    <Button variant="outline" onClick={() => handleOpenChangePassword(null)}>
+                      <KeyRound className="h-4 w-4 text-amber-600" />
+                      <span>Change User Password</span>
+                    </Button>
+                    <Button onClick={() => setIsCreateUserOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                      <span>Add New User</span>
+                    </Button>
+                  </>
+                }
+                footer={
+                  paginatedUsers.length === 0 ? undefined : (
+                    <PaginationControls
+                      currentPage={userPage}
+                      totalItems={filteredUsers.length}
+                      pageSize={userPageSize}
+                      pageSizeOptions={[10, 25, 50, 100]}
+                      onPageChange={setUserPage}
+                      onPageSizeChange={(newSize) => {
+                        setUserPageSize(newSize);
                         setUserPage(1);
                       }}
-                      className="glass-input pl-10 h-10 text-sm w-full"
                     />
-                  </div>
-
-                  <Button
-                    variant="outline"
-                    onClick={() => handleOpenChangePassword(null)}
-                    className="flex items-center gap-2"
-                  >
-                    <KeyRound size={16} className="text-amber-600" />
-                    <span>Change User Password</span>
-                  </Button>
-
-                  <Button
-                    onClick={() => setIsCreateUserOpen(true)}
-                    className="flex items-center gap-2"
-                  >
-                    <UserPlus size={16} />
-                    <span>Add New User</span>
-                  </Button>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="glass-table w-full border-collapse">
-                  <thead>
-                    <tr className="text-left text-xs text-muted-foreground/70 uppercase font-semibold">
-                      <th className="px-4 py-3">Full Name</th>
-                      <th className="px-4 py-3">Corporate Email</th>
-                      <th className="px-4 py-3">Assigned Role / Title</th>
-                      <th className="px-4 py-3">Assigned Team (Dept)</th>
-                      <th className="px-4 py-3">Reports To (Manager)</th>
-                      <th className="px-4 py-3">Direct Reports</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedUsers.length === 0 ? (
+                  )
+                }
+              >
+                {paginatedUsers.length === 0 ? (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" />}
+                    title="No staff members found"
+                    description={userFilters.search ? `No results match “${userFilters.search}”.` : "Provision your first staff account to get started."}
+                  />
+                ) : (
+                  <table className="glass-table w-full border-collapse">
+                    <thead>
                       <tr>
-                        <td colSpan={8} className="text-center py-9 text-muted-foreground">
-                          No staff members found matching &quot;{userSearch}&quot;.
-                        </td>
+                        <SortableHeaderCell
+                          columnKey="fullName"
+                          label="Full Name"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="email"
+                          label="Corporate Email"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="role"
+                          label="Assigned Role / Title"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="team"
+                          label="Assigned Team (Dept)"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="manager"
+                          label="Reports To (Manager)"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="reports"
+                          label="Direct Reports"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <SortableHeaderCell
+                          columnKey="status"
+                          label="Status"
+                          style={TABLE_TH_STYLE}
+                          sortKey={userSort.sortKey}
+                          sortDir={userSort.sortDir}
+                          onSort={userSort.toggleSort}
+                          activeColor={SORT_ACCENT}
+                        />
+                        <PlainHeaderCell style={TABLE_TH_RIGHT_STYLE}>Actions</PlainHeaderCell>
                       </tr>
-                    ) : (
-                      paginatedUsers.map((u) => (
-                        <tr key={u.id} className="border-b border-border text-sm">
-                          <td className="px-4 py-3 font-semibold text-foreground">
-                            {u.full_name}
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {u.email}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="inline-block px-2 py-1 rounded text-xs font-semibold bg-primary/10 text-primary">
+                    </thead>
+                    <tbody>
+                      {paginatedUsers.map((u) => (
+                        <tr key={u.id} className="border-b border-border/70 last:border-0">
+                          <td className={cn(TD, "whitespace-nowrap font-semibold text-foreground")}>{u.full_name}</td>
+                          <td className={cn(TD, "text-muted-foreground")}>{u.email}</td>
+                          <td className={TD}>
+                            <Badge variant="default" className="normal-case tracking-normal">
                               {u.role_detail?.name || u.role}
-                            </span>
+                            </Badge>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className={TD}>
                             {u.team_detail ? (
-                              <span className="font-semibold text-foreground text-sm">
-                                {u.team_detail.name}
-                              </span>
+                              <span className="font-semibold text-foreground">{u.team_detail.name}</span>
                             ) : (
-                              <span className="text-muted-foreground/60 text-sm">— Unassigned —</span>
+                              <span className="text-muted-foreground/60">— Unassigned —</span>
                             )}
                           </td>
-                          <td className={cn(
-                            "px-4 py-3 text-sm",
-                            u.manager_name ? "text-foreground" : "text-muted-foreground/60"
-                          )}>
+                          <td className={cn(TD, u.manager_name ? "text-foreground" : "text-muted-foreground/60")}>
                             {u.manager_name || "— Top Level —"}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className={TD}>
                             {u.direct_reports_count && u.direct_reports_count > 0 ? (
-                              <Badge variant="success" className="text-xs font-semibold">
-                                {u.direct_reports_count} direct report(s)
+                              <Badge variant="success" className="normal-case tracking-normal">
+                                {u.direct_reports_count} direct report{u.direct_reports_count === 1 ? "" : "s"}
                               </Badge>
                             ) : (
-                              <span className="text-muted-foreground/60 text-sm">0</span>
+                              <span className="text-muted-foreground/60">0</span>
                             )}
                           </td>
-                          <td className="px-4 py-3">
-                            <span className={cn(
-                              "inline-flex items-center gap-1.5 text-xs font-semibold",
-                              u.is_active ? "text-success" : "text-muted-foreground/60"
-                            )}>
-                              <span className={cn(
-                                "w-2 h-2 rounded-full",
-                                u.is_active ? "bg-success" : "bg-muted-foreground/60"
-                              )} />
-                              {u.is_active ? "Active" : "Inactive"}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right whitespace-nowrap">
-                            <div className="flex items-center gap-1 justify-end">
+                          <td className={TD}><StatusPill active={u.is_active} /></td>
+                          <td className={cn(TD, "text-right")}>
+                            <div className={ROW_ACTIONS}>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleOpenChangePassword(u)}
                                 title="Change User Password"
                                 aria-label={`Change password for ${u.full_name}`}
-                                className="h-8 w-8 p-0 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                                className="h-8 w-8 p-0 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
                               >
-                                <KeyRound size={16} />
+                                <KeyRound className="h-4 w-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1552,9 +1980,9 @@ export default function AdminPortalPage() {
                                 onClick={() => handleOpenEditUser(u)}
                                 title="Edit staff member"
                                 aria-label={`Edit ${u.full_name}`}
-                                className="h-8 w-8 p-0 text-primary hover:text-primary-hover hover:bg-primary/10"
+                                className="h-8 w-8 p-0 text-primary hover:bg-primary/10 hover:text-primary"
                               >
-                                <Edit2 size={16} />
+                                <Edit2 className="h-4 w-4" />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1562,886 +1990,786 @@ export default function AdminPortalPage() {
                                 onClick={() => handleDeleteUser(u)}
                                 title="Delete staff member"
                                 aria-label={`Delete ${u.full_name}`}
-                                className="h-8 w-8 p-0 text-destructive hover:text-destructive/80 hover:bg-destructive/10"
+                                className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
                               >
-                                <Trash2 size={16} />
+                                <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
                           </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-
-              <PaginationControls
-                currentPage={userPage}
-                totalItems={filteredUsers.length}
-                pageSize={userPageSize}
-                pageSizeOptions={[10, 25, 50, 100]}
-                onPageChange={setUserPage}
-                onPageSizeChange={(newSize) => {
-                  setUserPageSize(newSize);
-                  setUserPage(1);
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: FMS EXTERNAL SYNC */}
-        {activeTab === "fms" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* Sync trigger panel */}
-            <div className="glass-panel" style={{ padding: "24px" }}>
-              <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                FMS (Faculty Management System) External Integration
-              </h2>
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 16px 0" }}>
-                Dispatch real-time delivery logs, hours updates, and faculty synchronization payloads to enterprise FMS.
-              </p>
-
-              {fmsSyncMsg && (
-                <div style={{
-                  background: fmsSyncMsg.type === "success" ? "#f0fdf4" : "#fef2f2",
-                  border: `1px solid ${fmsSyncMsg.type === "success" ? "#bbf7d0" : "#fecaca"}`,
-                  color: fmsSyncMsg.type === "success" ? "#16a34a" : "#f43f5e",
-                  padding: "10px 14px",
-                  borderRadius: 6,
-                  fontSize: "0.85rem",
-                  marginBottom: 16
-                }}>
-                  {fmsSyncMsg.text}
-                </div>
-              )}
-
-              <form onSubmit={handleDispatchFmsSync} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-                <div style={{ flex: "1 1 240px" }}>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Faculty Identifier / ID *
-                  </label>
-                  <input
-                    type="text"
-                    value={syncFacultyId}
-                    onChange={(e) => setSyncFacultyId(e.target.value)}
-                    placeholder="e.g. FAC-2026-CORE-001"
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                    required
-                  />
-                </div>
-
-                <div style={{ flex: "1 1 200px" }}>
-                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                    Sync Event Type
-                  </label>
-                  <select
-                    value={syncEventType}
-                    onChange={(e) => setSyncEventType(e.target.value)}
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                  >
-                    <option value="HOURS_UPDATE">HOURS_UPDATE</option>
-                    <option value="FACULTY_PROFILE">FACULTY_PROFILE</option>
-                    <option value="GATE_STATUS">GATE_STATUS</option>
-                  </select>
-                </div>
-
-                <Button type="submit" disabled={isSyncingFms} className="btn btn-primary flex items-center gap-2">
-                  <ArrowRightLeft size={16} />
-                  <span>{isSyncingFms ? "Dispatching..." : "Dispatch FMS Sync"}</span>
-                </Button>
-              </form>
-            </div>
-
-            {/* Sync logs table */}
-            <div className="glass-panel panel-md">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-foreground">
-                  Recent FMS Dispatch History ({fmsLogs.length})
-                </h3>
-                <Button variant="secondary" size="sm" onClick={fetchFmsLogs}>
-                  Refresh Logs
-                </Button>
-              </div>
-
-              {isLoadingFms ? (
-                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)" }}>
-                  <RefreshCw className="animate-spin" size={20} color="#0b5cab" style={{ margin: "0 auto 6px" }} />
-                  <div>Loading sync logs...</div>
-                </div>
-              ) : fmsLogs.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                  No FMS sync dispatches recorded yet.
-                </div>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-                    <thead>
-                      <tr style={{ background: "#f8fafc", textAlign: "left" }}>
-                        <th style={{ padding: "10px 14px" }}>Faculty ID</th>
-                        <th style={{ padding: "10px 14px" }}>Event Type</th>
-                        <th style={{ padding: "10px 14px" }}>Status</th>
-                        <th style={{ padding: "10px 14px" }}>Timestamp</th>
-                        <th style={{ padding: "10px 14px" }}>Message</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedFmsLogs.map((log) => (
-                        <tr key={log.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                          <td style={{ padding: "10px 14px", fontWeight: 600 }}>{log.faculty_id}</td>
-                          <td style={{ padding: "10px 14px" }}>{log.event_type}</td>
-                          <td style={{ padding: "10px 14px" }}>
-                            <span style={{
-                              padding: "2px 8px",
-                              borderRadius: 4,
-                              fontSize: "0.75rem",
-                              fontWeight: 700,
-                              background: log.status === "SUCCESS" ? "#f0fdf4" : "#fef2f2",
-                              color: log.status === "SUCCESS" ? "#16a34a" : "#f43f5e"
-                            }}>
-                              {log.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: "10px 14px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                            {formatDateTime(log.timestamp)}
-                          </td>
-                          <td style={{ padding: "10px 14px", color: "var(--text-dim)", fontSize: "0.8rem" }}>
-                            {log.message || "—"}
-                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                )}
+              </FullscreenTable>
+            )}
 
-                  <PaginationControls
-                    currentPage={fmsLogPage}
-                    totalItems={fmsLogs.length}
-                    pageSize={fmsLogPageSize}
-                    onPageChange={setFmsLogPage}
-                    onPageSizeChange={(newSize) => {
-                      setFmsLogPageSize(newSize);
-                      setFmsLogPage(1);
-                    }}
+            {/* TAB: FMS EXTERNAL SYNC */}
+            {activeTab === "fms" && (
+              <div className="space-y-6">
+                <Panel>
+                  <PanelHeading
+                    title="FMS External Integration"
+                    description="Dispatch real-time delivery logs, hours updates, and faculty synchronization payloads to enterprise FMS."
                   />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* TAB 6: HIERARCHY TREE */}
-        {activeTab === "hierarchy" && (
-          <div className="glass-panel" style={{ padding: "24px" }}>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-              Organization Hierarchy & Reporting Tree
-            </h2>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 20px 0" }}>
-              Visual organizational tree showing manager reporting lines and team allocations.
-            </p>
+                  <div className="px-5 py-5 sm:px-6">
+                    {fmsSyncMsg && (
+                      <div
+                        role="status"
+                        className={cn(
+                          "mb-5 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm",
+                          fmsSyncMsg.type === "success"
+                            ? "border-success/25 bg-success-light text-success"
+                            : "border-destructive/25 bg-destructive-light text-destructive"
+                        )}
+                      >
+                        {fmsSyncMsg.type === "success" ? (
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                        ) : (
+                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                        )}
+                        <span>{fmsSyncMsg.text}</span>
+                      </div>
+                    )}
 
-            {hierarchy.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "48px 24px", background: "#f8fafc", borderRadius: 6, color: "var(--text-muted)" }}>
-                <GitFork size={32} style={{ margin: "0 auto 12px auto", color: "var(--text-dim)" }} />
-                <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>No Reporting Hierarchy Configured Yet</div>
+                    <form
+                      onSubmit={handleDispatchFmsSync}
+                      className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[1.5fr_1fr_auto] lg:items-end"
+                    >
+                      <FormField label="Faculty Identifier / ID" required>
+                        <input
+                          type="text"
+                          value={syncFacultyId}
+                          onChange={(e) => setSyncFacultyId(e.target.value)}
+                          placeholder="e.g. FAC-2026-CORE-001"
+                          className="glass-input"
+                          required
+                        />
+                      </FormField>
+                      <FormField label="Sync Event Type">
+                        <select
+                          value={syncEventType}
+                          onChange={(e) => setSyncEventType(e.target.value)}
+                          className="glass-input"
+                        >
+                          <option value="HOURS_UPDATE">HOURS_UPDATE</option>
+                          <option value="FACULTY_PROFILE">FACULTY_PROFILE</option>
+                          <option value="GATE_STATUS">GATE_STATUS</option>
+                        </select>
+                      </FormField>
+                      <Button type="submit" loading={isSyncingFms}>
+                        <ArrowRightLeft className="h-4 w-4" />
+                        <span>Dispatch FMS Sync</span>
+                      </Button>
+                    </form>
+                  </div>
+                </Panel>
+
+                <FullscreenTable
+                  panelClassName={PANEL_CLASS}
+                  headerStyle={PANEL_HEADER_STYLE}
+                  titleStyle={PANEL_TITLE_STYLE}
+                  title={<TablePanelTitle title={`Recent FMS Dispatch History (${fmsLogs.length})`} />}
+                  toolbar={
+                    <TableFilters
+                      search={{
+                        value: fmsFilters.search,
+                        onChange: fmsFilters.setSearch,
+                        placeholder: "Search dispatches by faculty, event, status or message...",
+                      }}
+                      selects={[
+                        {
+                          key: "eventType",
+                          label: "Event Type",
+                          value: fmsFilters.getFilter("eventType"),
+                          onChange: (value) => fmsFilters.setFilter("eventType", value),
+                          options: fmsFilters.optionsFor("eventType"),
+                          allLabel: "All event types",
+                          width: 175,
+                        },
+                        {
+                          key: "status",
+                          label: "Status",
+                          value: fmsFilters.getFilter("status"),
+                          onChange: (value) => fmsFilters.setFilter("status", value),
+                          options: fmsFilters.optionsFor("status"),
+                          allLabel: "All statuses",
+                        },
+                      ]}
+                      sort={{
+                        options: FMS_SORT_OPTIONS,
+                        sortKey: fmsSort.sortKey,
+                        sortDir: fmsSort.sortDir,
+                        onChange: fmsSort.applySort,
+                      }}
+                      onClear={fmsFilters.clearFilters}
+                      hasActiveFilters={fmsFilters.hasActiveFilters}
+                      activeFilterCount={fmsFilters.activeFilterCount}
+                    />
+                  }
+                  actions={
+                    <Button variant="secondary" onClick={fetchFmsLogs} disabled={isLoadingFms}>
+                      <RefreshCw className={cn("h-4 w-4", isLoadingFms && "animate-spin")} />
+                      <span>Refresh Logs</span>
+                    </Button>
+                  }
+                  footer={
+                    isLoadingFms || paginatedFmsLogs.length === 0 ? undefined : (
+                      <PaginationControls
+                        currentPage={fmsLogPage}
+                        totalItems={filteredFmsLogs.length}
+                        pageSize={fmsLogPageSize}
+                        onPageChange={setFmsLogPage}
+                        onPageSizeChange={(newSize) => {
+                          setFmsLogPageSize(newSize);
+                          setFmsLogPage(1);
+                        }}
+                      />
+                    )
+                  }
+                >
+                  {isLoadingFms ? (
+                    <LoadingState label="Loading sync logs..." />
+                  ) : fmsLogs.length === 0 ? (
+                    <EmptyState
+                      icon={<Database className="h-5 w-5" />}
+                      title="No FMS sync dispatches recorded yet"
+                      description="Dispatch a payload above to populate the audit trail."
+                    />
+                  ) : (
+                    <table className="glass-table w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <SortableHeaderCell
+                            columnKey="facultyId"
+                            label="Faculty ID"
+                            style={TABLE_TH_STYLE}
+                            sortKey={fmsSort.sortKey}
+                            sortDir={fmsSort.sortDir}
+                            onSort={fmsSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="eventType"
+                            label="Event Type"
+                            style={TABLE_TH_STYLE}
+                            sortKey={fmsSort.sortKey}
+                            sortDir={fmsSort.sortDir}
+                            onSort={fmsSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="status"
+                            label="Status"
+                            style={TABLE_TH_STYLE}
+                            sortKey={fmsSort.sortKey}
+                            sortDir={fmsSort.sortDir}
+                            onSort={fmsSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="timestamp"
+                            label="Timestamp"
+                            style={TABLE_TH_STYLE}
+                            sortKey={fmsSort.sortKey}
+                            sortDir={fmsSort.sortDir}
+                            onSort={fmsSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="message"
+                            label="Message"
+                            style={TABLE_TH_STYLE}
+                            sortKey={fmsSort.sortKey}
+                            sortDir={fmsSort.sortDir}
+                            onSort={fmsSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedFmsLogs.map((log) => (
+                          <tr key={log.id} className="border-b border-border/70 last:border-0">
+                            <td className={cn(TD, "whitespace-nowrap font-semibold text-foreground")}>{log.faculty_id}</td>
+                            <td className={cn(TD, "font-mono text-xs uppercase text-muted-foreground")}>{log.event_type}</td>
+                            <td className={TD}>
+                              <Badge variant={log.status === "SUCCESS" ? "success" : "destructive"}>
+                                {log.status}
+                              </Badge>
+                            </td>
+                            <td className={cn(TD, "whitespace-nowrap text-muted-foreground")}>{formatDateTime(log.timestamp)}</td>
+                            <td className={cn(TD, "max-w-[320px] truncate text-muted-foreground")} title={log.message || ""}>
+                              {log.message || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </FullscreenTable>
               </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {hierarchy.map((rootNode) => (
-                  <OrgTreeNode key={rootNode.id} node={rootNode} />
-                ))}
+            )}
+
+            {/* TAB: HIERARCHY TREE */}
+            {activeTab === "hierarchy" && (
+              <Panel>
+                <PanelHeading
+                  title="Organization Hierarchy & Reporting Tree"
+                  description="Visual organizational tree showing manager reporting lines and team allocations."
+                />
+
+                {hierarchy.length === 0 ? (
+                  <EmptyState
+                    icon={<GitFork className="h-5 w-5" />}
+                    title="No reporting hierarchy configured yet"
+                    description="Assign a manager to staff members to build the reporting tree."
+                  />
+                ) : (
+                  <div className="space-y-4 px-5 py-5 sm:px-6">
+                    {hierarchy.map((rootNode) => (
+                      <OrgTreeNode key={rootNode.id} node={rootNode} />
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            )}
+
+            {/* TAB: COORDINATOR MAPPINGS */}
+            {activeTab === "mappings" && (
+              <div className="space-y-6">
+                <Panel>
+                  <PanelHeading
+                    title="Assign Coordinator to Manager"
+                    description="A coordinator can be mapped to multiple managers. This allows each manager to see that coordinator's batches in their scope."
+                  />
+
+                  <div className="px-5 py-5 sm:px-6">
+                    {mappingFormError && <ErrorBanner message={mappingFormError} />}
+
+                    <form
+                      onSubmit={handleCreateMapping}
+                      className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end"
+                    >
+                      <FormField label="Coordinator" required>
+                        <select
+                          value={mappingCoordinatorId}
+                          onChange={(e) => setMappingCoordinatorId(e.target.value)}
+                          className="glass-input"
+                          required
+                        >
+                          <option value="">— Select Coordinator —</option>
+                          {coordinatorCandidates.map((u) => (
+                            <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                          ))}
+                        </select>
+                      </FormField>
+                      <FormField label="Manager" required>
+                        <select
+                          value={mappingManagerId}
+                          onChange={(e) => setMappingManagerId(e.target.value)}
+                          className="glass-input"
+                          required
+                        >
+                          <option value="">— Select Manager —</option>
+                          {managerCandidates.map((u) => (
+                            <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                          ))}
+                        </select>
+                      </FormField>
+                      <Button type="submit" loading={isSubmittingMapping}>
+                        <Link2 className="h-4 w-4" />
+                        <span>Assign</span>
+                      </Button>
+                    </form>
+                  </div>
+                </Panel>
+
+                <FullscreenTable
+                  panelClassName={PANEL_CLASS}
+                  headerStyle={PANEL_HEADER_STYLE}
+                  titleStyle={PANEL_TITLE_STYLE}
+                  title={<TablePanelTitle title={`Active Mappings (${mappings.length})`} />}
+                  toolbar={
+                    <TableFilters
+                      search={{
+                        value: mappingFilters.search,
+                        onChange: mappingFilters.setSearch,
+                        placeholder: "Search mappings by coordinator or manager...",
+                      }}
+                      selects={[
+                        {
+                          key: "coordinator",
+                          label: "Coordinator",
+                          value: mappingFilters.getFilter("coordinator"),
+                          onChange: (value) => mappingFilters.setFilter("coordinator", value),
+                          options: mappingFilters.optionsFor("coordinator"),
+                          allLabel: "All coordinators",
+                          width: 180,
+                        },
+                        {
+                          key: "manager",
+                          label: "Manager",
+                          value: mappingFilters.getFilter("manager"),
+                          onChange: (value) => mappingFilters.setFilter("manager", value),
+                          options: mappingFilters.optionsFor("manager"),
+                          allLabel: "All managers",
+                          width: 180,
+                        },
+                      ]}
+                      sort={{
+                        options: MAPPING_SORT_OPTIONS,
+                        sortKey: mappingSort.sortKey,
+                        sortDir: mappingSort.sortDir,
+                        onChange: mappingSort.applySort,
+                      }}
+                      onClear={mappingFilters.clearFilters}
+                      hasActiveFilters={mappingFilters.hasActiveFilters}
+                      activeFilterCount={mappingFilters.activeFilterCount}
+                    />
+                  }
+                  actions={
+                    <Button variant="secondary" onClick={fetchMappings} disabled={isLoadingMappings}>
+                      <RefreshCw className={cn("h-4 w-4", isLoadingMappings && "animate-spin")} />
+                      <span>Refresh</span>
+                    </Button>
+                  }
+                  footer={
+                    isLoadingMappings || paginatedMappings.length === 0 ? undefined : (
+                      <PaginationControls
+                        currentPage={mappingPage}
+                        totalItems={filteredMappings.length}
+                        pageSize={mappingPageSize}
+                        onPageChange={setMappingPage}
+                        onPageSizeChange={(newSize) => {
+                          setMappingPageSize(newSize);
+                          setMappingPage(1);
+                        }}
+                      />
+                    )
+                  }
+                >
+                  {isLoadingMappings ? (
+                    <LoadingState label="Loading mappings..." />
+                  ) : mappings.length === 0 ? (
+                    <EmptyState
+                      icon={<Link2 className="h-5 w-5" />}
+                      title="No coordinator-manager mappings configured yet"
+                      description="Use the form above to add the first mapping."
+                    />
+                  ) : (
+                    <table className="glass-table w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <SortableHeaderCell
+                            columnKey="coordinator"
+                            label="Coordinator"
+                            style={TABLE_TH_STYLE}
+                            sortKey={mappingSort.sortKey}
+                            sortDir={mappingSort.sortDir}
+                            onSort={mappingSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="manager"
+                            label="Mapped Manager"
+                            style={TABLE_TH_STYLE}
+                            sortKey={mappingSort.sortKey}
+                            sortDir={mappingSort.sortDir}
+                            onSort={mappingSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <SortableHeaderCell
+                            columnKey="assignedAt"
+                            label="Assigned On"
+                            style={TABLE_TH_STYLE}
+                            sortKey={mappingSort.sortKey}
+                            sortDir={mappingSort.sortDir}
+                            onSort={mappingSort.toggleSort}
+                            activeColor={SORT_ACCENT}
+                          />
+                          <PlainHeaderCell style={TABLE_TH_RIGHT_STYLE}>Actions</PlainHeaderCell>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedMappings.map((m) => (
+                          <tr key={m.id} className="border-b border-border/70 last:border-0">
+                            <td className={TD}>
+                              <div className="font-semibold text-foreground">{m.coordinator_name || "—"}</div>
+                              <div className="mt-0.5 text-xs text-muted-foreground">{m.coordinator_email || ""}</div>
+                            </td>
+                            <td className={TD}>
+                              <div className="font-semibold text-primary">{m.manager_name || "—"}</div>
+                              <div className="mt-0.5 text-xs text-muted-foreground">{m.manager_email || ""}</div>
+                            </td>
+                            <td className={cn(TD, "whitespace-nowrap text-muted-foreground")}>{formatDate(m.assigned_at)}</td>
+                            <td className={cn(TD, "text-right")}>
+                              <div className={ROW_ACTIONS}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteMapping(m.id, m.coordinator_name || m.coordinator_id)}
+                                  title="Remove mapping"
+                                  aria-label={`Remove mapping for ${m.coordinator_name || m.coordinator_id}`}
+                                  className="ml-auto h-8 gap-1.5 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span>Remove</span>
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </FullscreenTable>
               </div>
             )}
           </div>
-        )}
-
-        {/* TAB: COORDINATOR MAPPINGS */}
-        {activeTab === "mappings" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* Add Mapping Form */}
-            <div className="glass-panel" style={{ padding: "24px" }}>
-              <h2 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                Assign Coordinator to Manager
-              </h2>
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "4px 0 20px 0" }}>
-                A coordinator can be mapped to multiple managers. This allows each manager to see that coordinator's batches in their scope.
-              </p>
-
-              {mappingFormError && (
-                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#f43f5e", padding: "10px 14px", borderRadius: 6, fontSize: "0.85rem", marginBottom: 16 }}>
-                  <AlertCircle size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
-                  {mappingFormError}
-                </div>
-              )}
-
-              <form onSubmit={handleCreateMapping} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <label className="form-label">Coordinator *</label>
-                  <select
-                    value={mappingCoordinatorId}
-                    onChange={(e) => setMappingCoordinatorId(e.target.value)}
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                    required
-                  >
-                    <option value="">— Select Coordinator —</option>
-                    {users.filter(u => u.role === "Coordinator" && u.is_active).map(u => (
-                      <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <label className="form-label">Manager *</label>
-                  <select
-                    value={mappingManagerId}
-                    onChange={(e) => setMappingManagerId(e.target.value)}
-                    className="glass-input"
-                    style={{ width: "100%" }}
-                    required
-                  >
-                    <option value="">— Select Manager —</option>
-                    {users.filter(u => (u.role === "Manager" || u.role === "Admin") && u.is_active).map(u => (
-                      <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
-                    ))}
-                  </select>
-                </div>
-                <Button type="submit" disabled={isSubmittingMapping} className="btn btn-primary h-10 whitespace-nowrap">
-                  <Link2 size={15} />
-                  <span>{isSubmittingMapping ? "Assigning..." : "Assign"}</span>
-                </Button>
-              </form>
-            </div>
-
-            {/* Existing Mappings Table */}
-            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-subtle)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 className="text-lg font-bold text-foreground">
-                  Active Mappings ({mappings.length})
-                </h3>
-                <Button variant="secondary" size="sm" onClick={fetchMappings}>
-                  <RefreshCw size={14} />
-                  <span>Refresh</span>
-                </Button>
-              </div>
-              {isLoadingMappings ? (
-                <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                  <RefreshCw className="animate-spin" size={22} color="#7c3aed" style={{ margin: "0 auto 8px auto" }} />
-                  <div style={{ fontSize: "0.85rem" }}>Loading mappings...</div>
-                </div>
-              ) : mappings.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>
-                  <Link2 size={28} style={{ margin: "0 auto 10px auto", color: "var(--text-dim)" }} />
-                  <div style={{ fontWeight: 600 }}>No coordinator-manager mappings configured yet.</div>
-                  <div style={{ fontSize: "0.8rem", marginTop: 4 }}>Use the form above to add the first mapping.</div>
-                </div>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ background: "#f8fafc", textAlign: "left", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                        <th style={{ padding: "12px 16px" }}>Coordinator</th>
-                        <th style={{ padding: "12px 16px" }}>Mapped Manager</th>
-                        <th style={{ padding: "12px 16px" }}>Assigned On</th>
-                        <th style={{ padding: "12px 16px", textAlign: "right" }}>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedMappings.map((m) => (
-                        <tr key={m.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{m.coordinator_name || "—"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{m.coordinator_email || ""}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 600, color: "#0b5cab" }}>{m.manager_name || "—"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{m.manager_email || ""}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px", color: "var(--text-dim)", fontSize: "0.82rem" }}>
-                            {formatDate(m.assigned_at)}
-                          </td>
-                          <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                            <button
-                              onClick={() => handleDeleteMapping(m.id, m.coordinator_name || m.coordinator_id)}
-                              className="btn"
-                              style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", padding: "5px 10px", fontSize: "0.775rem", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}
-                            >
-                              <Trash2 size={13} />
-                              <span>Remove</span>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  <PaginationControls
-                    currentPage={mappingPage}
-                    totalItems={mappings.length}
-                    pageSize={mappingPageSize}
-                    onPageChange={setMappingPage}
-                    onPageSizeChange={(newSize) => {
-                      setMappingPageSize(newSize);
-                      setMappingPage(1);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
       </main>
 
       {/* Modal: Create Team */}
-      {isCreateTeamOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 80,
-          padding: 16
-        }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
-              Create New Team
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Add a new functional team within the Ops Department.
-            </p>
-
-            {teamFormError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "10px 14px",
-                borderRadius: 6,
-                fontSize: "0.85rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 16
-              }}>
-                <AlertCircle size={16} />
-                <span>{teamFormError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateTeam} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Team Name *
-                </label>
-                <input
-                  type="text"
-                  value={newTeamName}
-                  onChange={(e) => setNewTeamName(e.target.value)}
-                  placeholder="e.g. Core Operations, Delivery Team, Academic Ops"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Description (Optional)
-                </label>
-                <textarea
-                  value={newTeamDescription}
-                  onChange={(e) => setNewTeamDescription(e.target.value)}
-                  placeholder="Brief summary of team responsibilities..."
-                  className="glass-input"
-                  style={{ width: "100%", minHeight: 70, resize: "vertical" }}
-                />
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={() => setIsCreateTeamOpen(false)} className="btn btn-secondary">
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmittingTeam} className="btn btn-primary">
-                  {isSubmittingTeam ? "Creating..." : "Create Team"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AdminDialog
+        open={isCreateTeamOpen}
+        onClose={() => setIsCreateTeamOpen(false)}
+        title="Create New Team"
+        description="Add a new functional team within the Ops Department."
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsCreateTeamOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-team-form" loading={isSubmittingTeam}>
+              Create Team
+            </Button>
+          </>
+        }
+      >
+        <form id="create-team-form" onSubmit={handleCreateTeam} className="space-y-4">
+          {teamFormError && <ErrorBanner message={teamFormError} />}
+          <FormField label="Team Name" required>
+            <input
+              type="text"
+              value={newTeamName}
+              onChange={(e) => setNewTeamName(e.target.value)}
+              placeholder="e.g. Core Operations, Delivery Team, Academic Ops"
+              className="glass-input"
+              required
+            />
+          </FormField>
+          <FormField label="Description (Optional)">
+            <textarea
+              value={newTeamDescription}
+              onChange={(e) => setNewTeamDescription(e.target.value)}
+              placeholder="Brief summary of team responsibilities..."
+              rows={3}
+              className="glass-input resize-y"
+            />
+          </FormField>
+        </form>
+      </AdminDialog>
 
       {/* Modal: Edit Team */}
-      {isEditTeamOpen && editingTeam && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 80,
-          padding: 16
-        }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
-              Edit Team: {editingTeam.name}
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Update team title and description within the Ops Department.
-            </p>
-
-            {editTeamError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "10px 14px",
-                borderRadius: 6,
-                fontSize: "0.85rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 16
-              }}>
-                <AlertCircle size={16} />
-                <span>{editTeamError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleUpdateTeam} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Team Name *
-                </label>
-                <input
-                  type="text"
-                  value={editTeamName}
-                  onChange={(e) => setEditTeamName(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Description (Optional)
-                </label>
-                <textarea
-                  value={editTeamDescription}
-                  onChange={(e) => setEditTeamDescription(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%", minHeight: 70, resize: "vertical" }}
-                />
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={() => setIsEditTeamOpen(false)} className="btn btn-secondary">
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmittingEditTeam} className="btn btn-primary">
-                  {isSubmittingEditTeam ? "Saving..." : "Save Changes"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AdminDialog
+        open={isEditTeamOpen && !!editingTeam}
+        onClose={() => setIsEditTeamOpen(false)}
+        title={`Edit Team: ${editingTeam?.name ?? ""}`}
+        description="Update team title and description within the Ops Department."
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsEditTeamOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="edit-team-form" loading={isSubmittingEditTeam}>
+              Save Changes
+            </Button>
+          </>
+        }
+      >
+        <form id="edit-team-form" onSubmit={handleUpdateTeam} className="space-y-4">
+          {editTeamError && <ErrorBanner message={editTeamError} />}
+          <FormField label="Team Name" required>
+            <input
+              type="text"
+              value={editTeamName}
+              onChange={(e) => setEditTeamName(e.target.value)}
+              className="glass-input"
+              required
+            />
+          </FormField>
+          <FormField label="Description (Optional)">
+            <textarea
+              value={editTeamDescription}
+              onChange={(e) => setEditTeamDescription(e.target.value)}
+              rows={3}
+              className="glass-input resize-y"
+            />
+          </FormField>
+        </form>
+      </AdminDialog>
 
       {/* Modal: Create Role */}
-      {isCreateRoleOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 80,
-          padding: 16
-        }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
-              Add Position Title / Role
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Define a new position title and select its system operational permissions.
-            </p>
-
-            {roleFormError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "10px 14px",
-                borderRadius: 6,
-                fontSize: "0.85rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 16
-              }}>
-                <AlertCircle size={16} />
-                <span>{roleFormError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateRole} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Role / Position Title Name *
-                </label>
-                <input
-                  type="text"
-                  value={newRoleName}
-                  onChange={(e) => setNewRoleName(e.target.value)}
-                  placeholder="e.g. Lead Technical Trainer, Senior Operations Lead"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Base System Permission Level *
-                </label>
-                <select
-                  value={newRoleSystemRole}
-                  onChange={(e) => setNewRoleSystemRole(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                >
-                  <option value="Coordinator">Coordinator (Operations & Schedule Management)</option>
-                  <option value="Manager">Manager (Department / Team Leadership)</option>
-                  <option value="Faculty">Faculty (Trainer / Instructor)</option>
-                  <option value="Sales">Sales (Client & Account Operations)</option>
-                  <option value="Admin">Admin (Full Organization Governance)</option>
-                </select>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={() => setIsCreateRoleOpen(false)} className="btn btn-secondary">
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmittingRole} className="btn btn-primary">
-                  {isSubmittingRole ? "Creating..." : "Create Position Title"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AdminDialog
+        open={isCreateRoleOpen}
+        onClose={() => setIsCreateRoleOpen(false)}
+        title="Add Position Title / Role"
+        description="Define a new position title and select its system operational permissions."
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsCreateRoleOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-role-form" loading={isSubmittingRole}>
+              Create Position Title
+            </Button>
+          </>
+        }
+      >
+        <form id="create-role-form" onSubmit={handleCreateRole} className="space-y-4">
+          {roleFormError && <ErrorBanner message={roleFormError} />}
+          <FormField label="Role / Position Title Name" required>
+            <input
+              type="text"
+              value={newRoleName}
+              onChange={(e) => setNewRoleName(e.target.value)}
+              placeholder="e.g. Lead Technical Trainer, Senior Operations Lead"
+              className="glass-input"
+              required
+            />
+          </FormField>
+          <FormField label="Base System Permission Level" required>
+            <select
+              value={newRoleSystemRole}
+              onChange={(e) => setNewRoleSystemRole(e.target.value)}
+              className="glass-input"
+              required
+            >
+              <option value="Coordinator">Coordinator (Operations &amp; Schedule Management)</option>
+              <option value="Manager">Manager (Department / Team Leadership)</option>
+              <option value="Faculty">Faculty (Trainer / Instructor)</option>
+              <option value="Sales">Sales (Client &amp; Account Operations)</option>
+              <option value="Admin">Admin (Full Organization Governance)</option>
+            </select>
+          </FormField>
+        </form>
+      </AdminDialog>
 
       {/* Modal: Create Taxonomy Option */}
-      {isCreateOptionOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 80,
-          padding: 16
-        }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
-              Add Taxonomy Option
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Add a new value under <strong>{selectedOptionType === "categories" ? "Categories" : selectedOptionType === "delivery-modes" ? "Delivery Modes" : selectedOptionType === "accommodations" ? "Accommodations" : "Legal Entities"}</strong>.
-            </p>
-
-            {optionFormError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "10px 14px",
-                borderRadius: 6,
-                fontSize: "0.85rem",
-                marginBottom: 16
-              }}>
-                {optionFormError}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateOption} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Option Name *
-                </label>
-                <input
-                  type="text"
-                  value={newOptionName}
-                  onChange={(e) => setNewOptionName(e.target.value)}
-                  placeholder="e.g. Masterclass, Hybrid 2.0"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Description (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={newOptionDesc}
-                  onChange={(e) => setNewOptionDesc(e.target.value)}
-                  placeholder="Short description..."
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={() => setIsCreateOptionOpen(false)} className="btn btn-secondary">
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmittingOption} className="btn btn-primary">
-                  {isSubmittingOption ? "Saving..." : "Add Option"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AdminDialog
+        open={isCreateOptionOpen}
+        onClose={() => setIsCreateOptionOpen(false)}
+        title="Add Taxonomy Option"
+        description={`Add a new value under ${OPTION_TYPE_LABELS[selectedOptionType]}.`}
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsCreateOptionOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-option-form" loading={isSubmittingOption}>
+              Add Option
+            </Button>
+          </>
+        }
+      >
+        <form id="create-option-form" onSubmit={handleCreateOption} className="space-y-4">
+          {optionFormError && <ErrorBanner message={optionFormError} />}
+          <FormField label="Option Name" required>
+            <input
+              type="text"
+              value={newOptionName}
+              onChange={(e) => setNewOptionName(e.target.value)}
+              placeholder="e.g. Masterclass, Hybrid 2.0"
+              className="glass-input"
+              required
+            />
+          </FormField>
+          <FormField label="Description (Optional)">
+            <input
+              type="text"
+              value={newOptionDesc}
+              onChange={(e) => setNewOptionDesc(e.target.value)}
+              placeholder="Short description..."
+              className="glass-input"
+            />
+          </FormField>
+        </form>
+      </AdminDialog>
 
       {/* Modal: Create User */}
-      {isCreateUserOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 80,
-          padding: 16
-        }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
-              Provision New User
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Create an employee account, assign their position role, team (Ops, etc.), and reporting manager.
-            </p>
-
-            {userFormError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "10px 14px",
-                borderRadius: 6,
-                fontSize: "0.85rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 16
-              }}>
-                <AlertCircle size={16} />
-                <span>{userFormError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateUser} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Full Name *
-                </label>
-                <input
-                  type="text"
-                  value={newUserFullName}
-                  onChange={(e) => setNewUserFullName(e.target.value)}
-                  placeholder="e.g. Ananya Sharma"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Corporate Email *
-                </label>
-                <input
-                  type="email"
-                  value={newUserEmail}
-                  onChange={(e) => setNewUserEmail(e.target.value)}
-                  placeholder="name@enterprise-ops.com"
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Assigned Position Title / Role *
-                </label>
-                <select
-                  value={newUserRoleId}
-                  onChange={(e) => setNewUserRoleId(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                >
-                  {roles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name} ({r.system_role})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Assigned Team
-                </label>
-                <select
-                  value={newUserTeamId}
-                  onChange={(e) => setNewUserTeamId(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                >
-                  <option value="">— No Team Assigned —</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.825rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                  Reports To (Manager) — Optional
-                </label>
-                <select
-                  value={newUserReportsToId}
-                  onChange={(e) => setNewUserReportsToId(e.target.value)}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                >
-                  <option value="">— No Manager (Top-level Leader / Direct to Admin) —</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.full_name} ({u.role_detail?.name || u.role})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={() => setIsCreateUserOpen(false)} className="btn btn-secondary">
-                  Cancel
-                </button>
-                <button type="submit" disabled={isSubmittingUser} className="btn btn-primary">
-                  {isSubmittingUser ? "Creating..." : "Create User Account"}
-                </button>
-              </div>
-            </form>
+      <AdminDialog
+        open={isCreateUserOpen}
+        onClose={() => setIsCreateUserOpen(false)}
+        title="Provision New User"
+        description="Create an employee account, assign their position role, team (Ops, etc.), and reporting manager."
+        maxWidth="sm:max-w-xl"
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsCreateUserOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-user-form" loading={isSubmittingUser}>
+              Create User Account
+            </Button>
+          </>
+        }
+      >
+        <form id="create-user-form" onSubmit={handleCreateUser} className="space-y-4">
+          {userFormError && <ErrorBanner message={userFormError} />}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Full Name" required>
+              <input
+                type="text"
+                value={newUserFullName}
+                onChange={(e) => setNewUserFullName(e.target.value)}
+                placeholder="e.g. Ananya Sharma"
+                className="glass-input"
+                required
+              />
+            </FormField>
+            <FormField label="Corporate Email" required>
+              <input
+                type="email"
+                value={newUserEmail}
+                onChange={(e) => setNewUserEmail(e.target.value)}
+                placeholder="name@enterprise-ops.com"
+                className="glass-input"
+                required
+              />
+            </FormField>
           </div>
-        </div>
-      )}
+          <FormField label="Assigned Position Title / Role" required>
+            <select
+              value={newUserRoleId}
+              onChange={(e) => setNewUserRoleId(e.target.value)}
+              className="glass-input"
+              required
+            >
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>{r.name} ({r.system_role})</option>
+              ))}
+            </select>
+          </FormField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Assigned Team">
+              <select
+                value={newUserTeamId}
+                onChange={(e) => setNewUserTeamId(e.target.value)}
+                className="glass-input"
+              >
+                <option value="">— No Team Assigned —</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Reports To (Manager)">
+              <select
+                value={newUserReportsToId}
+                onChange={(e) => setNewUserReportsToId(e.target.value)}
+                className="glass-input"
+              >
+                <option value="">— No Manager (Top-level Leader) —</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.full_name} ({u.role_detail?.name || u.role})</option>
+                ))}
+              </select>
+            </FormField>
+          </div>
+        </form>
+      </AdminDialog>
 
       {/* Modal: Edit User */}
-      {isEditUserOpen && editingUser && (
-        <div style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 80,
-          padding: 16
-        }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
-              Edit Staff Member
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 16 }}>
-              Update account details, role, team, reporting manager, or status.
-            </p>
-
-            {editUserFormError && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#f43f5e", padding: "10px 14px", borderRadius: 6, fontSize: "0.85rem", marginBottom: 16 }}>
-                <AlertCircle size={16} style={{ verticalAlign: "middle", marginRight: 8 }} />
-                {editUserFormError}
-              </div>
-            )}
-
-            <form onSubmit={handleUpdateUser} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label className="form-label">Full Name *</label>
-                <input value={editUserFullName} onChange={(e) => setEditUserFullName(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
-              </div>
-              <div>
-                <label className="form-label">Corporate Email *</label>
-                <input type="email" value={editUserEmail} onChange={(e) => setEditUserEmail(e.target.value)} className="glass-input" style={{ width: "100%" }} required />
-              </div>
-              <div>
-                <label className="form-label">Assigned Position Title / Role *</label>
-                <select value={editUserRoleId} onChange={(e) => setEditUserRoleId(e.target.value)} className="glass-input" style={{ width: "100%" }} required>
-                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.system_role})</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="form-label">Assigned Team</label>
-                <select value={editUserTeamId} onChange={(e) => setEditUserTeamId(e.target.value)} className="glass-input" style={{ width: "100%" }}>
-                  <option value="">— No Team Assigned —</option>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="form-label">Reports To (Manager)</label>
-                <select value={editUserReportsToId} onChange={(e) => setEditUserReportsToId(e.target.value)} className="glass-input" style={{ width: "100%" }}>
-                  <option value="">— No Manager —</option>
-                  {users.filter((u) => u.id !== editingUser.id).map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.role_detail?.name || u.role})</option>)}
-                </select>
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.85rem", color: "var(--text-main)" }}>
-                <input type="checkbox" checked={editUserIsActive} onChange={(e) => setEditUserIsActive(e.target.checked)} />
-                Account is active
-              </label>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-                <button type="button" onClick={() => setIsEditUserOpen(false)} className="btn btn-secondary">Cancel</button>
-                <button type="submit" disabled={isSubmittingEditUser} className="btn btn-primary">
-                  {isSubmittingEditUser ? "Saving..." : "Save Changes"}
-                </button>
-              </div>
-            </form>
+      <AdminDialog
+        open={isEditUserOpen && !!editingUser}
+        onClose={() => setIsEditUserOpen(false)}
+        title="Edit Staff Member"
+        description="Update account details, role, team, reporting manager, or status."
+        maxWidth="sm:max-w-xl"
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setIsEditUserOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="edit-user-form" loading={isSubmittingEditUser}>
+              Save Changes
+            </Button>
+          </>
+        }
+      >
+        <form id="edit-user-form" onSubmit={handleUpdateUser} className="space-y-4">
+          {editUserFormError && <ErrorBanner message={editUserFormError} />}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Full Name" required>
+              <input
+                value={editUserFullName}
+                onChange={(e) => setEditUserFullName(e.target.value)}
+                className="glass-input"
+                required
+              />
+            </FormField>
+            <FormField label="Corporate Email" required>
+              <input
+                type="email"
+                value={editUserEmail}
+                onChange={(e) => setEditUserEmail(e.target.value)}
+                className="glass-input"
+                required
+              />
+            </FormField>
           </div>
-        </div>
-      )}
+          <FormField label="Assigned Position Title / Role" required>
+            <select
+              value={editUserRoleId}
+              onChange={(e) => setEditUserRoleId(e.target.value)}
+              className="glass-input"
+              required
+            >
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>{r.name} ({r.system_role})</option>
+              ))}
+            </select>
+          </FormField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Assigned Team">
+              <select
+                value={editUserTeamId}
+                onChange={(e) => setEditUserTeamId(e.target.value)}
+                className="glass-input"
+              >
+                <option value="">— No Team Assigned —</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Reports To (Manager)">
+              <select
+                value={editUserReportsToId}
+                onChange={(e) => setEditUserReportsToId(e.target.value)}
+                className="glass-input"
+              >
+                <option value="">— No Manager —</option>
+                {users
+                  .filter((u) => !editingUser || u.id !== editingUser.id)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>{u.full_name} ({u.role_detail?.name || u.role})</option>
+                  ))}
+              </select>
+            </FormField>
+          </div>
+          <label className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+            <input
+              type="checkbox"
+              checked={editUserIsActive}
+              onChange={(e) => setEditUserIsActive(e.target.checked)}
+              className="h-4 w-4 rounded border-input accent-[hsl(214_88%_27%)]"
+            />
+            Account is active
+          </label>
+        </form>
+      </AdminDialog>
 
       {/* Modal: Change Password for All Users */}
       <ChangePasswordModal
@@ -2459,4 +2787,3 @@ export default function AdminPortalPage() {
     </div>
   );
 }
-

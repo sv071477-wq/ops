@@ -141,3 +141,61 @@ docker compose exec backend python scripts/create_admin.py --email admin@enterpr
 ```
 
 For more details on backend configuration and migrations, see [backend/README.md](file:///d:/projects%20and%20files/ops/backend/README.md).
+
+---
+
+## Frontend Development & Hot Reload
+
+The default stack above is a **production** frontend: `Containerfile` runs `next build` and the container serves a pre-compiled standalone bundle via `node server.js`. That server has no compiler, no file watcher, and no HMR socket, and the compose service mounts no source, so edits to `frontend/` are invisible until the image is rebuilt.
+
+Hot reload requires the Next.js dev server (`next dev`), which enables React Fast Refresh by default. Two supported ways to run it:
+
+### Option A: dev server on the host (recommended)
+
+Fastest and avoids Docker Desktop's bind-mount filesystem layer entirely.
+
+```powershell
+docker compose up -d db backend
+
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. Save any file under `frontend/app` or `frontend/components` and the browser updates in place.
+
+`frontend/.env.development` supplies `NEXT_PUBLIC_API_URL`. Note that Next reads `.env*` from `frontend/`, not the repository root, and that `NEXT_PUBLIC_*` values are inlined at compile time — editing them requires a dev server restart.
+
+### Option B: dev server in Docker
+
+```powershell
+docker compose --profile dev up --build frontend-dev
+```
+
+`frontend/Containerfile.dev` runs `next dev` against the working tree bind-mounted at `/app`. Two details make this reliable rather than merely functional:
+
+* **`node_modules` and `.next` are named volumes.** The host tree is Windows and contains win32-native binaries, which would otherwise shadow the container's Linux dependencies. Keeping `.next` on the container filesystem is also far faster than writing build output through the Docker Desktop mount.
+* **`WATCHPACK_POLLING` defaults to `true`.** Docker Desktop's bind-mount layer does not deliver filesystem events into the container, so without polling the watcher never fires and edits appear to save without taking effect. Next 14 watches through webpack's watchpack rather than chokidar, so this is the only knob required. On a Linux host, or when running the dev server natively, set `FRONTEND_WATCH_POLLING=false` in `.env` to drop the polling CPU cost.
+
+`frontend-dev` shares host port 3000 with the production `frontend` service and lives behind the `dev` profile, so `docker compose up` is unaffected. Start only one of them, or point the dev server elsewhere:
+
+```powershell
+$env:FRONTEND_DEV_PORT = "3001"
+docker compose --profile dev up --build frontend-dev
+```
+
+### Verifying hot reload is actually live
+
+A running dev server logs on every change. If edits save but nothing recompiles, the server is a production build — confirm you are on `next dev`, not `next start`, and that the process logs `ready` rather than serving from `.next/standalone`.
+
+### After changing dependencies
+
+The `frontend_dev_node_modules` volume is seeded from the image the first time it runs and is not refreshed afterwards, so a newly added or updated package stays invisible to the container. Rebuild and reset it:
+
+```powershell
+docker compose --profile dev down -v
+docker compose --profile dev up --build frontend-dev
+```
+
+This also discards the cached `.next` volume, so the first compile after it is slow.
+

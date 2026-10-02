@@ -73,9 +73,42 @@ class FacultyUtilization(Base):
     outcome_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     vertical = Column(String(50), nullable=True)
     program_type_id = Column(Uuid(as_uuid=True), ForeignKey("program_types.id", ondelete="SET NULL"), nullable=True, index=True)
+    faculty_type_id = Column(Uuid(as_uuid=True), ForeignKey("faculty_types.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     batch = relationship("Batch", back_populates="faculty_utilizations")
     training_session = relationship("TrainingSession", foreign_keys=[training_session_id], back_populates="utilizations")
     program_type = relationship("ProgramType", foreign_keys=[program_type_id], lazy="joined")
+    faculty_type = relationship("FacultyType", foreign_keys=[faculty_type_id], lazy="joined")
+
+    @property
+    def faculty_type_name(self) -> str | None:
+        """Display name for the selected faculty type, resolved from the roster."""
+        return self.faculty_type.name if self.faculty_type else None
+
+    # Batch context for the utilization ledger. Client, category, batch code and
+    # coordinator are facts about the batch, not about the delivery, so they are
+    # resolved through the relationship instead of being denormalised onto every
+    # ledger row (which would let them drift out of sync with the batch).
+
+    @property
+    def client(self) -> str | None:
+        return self.batch.client_name if self.batch else None
+
+    @property
+    def category(self) -> str | None:
+        return self.batch.category if self.batch else None
+
+    @property
+    def batch_code(self) -> str | None:
+        return self.batch.batch_id if self.batch else None
+
+    @property
+    def coordinator(self) -> str | None:
+        return self.batch.coordinator.full_name if self.batch and self.batch.coordinator else None
+
+    @property
+    def module_feedback(self) -> str | None:
+        """Per-delivery feedback on the module that was taught."""
+        return self.feedback_notes

@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone, date, time
 from decimal import Decimal
 from typing import Any, Optional, List
 from uuid import UUID
@@ -21,35 +21,16 @@ from app.api.v1.schedules.conflict_engine import ConflictEngine
 from app.api.deps import get_manager_scope_user_ids
 
 
-def _recalculate_batch_feedback(db: Session, batch_id: UUID) -> None:
-    """Recalculate batch average feedback from completed sessions with ratings."""
-    completed = db.query(FacultyUtilization).filter(
-        FacultyUtilization.batch_id == batch_id,
-        FacultyUtilization.feedback_rating.isnot(None),
-        FacultyUtilization.status == "Completed",
-    ).all()
-
-    if completed:
-        total = sum((s.feedback_rating for s in completed), Decimal("0"))
-        avg = round(total / Decimal(str(len(completed))), 2)
-        batch = db.query(Batch).filter(Batch.id == batch_id).first()
-        if batch:
-            batch.batch_avg_feedback = Decimal(str(avg))
-            batch.updated_at = datetime.now(timezone.utc)
-            db.commit()
-
-
 def _check_and_update_batch_completion(db: Session, batch_id: UUID) -> None:
-    """Check if all sessions for a batch are in terminal state and update batch if needed."""
+    """Mark the batch Completed once every session (scheduled + logged) is terminal."""
     sessions = db.query(TrainingSession).filter(TrainingSession.batch_id == batch_id).all()
     util_sessions = db.query(FacultyUtilization).filter(FacultyUtilization.batch_id == batch_id).all()
     all_sessions = list(sessions) + list(util_sessions)
-    
+
     if all_sessions:
         terminal_statuses = {"Completed", "Cancelled", "Not Conducted"}
         all_terminal = all(session.status in terminal_statuses for session in all_sessions)
         if all_terminal:
-            _recalculate_batch_feedback(db, batch_id)
             batch = db.query(Batch).filter(Batch.id == batch_id).first()
             if batch and batch.status not in ["Completed", "Cancelled"]:
                 batch.status = "Completed"
@@ -160,32 +141,58 @@ class SessionService:
         self.db.refresh(session)
         return session
 
-    def _resolve_faculty(self, faculty_id: Optional[UUID], faculty_name: Optional[str]) -> User:
+    def _resolve_faculty(self, faculty_id: Optional[UUID], faculty_name: Optional[str]) -> tuple[Optional[User], str]:
+        """Resolve the faculty user for a ledger row, plus the name to persist.
+
+        `faculty_utilization.faculty_name` is a denormalized free-text column with no
+        foreign key, and the write path prefills it from `training_sessions.trainer_name`
+        (also free text, and editable or imported from Excel). Requiring a matching
+        `users` row therefore rejected every delivery log for a trainer who is not on
+        the roster. Resolution is still preferred, so the stored name is canonical and
+        the conflict engine gets a real `faculty_id`, but an unresolved name now falls
+        back to the value the caller supplied instead of failing the request.
+        """
         if faculty_id:
             faculty = self.db.query(User).filter(User.id == faculty_id, User.is_active.is_(True)).first()
             if faculty:
-                return faculty
+                return faculty, faculty.full_name
 
-        if faculty_name and str(faculty_name).strip():
-            clean_name = str(faculty_name).strip()
-            # Match by full_name case-insensitive with Faculty role
+        clean_name = str(faculty_name).strip() if faculty_name else ""
+        if clean_name:
+            # Prefer a Faculty-role match, then fall back to any active user.
             faculty = self.db.query(User).filter(
                 User.role.ilike("faculty"),
                 User.full_name.ilike(clean_name),
                 User.is_active.is_(True)
             ).first()
             if faculty:
-                return faculty
+                return faculty, faculty.full_name
 
-            # Match by full_name case-insensitive across all active users
             faculty = self.db.query(User).filter(
                 User.full_name.ilike(clean_name),
                 User.is_active.is_(True)
             ).first()
             if faculty:
-                return faculty
+                return faculty, faculty.full_name
 
-        raise HTTPException(status_code=422, detail="Faculty not found. Please provide a valid faculty_id or ensure the faculty user exists in the system.")
+        if not clean_name:
+            raise HTTPException(status_code=422, detail="Faculty name is required to log a utilization record")
+
+        return None, clean_name
+
+    @staticmethod
+    def _validate_time_window(start_time: Optional[time], end_time: Optional[time]) -> None:
+        """Reject inverted or zero-length delivery windows.
+
+        The conflict engine only tests intervals for overlap, so an end time at or
+        before the start time used to persist a nonsensical row and then match it
+        against every other booking that day.
+        """
+        if start_time and end_time and end_time <= start_time:
+            raise HTTPException(
+                status_code=422,
+                detail=f"End time must be after start time (got {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}).",
+            )
 
     def create(self, session_in: SessionCreate, user_id: Optional[UUID] = None) -> FacultyUtilization:
         """Logs a faculty utilization delivery record, optionally linking to a scheduled session day."""
@@ -196,8 +203,10 @@ class SessionService:
             self._require_batch_scope(batch, user_id)
 
         session_dict = session_in.model_dump(exclude_unset=True)
-        faculty = self._resolve_faculty(None, session_dict.get("faculty_name"))
-        session_dict["faculty_name"] = faculty.full_name
+        faculty, faculty_name = self._resolve_faculty(None, session_dict.get("faculty_name"))
+        session_dict["faculty_name"] = faculty_name
+
+        self._validate_time_window(session_in.start_time, session_in.end_time)
 
         # Require outcome_reason when status is Cancelled or Not Conducted
         if session_dict.get("status") in ["Cancelled", "Not Conducted"] and not session_dict.get("outcome_reason"):
@@ -210,7 +219,7 @@ class SessionService:
                 session_dict["outcome_at"] = datetime.now(timezone.utc)
 
         daily_hours = self.db.query(FacultyUtilization).filter(
-            FacultyUtilization.faculty_name.ilike(faculty.full_name),
+            FacultyUtilization.faculty_name.ilike(faculty_name),
             FacultyUtilization.date_of_training >= session_in.date_of_training.replace(hour=0, minute=0, second=0, microsecond=0),
             FacultyUtilization.date_of_training < session_in.date_of_training.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1),
             FacultyUtilization.status.notin_(["Cancelled"]),
@@ -218,13 +227,13 @@ class SessionService:
         existing_hours = sum((row.no_of_hours for row in daily_hours), Decimal("0"))
         conflicts = ConflictEngine.check_session_conflict(
             db=self.db,
-            faculty_name=faculty.full_name,
+            faculty_name=faculty_name,
             date_of_training=session_in.date_of_training,
             requested_hours=session_in.no_of_hours,
             existing_hours=existing_hours,
             start_time=session_in.start_time,
             end_time=session_in.end_time,
-            faculty_id=faculty.id,
+            faculty_id=faculty.id if faculty else None,
         )
         if conflicts:
             raise HTTPException(status_code=409, detail=[conflict.model_dump() for conflict in conflicts])
@@ -232,15 +241,12 @@ class SessionService:
         session = FacultyUtilization(**session_dict)
         self.db.add(session)
 
-        # If linked to a scheduled training session day and status is Completed, mark it Completed and copy feedback
+        # If linked to a scheduled training session day and status is Completed, mark it Completed.
+        # The timetable has no feedback columns; the rating stays on this ledger row.
         if session_in.training_session_id and session_in.status == "Completed":
             sched = self.db.query(TrainingSession).filter(TrainingSession.id == session_in.training_session_id).first()
             if sched:
                 sched.status = "Completed"
-                if session_in.feedback_rating is not None:
-                    sched.feedback_rating = session_in.feedback_rating
-                if session_in.feedback_notes:
-                    sched.feedback_notes = session_in.feedback_notes
 
         self.db.commit()
         self.db.refresh(session)
@@ -263,8 +269,11 @@ class SessionService:
         if batch and batch.status == "Completed":
             raise HTTPException(status_code=409, detail="Completed batches cannot be edited")
         if "faculty_name" in update_dict:
-            faculty = self._resolve_faculty(None, update_dict.get("faculty_name"))
-            update_dict["faculty_name"] = faculty.full_name
+            _faculty, update_dict["faculty_name"] = self._resolve_faculty(None, update_dict.get("faculty_name"))
+        self._validate_time_window(
+            update_dict.get("start_time", session.start_time),
+            update_dict.get("end_time", session.end_time),
+        )
         target_date = update_dict.get("date_of_training", session.date_of_training)
         if batch and batch.start_date and target_date.date() < batch.start_date.date():
             raise HTTPException(status_code=422, detail="Session date is before the batch start date")
@@ -307,15 +316,11 @@ class SessionService:
         self.db.commit()
         self.db.refresh(session)
 
-        # If linked to a scheduled training session day and status changed to Completed, mark it Completed and copy feedback
+        # If linked to a scheduled training session day and status changed to Completed, mark it Completed
         if session.training_session_id and not was_completed and will_be_completed:
             sched = self.db.query(TrainingSession).filter(TrainingSession.id == session.training_session_id).first()
             if sched:
                 sched.status = "Completed"
-                if session.feedback_rating is not None:
-                    sched.feedback_rating = session.feedback_rating
-                if session.feedback_notes:
-                    sched.feedback_notes = session.feedback_notes
                 self.db.commit()
 
         # Check and update batch completion/feedback
@@ -338,13 +343,22 @@ class SessionService:
         session.outcome_at = datetime.now(timezone.utc)
         session.outcome_by = user_id
         session.updated_at = datetime.now(timezone.utc)
+
+        # Sync the linked timetable day so lifecycle checks see the terminal status.
+        if session.training_session_id:
+            sched = self.db.query(TrainingSession).filter(TrainingSession.id == session.training_session_id).first()
+            if sched and sched.status != status:
+                sched.status = status
+                sched.updated_at = datetime.now(timezone.utc)
+
         self.db.commit()
         self.db.refresh(session)
 
-        # Recalculate batch feedback if all sessions are terminal
+        # Mark batch Completed when every (scheduled + logged) session is terminal.
         _check_and_update_batch_completion(self.db, session.batch_id)
-        
-        # Check and update batch completion/feedback using new logic
+
+        # Delegate feedback calculation to the lifecycle service — it only writes
+        # batch_avg_feedback once all non-cancelled sessions are Completed.
         from app.api.v1.batches.lifecycle_service import BatchLifecycleService
         lifecycle_service = BatchLifecycleService(self.db)
         lifecycle_service.check_and_update_batch_feedback(session.batch_id)

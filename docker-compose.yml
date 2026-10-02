@@ -83,9 +83,63 @@ services:
     networks:
       - ops_network
 
+  # Development frontend with hot reload (Fast Refresh).
+  #
+  # The `frontend` service above serves a pre-built standalone bundle and mounts
+  # no source, so it cannot hot reload: there is no compiler, no file watcher,
+  # and no HMR socket, and host edits are invisible until the image is rebuilt.
+  # This service runs `next dev` with the working tree bind-mounted instead.
+  #
+  # It sits behind the `dev` profile so the default `docker compose up` stack
+  # is unchanged. It binds the same host port as `frontend`, so stop that
+  # service first or set FRONTEND_DEV_PORT to a different value.
+  frontend-dev:
+    profiles: ["dev"]
+    build:
+      context: ./frontend
+      dockerfile: Containerfile.dev
+    container_name: ops_frontend_dev
+    restart: unless-stopped
+    command: npm run dev -- --hostname 0.0.0.0
+    ports:
+      - "${FRONTEND_DEV_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      # Docker Desktop's bind-mount layer does not deliver inotify-style
+      # filesystem events into the container, so webpack's watcher needs to poll
+      # to observe host edits. Without this, edits are saved but the page never
+      # updates. Next 14 watches through watchpack (not chokidar), so this is the
+      # only knob that matters. Set FRONTEND_WATCH_POLLING=false for cheaper
+      # watching on Linux hosts or when running the dev server natively.
+      - WATCHPACK_POLLING=${FRONTEND_WATCH_POLLING:-true}
+    volumes:
+      - ./frontend:/app
+      # The host tree is Windows and carries win32-native binaries, so it must
+      # not shadow the container's Linux dependencies.
+      - frontend_dev_node_modules:/app/node_modules
+      # Keep compiled output on the container filesystem. Writing .next through
+      # the Docker Desktop mount is dramatically slower.
+      - frontend_dev_next:/app/.next
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000, '127.0.0.1')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ops_network
+
 
 volumes:
   pgdata:
+    driver: local
+  frontend_dev_node_modules:
+    driver: local
+  frontend_dev_next:
     driver: local
 
 networks:

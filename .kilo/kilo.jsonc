@@ -5,5 +5,6 @@
       "apiKey": "mstrl_xAJC9p5km8gV8wjPB9upZTFPYDDbsDkz_3z6aqr"
     },
     "model": "mistral-embed"
-  }
+  },
+  "snapshot": false
 }

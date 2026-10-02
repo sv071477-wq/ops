@@ -1,0 +1,39 @@
+# Development image for the Next.js frontend.
+#
+# The production Containerfile runs `next build` and ships only the compiled
+# standalone bundle, so it has no compiler, no file watcher and no Fast Refresh
+# endpoint. This image instead runs `next dev` and relies on the working tree
+# being bind-mounted at /app (see the `frontend-dev` service in
+# docker-compose.yml). The mount is what makes hot reload work: edits on the
+# host reach the dev server, webpack's watcher fires, and the browser
+# re-renders without a rebuild.
+#
+# Start it with:  docker compose --profile dev up
+
+FROM docker.io/library/node:20-alpine
+
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+# Never production: `next dev` refuses to start under NODE_ENV=production and
+# Next's dev overlay/Fast Refresh are gated on it.
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Dependencies in their own layer so editing application source does not
+# invalidate the install cache. The lockfile root entry matches package.json,
+# so `npm ci` installs deterministically.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Placeholder contents. At runtime the bind mount replaces all of /app except
+# the node_modules and .next volumes, which keep the container's Linux
+# dependencies and build cache intact.
+COPY . .
+
+EXPOSE 3000
+
+# The npm script supplies `-p 3000`; --hostname 0.0.0.0 is required for the
+# published port to be reachable from outside the container.
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]

@@ -308,6 +308,7 @@ export interface ApprovalConfiguration {
 export interface TrainingSession {
   id: string;
   batch_id: string;
+  training_session_id?: string | null;
   faculty_id?: string | null;
   faculty_name: string;
   date_of_training: string;
@@ -327,15 +328,18 @@ export interface TrainingSession {
   outcome_by?: string | null;
   vertical?: string | null;
   program_type_id?: string | null;
+  faculty_type_id?: string | null;
+  faculty_type_name?: string | null;
   rating?: number | null;
   topic_feedback?: string | null;
   created_at: string;
+  updated_at?: string | null;
   // Batch-related fields for display
   entity?: string | null;
   category?: string | null;
   client?: string | null;
   program?: string | null;
-  batch_id_display?: string | null;
+  batch_code?: string | null;
   coordinator?: string | null;
   module_feedback?: string | null;
 }
@@ -1298,10 +1302,9 @@ class ApiService {
     return this.request<FacultyUtilizationSummary>("/faculty/utilization");
   }
 
-  async exportFacultyUtilization(params?: { faculty_type?: string; domain?: string; start_date?: string; end_date?: string }): Promise<void> {
+  async exportFacultyUtilization(params?: { faculty_type?: string; start_date?: string; end_date?: string }): Promise<void> {
     const query = new URLSearchParams();
     if (params?.faculty_type) query.append("faculty_type", params.faculty_type);
-    if (params?.domain) query.append("domain", params.domain);
     if (params?.start_date) query.append("start_date", params.start_date);
     if (params?.end_date) query.append("end_date", params.end_date);
     const qs = query.toString() ? `?${query.toString()}` : "";

@@ -9,12 +9,45 @@ const positiveInt = z.coerce.number().int().min(0);
 const positiveIntRequired = z.coerce.number().int().min(1, "Must be ≥ 1");
 const emailSchema = z.string().email("Invalid email").optional().nullable();
 
+// ─────────────────────────────────────────────
+// Identifier / reference-code charset
+// Letters, numbers, hyphens, underscores, dots and colons only. Shared so the
+// zod rule and the live input filter in the form can never drift apart.
+// ─────────────────────────────────────────────
+export const CODE_CHARSET_MESSAGE = "Only letters, numbers, hyphens, underscores, dots, colons";
+export const CODE_CHARSET_REGEX = /^[A-Za-z0-9_\-.:]+$/;
+const NON_CODE_CHARS = /[^A-Za-z0-9_\-.:]/g;
+
+/**
+ * Normalizes typed/pasted text into the allowed set, live:
+ *  - leading whitespace is dropped
+ *  - a whitespace run becomes a single underscore, so
+ *    "DLTE_AI Strategist _Sep26_B29" reads as "DLTE_AI_Strategist_Sep26_B29"
+ *  - every other unsupported character is removed
+ *  - underscore runs are collapsed so the above never doubles up
+ * Trailing whitespace is deliberately turned into an underscore rather than
+ * dropped, so a space typed mid-entry still becomes the separator once the
+ * next character arrives. The zod rule and the submit handler trim the
+ * final value.
+ */
+export const normalizeCodeChars = (value: string): string =>
+  value
+    .replace(/^\s+/, "")
+    .replace(/\s+/g, "_")
+    .replace(NON_CODE_CHARS, "")
+    .replace(/_{2,}/g, "_");
+
+/** Trims, then enforces the code charset. */
+export const codeStringSchema = (min: number, max: number, messages?: { min?: string; max?: string }) =>
+  z
+    .string()
+    .trim()
+    .min(min, messages?.min ?? `Must be at least ${min} characters`)
+    .max(max, messages?.max ?? `Must be at most ${max} characters`)
+    .regex(CODE_CHARSET_REGEX, CODE_CHARSET_MESSAGE);
+
 // Batch ID format: CLIENT_TECH_YEAR_BATCHNUM
-const batchIdSchema = z
-  .string()
-  .min(3, "Too short")
-  .max(50, "Too long")
-  .regex(/^[A-Za-z0-9_\-.:]+$/, "Only letters, numbers, hyphens, underscores, dots, colons");
+const batchIdSchema = codeStringSchema(3, 50, { min: "Too short", max: "Too long" });
 
 // Today's date at midnight for validation
 const today = new Date();

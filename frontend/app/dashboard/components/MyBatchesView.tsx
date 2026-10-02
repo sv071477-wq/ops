@@ -1,10 +1,16 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { RefreshCw, Layers, CalendarClock, CalendarX2, Clock } from "lucide-react";
 import { Batch } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
+import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useTableFilters } from "@/hooks/useTableFilters";
+import type { TableFilterField } from "@/hooks/useTableFilters";
+import type { SortAccessors, TableAccessor } from "@/lib/tableUtils";
+import { isBlankTableValue } from "@/lib/tableUtils";
 
 interface MyBatchesViewProps {
   data: Batch[];
@@ -203,32 +209,53 @@ function ErrorRow({ colSpan, message }: { colSpan: number; message: string }) {
   );
 }
 
-function TableHeader({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      style={{
-        padding: "12px 16px",
-        whiteSpace: "nowrap",
-        fontSize: "0.78rem",
-        color: "var(--text-dim)",
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
-        fontWeight: 700,
-      }}
-    >
-      {children}
-    </th>
-  );
-}
+const COLUMN_COUNT = 9;
 
-const thStyle: React.CSSProperties = {
-  background: "#f8fafc",
-  textAlign: "left",
-  fontSize: "0.78rem",
-  color: "var(--text-dim)",
+const BATCH_ACCESSORS: SortAccessors<Batch> = {
+  batchId: (batch) => batch.batch_id ?? "",
+  program: (batch) => batch.program_name ?? "",
+  client: (batch) => batch.client_name ?? "",
+  category: (batch) => batch.category ?? "",
+  deliveryMode: (batch) => batch.delivery_mode ?? "",
+  city: (batch) => batch.location_city ?? "",
+  startDate: (batch) => batch.start_date ?? "",
+  endDate: (batch) => batch.end_date ?? "",
+  status: (batch) => batch.status ?? "",
+  trainingDays: (batch) => batch.training_days ?? 0,
+  schedule: (batch) => batch.scheduled_session_count ?? 0,
 };
 
-const COLUMN_COUNT = 9;
+const DESC_FIRST_KEYS: readonly string[] = ["startDate", "endDate"];
+
+// BatchRow's cells use 14px vertical padding, so the headings must match.
+const BATCH_TH_STYLE: React.CSSProperties = { padding: "14px 16px" };
+
+const BATCH_SEARCH_ACCESSOR: TableAccessor<Batch> = (batch) =>
+  Object.values(BATCH_ACCESSORS)
+    .map((accessor) => accessor(batch))
+    .filter((value) => !isBlankTableValue(value))
+    .join(" ");
+
+const BATCH_FILTER_FIELDS: readonly TableFilterField<Batch>[] = [
+  { key: "status", accessor: BATCH_ACCESSORS.status },
+  { key: "category", accessor: BATCH_ACCESSORS.category },
+  { key: "deliveryMode", accessor: BATCH_ACCESSORS.deliveryMode },
+  { key: "client", accessor: BATCH_ACCESSORS.client },
+];
+
+const BATCH_SORT_OPTIONS: readonly { key: string; label: string }[] = [
+  { key: "batchId", label: "Batch ID" },
+  { key: "program", label: "Program" },
+  { key: "client", label: "Client" },
+  { key: "category", label: "Category" },
+  { key: "deliveryMode", label: "Delivery Mode" },
+  { key: "city", label: "Location" },
+  { key: "startDate", label: "Start Date" },
+  { key: "endDate", label: "End Date" },
+  { key: "status", label: "Status" },
+  { key: "trainingDays", label: "Training Days" },
+  { key: "schedule", label: "Scheduled Sessions" },
+];
 
 function BatchRow({
   batch,
@@ -307,8 +334,29 @@ export function MyBatchesView({
 }: MyBatchesViewProps) {
   const batches = useMemo(() => data ?? [], [data]);
 
+  const { sortKey, sortDir, sortedRows, toggleSort, applySort } = useTableSort(batches, BATCH_ACCESSORS, {
+    descFirstKeys: DESC_FIRST_KEYS,
+  });
+
+  const {
+    search,
+    setSearch,
+    setFilter,
+    getFilter,
+    optionsFor,
+    clearFilters,
+    hasActiveFilters,
+    activeFilterCount,
+    filteredRows,
+    filtersVersion,
+  } = useTableFilters(sortedRows, BATCH_FILTER_FIELDS, BATCH_SEARCH_ACCESSOR);
+
+  useEffect(() => {
+    onPageChange(1);
+  }, [filtersVersion]);
+
   const start = (page - 1) * pageSize;
-  const pagedBatches = useMemo(() => batches.slice(start, start + pageSize), [batches, start, pageSize]);
+  const pagedBatches = useMemo(() => filteredRows.slice(start, start + pageSize), [filteredRows, start, pageSize]);
 
   const unscheduledCount = useMemo(
     () => batches.filter((batch) => (batch.scheduled_session_count ?? 0) === 0).length,
@@ -323,15 +371,7 @@ export function MyBatchesView({
     [batches]
   );
 
-  const headerStyle: React.CSSProperties = {
-    padding: "20px 24px",
-    borderBottom: "1px solid var(--border-subtle)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    flexWrap: "wrap",
-    gap: 12,
-  };
+  const panelHeaderStyle: React.CSSProperties = { padding: "20px 24px" };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, flex: 1 }}>
@@ -403,47 +443,172 @@ export function MyBatchesView({
         />
       </div>
 
-      <div className="glass-panel" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <div style={headerStyle}>
-          <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
+      <FullscreenTable
+        headerStyle={panelHeaderStyle}
+        title={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             Batches Assigned To You
-          </h3>
-          <span
-            style={{
-              background: "#e8f2fb",
-              border: "1px solid #bae6fd",
-              color: "#0b5cab",
-              borderRadius: 999,
-              padding: "4px 10px",
-              fontSize: "0.78rem",
-              fontWeight: 700,
-            }}
-          >
-            {batches.length} batch(es)
+            <span
+              style={{
+                background: "#e8f2fb",
+                border: "1px solid #bae6fd",
+                color: "#0b5cab",
+                borderRadius: 999,
+                padding: "4px 10px",
+                fontSize: "0.78rem",
+                fontWeight: 700,
+              }}
+            >
+              {filteredRows.length} batch(es)
+            </span>
           </span>
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table className="glass-table" style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={thStyle}>
-                <TableHeader>Batch &amp; Program</TableHeader>
-                <TableHeader>Client</TableHeader>
-                <TableHeader>Mode &amp; Location</TableHeader>
-                <TableHeader>Start</TableHeader>
-                <TableHeader>End</TableHeader>
-                <TableHeader>Status</TableHeader>
-                <TableHeader>Training Days</TableHeader>
-                <TableHeader>Schedule</TableHeader>
-                <TableHeader>Action</TableHeader>
-              </tr>
-            </thead>
-            <tbody>
-              {error ? (
-                <ErrorRow colSpan={COLUMN_COUNT} message={error} />
-              ) : isLoading && batches.length === 0 ? (
-                <LoadingRow colSpan={COLUMN_COUNT} label="Loading your batches..." />
-              ) : batches.length === 0 ? (
+        }
+        toolbar={
+          <TableFilters
+            search={{ value: search, onChange: setSearch, placeholder: "Search batches..." }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: getFilter("status"),
+                onChange: (value) => setFilter("status", value),
+                options: optionsFor("status"),
+                allLabel: "All statuses",
+                width: 150,
+              },
+              {
+                key: "category",
+                label: "Category",
+                value: getFilter("category"),
+                onChange: (value) => setFilter("category", value),
+                options: optionsFor("category"),
+                allLabel: "All categories",
+                width: 150,
+              },
+              {
+                key: "deliveryMode",
+                label: "Delivery Mode",
+                value: getFilter("deliveryMode"),
+                onChange: (value) => setFilter("deliveryMode", value),
+                options: optionsFor("deliveryMode"),
+                allLabel: "All delivery modes",
+                width: 160,
+              },
+              {
+                key: "client",
+                label: "Client",
+                value: getFilter("client"),
+                onChange: (value) => setFilter("client", value),
+                options: optionsFor("client"),
+                allLabel: "All clients",
+                width: 170,
+              },
+            ]}
+            sort={{
+              options: BATCH_SORT_OPTIONS,
+              sortKey,
+              sortDir,
+              onChange: applySort,
+            }}
+            onClear={clearFilters}
+            hasActiveFilters={hasActiveFilters}
+            activeFilterCount={activeFilterCount}
+          />
+        }
+        footer={
+          <PaginationControls
+            currentPage={page}
+            totalItems={filteredRows.length}
+            pageSize={pageSize}
+            pageSizeOptions={[10, 25, 50, 100]}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
+        }
+      >
+        <table className="glass-table" style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <SortableHeaderCell
+                columnKey="batchId"
+                label="Batch & Program"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="client"
+                label="Client"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="deliveryMode"
+                label="Mode & Location"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="startDate"
+                label="Start"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="endDate"
+                label="End"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="status"
+                label="Status"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="trainingDays"
+                label="Training Days"
+                style={{ ...BATCH_TH_STYLE, textAlign: "center" }}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <SortableHeaderCell
+                columnKey="schedule"
+                label="Schedule"
+                style={BATCH_TH_STYLE}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+              <PlainHeaderCell style={BATCH_TH_STYLE}>Action</PlainHeaderCell>
+            </tr>
+          </thead>
+          <tbody>
+            {error ? (
+              <ErrorRow colSpan={COLUMN_COUNT} message={error} />
+            ) : isLoading && filteredRows.length === 0 ? (
+              <LoadingRow colSpan={COLUMN_COUNT} label="Loading your batches..." />
+            ) : filteredRows.length === 0 ? (
+              hasActiveFilters ? (
+                <EmptyRow
+                  colSpan={COLUMN_COUNT}
+                  message="No batches match your filters"
+                  hint="Clear the search or filter selections to see all your batches."
+                />
+              ) : (
                 <EmptyRow
                   colSpan={COLUMN_COUNT}
                   message="No batches assigned to you yet"
@@ -465,24 +630,15 @@ export function MyBatchesView({
                     ) : null
                   }
                 />
-              ) : (
-                pagedBatches.map((batch) => (
-                  <BatchRow key={batch.id} batch={batch} onOpenBatchDetail={onOpenBatchDetail} />
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <PaginationControls
-          currentPage={page}
-          totalItems={batches.length}
-          pageSize={pageSize}
-          pageSizeOptions={[10, 25, 50, 100]}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
-      </div>
+              )
+            ) : (
+              pagedBatches.map((batch) => (
+                <BatchRow key={batch.id} batch={batch} onOpenBatchDetail={onOpenBatchDetail} />
+              ))
+            )}
+          </tbody>
+        </table>
+      </FullscreenTable>
     </div>
   );
 }

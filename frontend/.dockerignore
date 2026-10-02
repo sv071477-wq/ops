@@ -1,0 +1,29 @@
+# Docker build context exclusions for the frontend.
+#
+# The sibling .containerignore file is a Podman convention and is ignored by
+# Docker, so without this file `COPY . .` in Containerfile pulled the host's
+# Windows node_modules into the Linux image over the deps installed in the
+# previous stage. That tree contains win32-native binaries
+# (lightningcss-win32-x64-msvc, @swc) which cannot execute on Alpine.
+
+node_modules
+.next
+out
+dist
+build
+
+.git
+.gitignore
+
+coverage
+*.tsbuildinfo
+
+.env*.local
+
+.vscode
+.idea
+.DS_Store
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

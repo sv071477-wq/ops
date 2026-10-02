@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import { api, BatchOption, User } from "@/lib/api";
-import { formatDate } from "@/lib/dateUtils";
+import { formatDate, calendarDaysBetween } from "@/lib/dateUtils";
 import { Info } from "lucide-react";
 import { FormModal } from "@/components/forms/modal/FormModal";
-import { createBatchSchema, type CreateBatchInput } from "@/lib/validation/schemas";
+import { createBatchSchema, normalizeCodeChars, type CreateBatchInput } from "@/lib/validation/schemas";
 import {
   TextField,
   SelectField,
@@ -107,7 +107,8 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
                 label="Batch Identifier / Code"
                 placeholder="DEL_PYSPARK_2026_B1"
                 required
-                helperText="Unique client batch code (e.g. CLIENT_TECH_YEAR_B#)"
+                sanitize={normalizeCodeChars}
+                helperText="Letters, numbers, hyphens, underscores, dots and colons only. Spaces are saved as underscores."
               />
               <TextField
                 name="client_name"
@@ -248,8 +249,12 @@ function ScheduleFields({
 }) {
   const deliveryModeId = form.watch("delivery_mode_id");
   const startDate = form.watch("start_date");
+  const endDate = form.watch("end_date");
   const selectedMode = options.modes?.find((m) => m.id === deliveryModeId);
   const requiresLocation = ["F2F", "Blended"].includes(selectedMode?.name || "");
+
+  const calendarDays = calendarDaysBetween(startDate, endDate);
+  const showCalendarDays = !!startDate && !!endDate;
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -282,6 +287,13 @@ function ScheduleFields({
       />
       <DateField name="start_date" label="Commencement Date" required />
       <DateField name="end_date" label="Conclusion Date" required min={startDate} />
+      {showCalendarDays && (
+        <p className="md:col-span-2 text-sm text-muted-foreground">
+          Calendar days (inclusive of{" "}
+          {startDate ? formatDate(startDate) : "—"} and {endDate ? formatDate(endDate) : "—"}):{" "}
+          <strong className="text-foreground">{calendarDays}</strong>
+        </p>
+      )}
       <NumberField
         name="training_days"
         label="Active Training Days"
@@ -311,15 +323,7 @@ function PreFlightSummary({
   const data = form.watch();
   const deliveryMode = options.modes?.find((m) => m.id === data.delivery_mode_id)?.name || "Online";
   const requiresLocation = ["F2F", "Blended"].includes(deliveryMode);
-  const calendarDays =
-    data.start_date && data.end_date
-      ? Math.max(
-          0,
-          Math.round(
-            (new Date(data.end_date).getTime() - new Date(data.start_date).getTime()) / 86400000
-          )
-        )
-      : 0;
+  const calendarDays = calendarDaysBetween(data.start_date, data.end_date);
 
   const facultyMembers: Array<{ name?: string }> = Array.isArray(data.faculty_members)
     ? data.faculty_members
