@@ -24,7 +24,8 @@ from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportRespo
 from app.api.deps import (
     get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 )
-from app.api.deps_services import get_batch_service
+from app.api.deps_services import get_batch_service, get_batch_lifecycle_service
+from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.batches.service import BatchService
 from app.api.v1.notifications.service import NotificationService
 from app.core.database import get_db
@@ -249,7 +250,6 @@ def update_batch_lifecycle_status(
 async def close_batch_gate2(
     id: UUID,
     closure_in: BatchNpsClosureCreate,
-    db: Session = Depends(get_db),
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
@@ -300,42 +300,21 @@ def export_finance_csv(
     end_date: Optional[str] = Query(None),
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above),
-    db: Session = Depends(get_db)
 ) -> Response:
     """Export finance review data as CSV."""
-    from app.api.deps import get_manager_scope_user_ids
     import csv
     from io import StringIO
     from fastapi.responses import StreamingResponse
-    
-    # Build query similar to list endpoint
-    query = db.query(Batch)
-    user_role_lower = (current_user.role or "").lower()
-    team_name_lower = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
-    
-    if user_role_lower != "admin" and team_name_lower != "finance":
-        team_user_ids = get_manager_scope_user_ids(current_user, db)
-        query = query.filter(or_(
-            Batch.primary_manager_id == current_user.id,
-            Batch.coordinator_id.in_(team_user_ids),
-            ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
-            ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
-        ))
-    
-    if status_filter:
-        query = query.filter(Batch.status == status_filter)
-    if finance_status:
-        query = query.filter(Batch.finance_status == finance_status)
-    if domain:
-        query = query.filter(Batch.domain == domain)
-    if delivery_mode:
-        query = query.filter(Batch.delivery_mode == delivery_mode)
-    if start_date:
-        query = query.filter(Batch.start_date >= start_date)
-    if end_date:
-        query = query.filter(Batch.start_date <= end_date)
-    
-    batches = query.order_by(Batch.created_at.desc()).all()
+
+    batches = service.export_finance_batches(
+        current_user=current_user,
+        status_filter=status_filter,
+        finance_status=finance_status,
+        domain=domain,
+        delivery_mode=delivery_mode,
+        start_date=start_date,
+        end_date=end_date,
+    )
     
     # Generate CSV
     output = StringIO()
@@ -384,13 +363,12 @@ def export_finance_csv(
 def sync_batch_status(
     id: UUID,
     service: BatchService = Depends(get_batch_service),
+    lifecycle_service: BatchLifecycleService = Depends(get_batch_lifecycle_service),
     current_user: User = Depends(require_admin),
 ) -> Any:
     """Manually trigger batch lifecycle status synchronization (admin only)."""
-    from app.api.v1.batches.lifecycle_service import BatchLifecycleService
-    lifecycle_service = BatchLifecycleService(service.db)
-    result = lifecycle_service.sync_all()
-    
+    lifecycle_service.sync_all()
+
     # Return the batch after sync
     batch = service.get(id, current_user)
     return batch

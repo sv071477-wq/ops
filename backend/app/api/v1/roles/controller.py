@@ -7,13 +7,19 @@ from app.core.database import get_db
 from app.models.user import User
 from app.schemas.user import RoleCreate, RoleUpdate, RoleResponse
 from app.api.deps import get_current_user, require_admin
+from app.api.v1.roles.repository import RoleRepository
+from app.api.v1.roles.repository_interfaces import IRoleRepository
 from app.api.v1.roles.service import RoleService
 
 router = APIRouter()
 
 
-def get_role_service(db: Session = Depends(get_db)) -> RoleService:
-    return RoleService(db)
+def get_role_repository(db: Session = Depends(get_db)) -> IRoleRepository:
+    return RoleRepository(db)
+
+
+def get_role_service(role_repo: IRoleRepository = Depends(get_role_repository)) -> RoleService:
+    return RoleService(role_repo)
 
 
 @router.get("", response_model=List[RoleResponse])

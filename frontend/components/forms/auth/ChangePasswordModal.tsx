@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, User } from "@/lib/api";
 import { Eye, EyeOff, Sparkles, CheckCircle2, AlertCircle, X, KeyRound } from "lucide-react";
 import { FormModal } from "@/components/forms/modal/FormModal";
@@ -29,7 +29,16 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
   const [showConfirm, setShowConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  const isAdminMode = !!selectedUser || !!targetUser;
+  // Re-seed the picker every time the modal opens. Without this the selection
+  // from the first open leaked into later opens, so a row-level password reset
+  // could be applied to whichever user happened to be selected before.
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelectedUser(targetUser ?? (allUsers && allUsers.length > 0 ? allUsers[0] : null));
+  }, [isOpen, targetUser?.id]);
+
+  const isAdminMode = !!targetUser || !!allUsers;
+  const activeUser = targetUser ?? selectedUser;
 
   const handleGeneratePassword = () => {
     const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
@@ -49,7 +58,6 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
     setIsLoading(true);
     try {
       if (isAdminMode) {
-        const activeUser = selectedUser || targetUser;
         if (!activeUser) {
           throw new Error("Please select a target user.");
         }
@@ -88,8 +96,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
       size="md"
       render={(form) => (
         <>
-          {/* User Selection in Admin Mode */}
-          {isAdminMode && allUsers && allUsers.length > 1 && (
+          {/* User selection only applies when no specific user was targeted. */}
+          {isAdminMode && !targetUser && allUsers && allUsers.length > 0 && (
             <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
               <label className="block text-xs font-semibold text-muted-foreground uppercase mb-2">Select Staff Member</label>
               <select

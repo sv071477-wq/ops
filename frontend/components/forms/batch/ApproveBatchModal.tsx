@@ -1,16 +1,194 @@
 "use client";
 
 import React, { useState } from "react";
-import { Controller } from "react-hook-form";
+import { Controller, useFormContext } from "react-hook-form";
 import { api, Batch } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
-import { X, Lock, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
+import { Lock, CheckCircle2, AlertCircle, XCircle, type LucideIcon } from "lucide-react";
 import { FormModal } from "@/components/forms/modal/FormModal";
 import { approveBatchSchema, type ApproveBatchInput } from "@/lib/validation/schemas";
 import { TextField } from "@/components/forms/fields";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/statusBadge";
+import { errorMessage } from "@/lib/notify";
 import { cn } from "@/lib/utils";
+
+type Decision = "approve" | "reject";
+
+interface DecisionOption {
+  value: Decision;
+  label: string;
+  icon: LucideIcon;
+  /** Tokens only: `--color-success*` / `--color-destructive*`, never a raw palette colour. */
+  selected: string;
+}
+
+/**
+ * Label/value grid shared by the batch summary and the approver status block.
+ * `sm:grid-cols-2` rather than a fixed `grid-cols-2`, so the modal is usable at
+ * the narrow widths the dialog shell allows on tablets.
+ */
+function DetailGrid({
+  items,
+  className,
+}: {
+  items: Array<[string, React.ReactNode]>;
+  className?: string;
+}) {
+  return (
+    <div className={cn("grid grid-cols-1 gap-3 rounded-lg border bg-background p-4 sm:grid-cols-2", className)}>
+      {items.map(([label, value]) => (
+        <div key={label} className="space-y-0.5">
+          <p className="text-xs text-muted-foreground uppercase font-semibold">{label}</p>
+          <p className="text-sm font-medium">{value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The approval decision is a mutually exclusive choice, so it is a real radio
+ * group: one roving-tabindex group, `role="radio"` + `aria-checked` per option,
+ * and APG keyboard support (arrows/Home/End move and select, Enter/Space select
+ * the focused option). Rendering it as two submit-adjacent buttons made it
+ * unreachable for keyboard users and duplicated the same RHF rule twice.
+ */
+function DecisionRadioGroup({ level }: { level: number }) {
+  const { control, formState } = useFormContext();
+  const groupId = React.useId();
+  const optionRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
+
+  const options: DecisionOption[] = [
+    {
+      value: "approve",
+      label: `Approve Level ${level}`,
+      icon: CheckCircle2,
+      selected:
+        "border-2 border-success bg-success-light text-success hover:bg-success-light hover:text-success",
+    },
+    {
+      value: "reject",
+      label: `Reject Level ${level}`,
+      icon: XCircle,
+      selected:
+        "border-2 border-destructive bg-destructive-light text-destructive hover:bg-destructive-light hover:text-destructive",
+    },
+  ];
+
+  return (
+    <Controller
+      name="decision"
+      control={control}
+      rules={{ required: "Decision is required" }}
+      render={({ field }) => {
+        const selectedIndex = Math.max(
+          0,
+          options.findIndex((option) => option.value === field.value)
+        );
+        const selected = options[selectedIndex];
+        const errorId = `${groupId}-error`;
+        const errorMessageText = formState.errors["decision"]?.message as string | undefined;
+
+        const select = (index: number) => {
+          const option = options[index];
+          if (!option) return;
+          field.onChange(option.value);
+          optionRefs.current[index]?.focus();
+        };
+
+        const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+          const last = options.length - 1;
+          switch (event.key) {
+            case "ArrowRight":
+            case "ArrowDown":
+              event.preventDefault();
+              select(index === last ? 0 : index + 1);
+              break;
+            case "ArrowLeft":
+            case "ArrowUp":
+              event.preventDefault();
+              select(index === 0 ? last : index - 1);
+              break;
+            case "Home":
+              event.preventDefault();
+              select(0);
+              break;
+            case "End":
+              event.preventDefault();
+              select(last);
+              break;
+            case "Enter":
+            case " ":
+              // `role="radio"` is not a native control, so activation is
+              // implemented here rather than left to the button default, which
+              // would submit the form through the footer button instead.
+              event.preventDefault();
+              select(index);
+              break;
+          }
+        };
+
+        return (
+          <div className="space-y-2">
+            <label
+              id={`${groupId}-label`}
+              htmlFor={`${groupId}-${selected.value}`}
+              className="block text-sm font-medium text-foreground"
+            >
+              Authorization Decision
+              <span className="ml-0.5 text-destructive" aria-hidden="true">*</span>
+            </label>
+            <div
+              id={groupId}
+              role="radiogroup"
+              aria-labelledby={`${groupId}-label`}
+              aria-required="true"
+              aria-invalid={errorMessageText ? "true" : undefined}
+              aria-describedby={errorMessageText ? errorId : undefined}
+              className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+            >
+              {options.map((option, index) => {
+                const OptionIcon = option.icon;
+                const isSelected = option.value === field.value;
+                return (
+                  <Button
+                    key={option.value}
+                    id={`${groupId}-${option.value}`}
+                    ref={(element) => {
+                      optionRefs.current[index] = element;
+                    }}
+                    variant="outline"
+                    role="radio"
+                    aria-checked={isSelected}
+                    tabIndex={isSelected ? 0 : -1}
+                    onClick={() => select(index)}
+                    onKeyDown={(event) => handleKeyDown(event, index)}
+                    className={cn(
+                      "h-auto gap-2 rounded-lg p-3 text-sm font-semibold",
+                      isSelected
+                        ? option.selected
+                        : "border-border bg-card hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    <OptionIcon className="h-4 w-4" aria-hidden="true" />
+                    <span>{option.label}</span>
+                  </Button>
+                );
+              })}
+            </div>
+            {errorMessageText && (
+              <p id={errorId} className="text-sm text-destructive flex items-center gap-1" role="alert">
+                <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                {errorMessageText}
+              </p>
+            )}
+          </div>
+        );
+      }}
+    />
+  );
+}
 
 interface ApproveBatchModalProps {
   batch: Batch | null;
@@ -29,6 +207,10 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
 }) => {
   const [isLoading, setIsLoading] = useState(false);
 
+  // `FormModal` returns `null` when closed, which discards its `useForm` state
+  // anyway; keeping this subtree mounted across opens would retain the previous
+  // decision and reject reason because `initialData` only seeds `defaultValues`
+  // on mount. Unmounting is the correct behaviour for this flow.
   if (!isOpen || !batch || !canApprove) return null;
 
   const currentLevel = batch.approver_1_status === "Approved" ? 2 : 1;
@@ -43,19 +225,13 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
       }
       onBatchApproved();
       onClose();
-    } catch (err: any) {
-      throw new Error(err.message || "Failed to process approval decision");
+    } catch (err) {
+      // Rethrown untouched so `FormModal` can prefer `err.detail` over
+      // `err.message`; only a non-`Error` rejection needs a wrapper.
+      throw err instanceof Error ? err : new Error(errorMessage(err, "Failed to process approval decision"));
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const s = (status || "").toLowerCase();
-    if (s === "approved") return <Badge variant="success">Approved</Badge>;
-    if (s === "pending") return <Badge variant="warning">Pending</Badge>;
-    if (s === "rejected") return <Badge variant="destructive">Rejected</Badge>;
-    return <Badge variant="secondary">{status}</Badge>;
   };
 
   return (
@@ -71,14 +247,14 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
       initialData={{ decision: "approve" }}
       render={(form) => {
         const decision = form.watch("decision");
-        
+
         return (
           <>
             {/* Batch Summary */}
             <div className="space-y-4 mb-4 p-4 bg-muted/50 rounded-lg border">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <Lock className="h-5 w-5" />
+                  <Lock className="h-5 w-5" aria-hidden="true" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Target Batch</p>
@@ -91,8 +267,9 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
             </div>
 
             {/* Batch Details Grid */}
-            <div className="grid grid-cols-2 gap-3 mb-4 p-4 border rounded-lg bg-background">
-              {[
+            <DetailGrid
+              className="mb-4"
+              items={[
                 ["Program", batch.program_name],
                 ["Client", batch.client_name || "Enterprise Client"],
                 ["Technology", batch.technology || "Not specified"],
@@ -108,86 +285,40 @@ export const ApproveBatchModal: React.FC<ApproveBatchModalProps> = ({
                 ["Sales SPOC", batch.sales_spoc?.full_name || "Not assigned"],
                 ["Manager SPOC", batch.primary_manager?.full_name || "Not assigned"],
                 ["Coordinator", batch.coordinator?.full_name || "Not assigned"],
-                ["Batch status", batch.status],
-              ].map(([label, value]) => (
-                <div key={label} className="space-y-0.5">
-                  <p className="text-xs text-muted-foreground uppercase font-semibold">{label}</p>
-                  <p className="text-sm font-medium">{value}</p>
-                </div>
-              ))}
-            </div>
+                ["Batch status", <StatusBadge key="batch-status" status={batch.status} />],
+              ]}
+            />
 
             {/* Approver Status */}
-            <div className="grid grid-cols-2 gap-3 mb-4 p-4 border rounded-lg bg-background">
-              <div>
-                <p className="text-xs text-muted-foreground uppercase font-semibold">Approver 1 Status</p>
-                <p className="text-sm font-medium">{getStatusBadge(batch.approver_1_status || "Pending")}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground uppercase font-semibold">Approver 2 Status</p>
-                <p className="text-sm font-medium">{getStatusBadge(batch.approver_2_status || "Pending")}</p>
-              </div>
-            </div>
+            <DetailGrid
+              className="mb-4"
+              items={[
+                [
+                  "Approver 1 Status",
+                  <StatusBadge key="approver-1" status={batch.approver_1_status} emptyLabel="Pending" />,
+                ],
+                [
+                  "Approver 2 Status",
+                  <StatusBadge key="approver-2" status={batch.approver_2_status} emptyLabel="Pending" />,
+                ],
+              ]}
+            />
 
             {/* Decision Selection */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-muted-foreground">Authorization Decision *</label>
-              <div className="grid grid-cols-2 gap-3">
-                <Controller
-                  name="decision"
-                  control={form.control}
-                  rules={{ required: "Decision is required" }}
-                  render={({ field }) => (
-                    <button
-                      type="button"
-                      onClick={() => field.onChange("approve")}
-                      className={cn(
-                        "flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-sm transition-all",
-                        field.value === "approve"
-                          ? "border-2 border-green-500 bg-green-50 text-green-700"
-                          : "border border-input bg-background hover:bg-accent"
-                      )}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span>Approve Level {currentLevel}</span>
-                    </button>
-                  )}
-                />
-                <Controller
-                  name="decision"
-                  control={form.control}
-                  rules={{ required: "Decision is required" }}
-                  render={({ field }) => (
-                    <button
-                      type="button"
-                      onClick={() => field.onChange("reject")}
-                      className={cn(
-                        "flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-sm transition-all",
-                        field.value === "reject"
-                          ? "border-2 border-destructive bg-destructive/10 text-destructive"
-                          : "border border-input bg-background hover:bg-accent"
-                      )}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      <span>Reject Level {currentLevel}</span>
-                    </button>
-                  )}
-                />
-              </div>
-            </div>
+            <DecisionRadioGroup level={currentLevel} />
 
             {/* Reject Reason */}
             {decision === "reject" && (
-              <div className="space-y-2">
-                <TextField
-                  name="reject_reason"
-                  label="Reason for Rejection *"
-                  placeholder="Explain the reason for rejection..."
-                  type="text"
-                  required
-                  helperText="Minimum 3 characters required"
-                />
-              </div>
+                <div className="space-y-2 mt-4">
+                  <TextField
+                    name="reject_reason"
+                    label="Reason for Rejection *"
+                    placeholder="Explain the reason for rejection..."
+                    type="text"
+                    required
+                    helperText="Minimum 3 characters required"
+                  />
+                </div>
             )}
           </>
         );

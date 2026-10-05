@@ -1,12 +1,13 @@
 from decimal import Decimal
 from datetime import datetime, timezone
 from app.api.v1.schedules.conflict_engine import ConflictEngine
+from app.api.v1.sessions.repository import SessionRepository
 
 
 def test_conflict_engine_detects_daily_overload(db_session):
     # Existing session on 2026-10-15 is 8 hours, attempting to add 4 more hours
     conflicts = ConflictEngine.check_session_conflict(
-        db=db_session,
+        session_repo=SessionRepository(db_session),
         faculty_name="Dr. Jane Smith",
         date_of_training=datetime(2026, 10, 15, 14, 0, 0, tzinfo=timezone.utc),
         requested_hours=Decimal("4.0"),
@@ -21,7 +22,7 @@ def test_conflict_engine_detects_daily_overload(db_session):
 def test_conflict_engine_allows_free_date(db_session):
     # Free date with no prior bookings (0 existing hours, 8 requested hours)
     conflicts = ConflictEngine.check_session_conflict(
-        db=db_session,
+        session_repo=SessionRepository(db_session),
         faculty_name="Dr. Jane Smith",
         date_of_training=datetime(2026, 10, 20, 9, 0, 0, tzinfo=timezone.utc),
         requested_hours=Decimal("8.0"),

@@ -2,23 +2,42 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
+} from "@/components/ui/dialog";
+import { PaginationControls } from "@/components/PaginationControls";
+import {
+  Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail, CreateSessionPayload,
   api, BatchOption, ScheduledSession, FacultyType, Vertical
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
 import { notifyError } from "@/lib/notify";
 import { usePrompt } from "@/components/ConfirmProvider";
-import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
-import { useTableSort } from "@/hooks/useTableSort";
-import { useTableFilters, type TableFilterField } from "@/hooks/useTableFilters";
-import type { SortAccessors } from "@/lib/tableUtils";
 import {
-  X, Calendar, Users, MapPin, Monitor, Clock, FileText, CheckCircle2,
-  Lock, Star, Building2, User, Plus, Upload, AlertCircle, AlertTriangle,
+  ColumnsMenu, ExportButton, FullscreenTable, PlainHeaderCell, SortableHeaderCell,
+  TableCaption, TableFilters, TableMenu, TableStateRow, type MenuItem
+} from "@/components/table";
+import {
+  ACTIONS_COLUMN_STYLE, CountBadge, EmptyState, ErrorBanner, LoadingState,
+  PanelTitle, ROW_ACTION_BUTTON, RowActions
+} from "@/components/ui/panel";
+import { StatusBadge } from "@/components/ui/statusBadge";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useTableFilters } from "@/hooks/useTableFilters";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { usePersistentState, reviveNumber } from "@/hooks/usePersistentState";
+import {
+  buildFilterFields, buildSearchAccessor, buildSortAccessors, buildSortOptions,
+  type TableColumnDef
+} from "@/lib/tableColumns";
+import type { CsvColumn } from "@/lib/csv";
+import {
+  X, Calendar, Users, Clock, CheckCircle2,
+  Lock, Building2, Plus, Upload, AlertCircle, AlertTriangle,
   PlayCircle, RefreshCw, FileSpreadsheet, ShieldAlert, Sparkles, Check,
-  Edit3, GraduationCap, ShieldCheck, Mail, Briefcase, Info, Hash,
+  Edit3, GraduationCap, Mail, Search,
   PauseCircle, Ban
 } from "lucide-react";
 
@@ -44,15 +63,16 @@ const LEDGER_TH_STYLE: React.CSSProperties = {
   fontSize: "0.675rem",
 };
 
-/** For the two headings whose body cells are centred. */
-const LEDGER_CENTERED_TH_STYLE: React.CSSProperties = { ...LEDGER_TH_STYLE, textAlign: "center" };
+const LEDGER_TD_STYLE: React.CSSProperties = { padding: "8px 10px", color: "var(--text-main)" };
+
+/** The row buttons collapsed to a primary action plus an overflow menu. */
+const LEDGER_ACTIONS_TH_STYLE: React.CSSProperties = { ...ACTIONS_COLUMN_STYLE, width: 104, minWidth: 104 };
 
 const TIMETABLE_TH_STYLE: React.CSSProperties = {
   padding: "8px 12px",
 };
 
-const LEDGER_COLUMNS = 19;
-const TIMETABLE_COLUMNS = 5;
+const TIMETABLE_TD_STYLE: React.CSSProperties = { padding: "8px 12px" };
 
 /** Flattened row for the "Faculty Utilization & Delivery Ledger" table. */
 interface UtilizationLedgerRow {
@@ -68,7 +88,6 @@ interface UtilizationLedgerRow {
   dateOfTraining: string;
   topic: string;
   facultyName: string;
-  facultyVertical: string;
   facultyType: string;
   hours: number | null;
   moduleFeedback: string;
@@ -94,94 +113,106 @@ const resolveFacultyType = (vertical?: string | null): string =>
         ? "HOP"
         : "Mixed";
 
-const LEDGER_ACCESSORS: SortAccessors<UtilizationLedgerRow> = {
-  seq: (row) => row.seq,
-  entity: (row) => row.entity,
-  category: (row) => row.category,
-  vertical: (row) => row.vertical,
-  client: (row) => row.client,
-  program: (row) => row.program,
-  batchId: (row) => row.batchId,
-  date: (row) => row.dateOfTraining,
-  topic: (row) => row.topic,
-  faculty: (row) => row.facultyName,
-  facultyVertical: (row) => row.facultyVertical,
-  facultyType: (row) => row.facultyType,
-  hours: (row) => row.hours,
-  feedback: (row) => row.moduleFeedback,
-  venue: (row) => row.venue,
-  city: (row) => row.locationCity,
-  mode: (row) => row.modeOfDelivery,
-  coordinator: (row) => row.coordinator,
-  status: (row) => row.status,
-};
-
-// Every ledger column feeds the free-text haystack; only the low-cardinality
-// ones surface as dropdowns.
-const LEDGER_FILTER_FIELDS: readonly TableFilterField<UtilizationLedgerRow>[] = [
-  { key: "entity", accessor: LEDGER_ACCESSORS.entity },
-  { key: "category", accessor: LEDGER_ACCESSORS.category },
-  { key: "vertical", accessor: LEDGER_ACCESSORS.vertical },
-  { key: "client", accessor: LEDGER_ACCESSORS.client },
-  { key: "program", accessor: LEDGER_ACCESSORS.program },
-  { key: "batchId", accessor: LEDGER_ACCESSORS.batchId },
-  { key: "date", accessor: LEDGER_ACCESSORS.date },
-  { key: "topic", accessor: LEDGER_ACCESSORS.topic },
-  { key: "faculty", accessor: LEDGER_ACCESSORS.faculty },
-  { key: "facultyVertical", accessor: LEDGER_ACCESSORS.facultyVertical },
-  { key: "facultyType", accessor: LEDGER_ACCESSORS.facultyType },
-  { key: "hours", accessor: LEDGER_ACCESSORS.hours },
-  { key: "feedback", accessor: LEDGER_ACCESSORS.feedback },
-  { key: "venue", accessor: LEDGER_ACCESSORS.venue },
-  { key: "city", accessor: LEDGER_ACCESSORS.city },
-  { key: "mode", accessor: LEDGER_ACCESSORS.mode },
-  { key: "coordinator", accessor: LEDGER_ACCESSORS.coordinator },
-  { key: "status", accessor: LEDGER_ACCESSORS.status },
+// The single source of truth for the ledger: headings, sort accessors, sort
+// options, filter dropdowns, the search haystack and the CSV export all come
+// from this list. "Session Status" used to be a sort/filter option with no
+// column behind it, and "Faculty Vertical" duplicated "Vertical" — declaring the
+// columns once is what keeps that from happening again.
+const LEDGER_COLUMN_DEFS: readonly TableColumnDef<UtilizationLedgerRow>[] = [
+  { key: "seq", label: "#", accessor: (row) => row.seq, align: "center" },
+  { key: "entity", label: "Entity", accessor: (row) => row.entity },
+  { key: "category", label: "Category", accessor: (row) => row.category, filterable: true },
+  { key: "vertical", label: "Vertical", accessor: (row) => row.vertical, filterable: true },
+  { key: "client", label: "Client", accessor: (row) => row.client },
+  { key: "program", label: "Program", accessor: (row) => row.program },
+  { key: "batchId", label: "Batch ID", accessor: (row) => row.batchId },
+  { key: "date", label: "Date of Training", accessor: (row) => row.dateOfTraining },
+  { key: "topic", label: "Topic", accessor: (row) => row.topic },
+  { key: "faculty", label: "Faculty Full Name", accessor: (row) => row.facultyName },
+  { key: "facultyType", label: "Internal/External", accessor: (row) => row.facultyType, align: "center", filterable: true },
+  { key: "hours", label: "No. of Hours", accessor: (row) => row.hours, align: "center" },
+  { key: "moduleFeedback", label: "Module Feedback", accessor: (row) => row.moduleFeedback, filterable: true },
+  { key: "venue", label: "Venue", accessor: (row) => row.venue },
+  { key: "city", label: "Location/City", accessor: (row) => row.locationCity },
+  { key: "mode", label: "Mode of Delivery", accessor: (row) => row.modeOfDelivery, filterable: true },
+  { key: "coordinator", label: "Coordinator", accessor: (row) => row.coordinator },
+  { key: "status", label: "Session Status", accessor: (row) => row.status, align: "center", filterable: true },
+  { key: "actions", label: "Actions", accessor: (row) => row.id, sortable: false },
 ];
 
-const LEDGER_SORT_OPTIONS = [
-  { key: "seq", label: "#" },
-  { key: "entity", label: "Entity" },
-  { key: "category", label: "Category" },
-  { key: "vertical", label: "Vertical" },
-  { key: "client", label: "Client" },
-  { key: "program", label: "Program" },
-  { key: "batchId", label: "Batch ID" },
-  { key: "date", label: "Date of Training" },
-  { key: "topic", label: "Topic" },
-  { key: "faculty", label: "Faculty Full Name" },
-  { key: "facultyVertical", label: "Faculty Vertical" },
-  { key: "facultyType", label: "Internal/External" },
-  { key: "hours", label: "No. of Hours" },
-  { key: "feedback", label: "Module Feedback" },
-  { key: "venue", label: "Venue" },
-  { key: "city", label: "Location/City" },
-  { key: "mode", label: "Mode of Delivery" },
-  { key: "coordinator", label: "Coordinator" },
-  { key: "status", label: "Session Status" },
+const LEDGER_ACCESSORS = buildSortAccessors(LEDGER_COLUMN_DEFS);
+const LEDGER_SORT_OPTIONS = buildSortOptions(LEDGER_COLUMN_DEFS);
+const LEDGER_FILTER_FIELDS = buildFilterFields(LEDGER_COLUMN_DEFS);
+const LEDGER_SEARCH_ACCESSOR = buildSearchAccessor(LEDGER_COLUMN_DEFS);
+
+const LEDGER_COLUMN_KEYS = LEDGER_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label }));
+type LedgerColumnKey = (typeof LEDGER_COLUMN_KEYS)[number]["key"];
+
+/** Batch context repeats on every ledger row, so it is off by default. */
+const LEDGER_DEFAULT_HIDDEN: readonly LedgerColumnKey[] = [
+  "seq",
+  "entity",
+  "category",
+  "program",
+  "moduleFeedback",
+  "venue",
+  "city",
+  "coordinator",
+];
+
+const LEDGER_EXPORT_COLUMNS: readonly CsvColumn<UtilizationLedgerRow>[] = [
+  { key: "batchId", label: "Batch ID", value: (row) => row.batchId },
+  { key: "entity", label: "Entity", value: (row) => row.entity },
+  { key: "client", label: "Client", value: (row) => row.client },
+  { key: "category", label: "Category", value: (row) => row.category },
+  { key: "program", label: "Program", value: (row) => row.program },
+  { key: "seq", label: "#", value: (row) => row.seq },
+  { key: "date", label: "Date of Training", value: (row) => row.dateOfTraining },
+  { key: "topic", label: "Topic", value: (row) => row.topic },
+  { key: "facultyName", label: "Faculty Full Name", value: (row) => row.facultyName },
+  { key: "vertical", label: "Vertical", value: (row) => row.vertical },
+  { key: "facultyType", label: "Internal/External", value: (row) => row.facultyType },
+  { key: "hours", label: "No. of Hours", value: (row) => row.hours },
+  { key: "moduleFeedback", label: "Module Feedback", value: (row) => row.moduleFeedback },
+  { key: "venue", label: "Venue", value: (row) => row.venue },
+  { key: "locationCity", label: "Location/City", value: (row) => row.locationCity },
+  { key: "modeOfDelivery", label: "Mode of Delivery", value: (row) => row.modeOfDelivery },
+  { key: "coordinator", label: "Coordinator", value: (row) => row.coordinator },
+  { key: "status", label: "Session Status", value: (row) => row.status },
 ];
 
 const LEDGER_DESC_FIRST_KEYS = ["date", "hours", "seq"];
 
-const TIMETABLE_ACCESSORS: SortAccessors<ExtractedTimetableRowView> = {
-  date: (view) => view.row.date_of_training || "",
-  topic: (view) => view.row.topic || "",
-  faculty: (view) => view.row.faculty_name || "",
-  hours: (view) => (typeof view.row.no_of_hours === "number" ? view.row.no_of_hours : null),
-};
-
-const TIMETABLE_FILTER_FIELDS: readonly TableFilterField<ExtractedTimetableRowView>[] = [
-  { key: "date", accessor: TIMETABLE_ACCESSORS.date },
-  { key: "topic", accessor: TIMETABLE_ACCESSORS.topic },
-  { key: "faculty", accessor: TIMETABLE_ACCESSORS.faculty },
-  { key: "hours", accessor: TIMETABLE_ACCESSORS.hours },
+const TIMETABLE_COLUMN_DEFS: readonly TableColumnDef<ExtractedTimetableRowView>[] = [
+  { key: "date", label: "Date", accessor: (view) => view.row.date_of_training || "" },
+  { key: "topic", label: "Topic", accessor: (view) => view.row.topic || "" },
+  { key: "faculty", label: "Faculty", accessor: (view) => view.row.faculty_name || "", filterable: true },
+  {
+    key: "hours",
+    label: "Hours",
+    accessor: (view) => (typeof view.row.no_of_hours === "number" ? view.row.no_of_hours : null),
+    align: "center",
+  },
+  { key: "action", label: "Action", accessor: (view) => String(view.index), sortable: false },
 ];
 
-const TIMETABLE_SORT_OPTIONS = [
-  { key: "date", label: "Date" },
-  { key: "topic", label: "Topic" },
-  { key: "faculty", label: "Faculty" },
-  { key: "hours", label: "Hours" },
+const TIMETABLE_ACCESSORS = buildSortAccessors(TIMETABLE_COLUMN_DEFS);
+const TIMETABLE_SORT_OPTIONS = buildSortOptions(TIMETABLE_COLUMN_DEFS);
+const TIMETABLE_FILTER_FIELDS = buildFilterFields(TIMETABLE_COLUMN_DEFS);
+const TIMETABLE_SEARCH_ACCESSOR = buildSearchAccessor(TIMETABLE_COLUMN_DEFS);
+
+const TIMETABLE_COLUMN_KEYS = TIMETABLE_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label }));
+type TimetableColumnKey = (typeof TIMETABLE_COLUMN_KEYS)[number]["key"];
+
+const TIMETABLE_EXPORT_COLUMNS: readonly CsvColumn<ExtractedTimetableRowView>[] = [
+  { key: "row", label: "Date of Training", value: (view) => view.row.date_of_training || "" },
+  { key: "topic", label: "Topic", value: (view) => view.row.topic || "" },
+  { key: "faculty", label: "Faculty", value: (view) => view.row.faculty_name || "" },
+  {
+    key: "hours",
+    label: "No. of Hours",
+    value: (view) => (typeof view.row.no_of_hours === "number" ? view.row.no_of_hours : null),
+  },
 ];
 
 const TIMETABLE_DESC_FIRST_KEYS = ["date"];
@@ -269,6 +300,12 @@ const parseRemarksList = (rawRemarks?: string | null): ParsedRemarkItem[] => {
 
 export type BatchDetailTab = "overview" | "sessions" | "quality_gates";
 
+const DRAWER_TABS: { id: BatchDetailTab; label: string; icon?: React.ReactNode }[] = [
+  { id: "overview", label: "Overview & Details" },
+  { id: "sessions", label: "Sessions & Timetable" },
+  { id: "quality_gates", label: "Quality Checkpoints", icon: <Sparkles size={15} aria-hidden="true" /> },
+];
+
 interface BatchDetailDrawerProps {
   batch: Batch | null;
   isOpen: boolean;
@@ -288,7 +325,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   onBatchUpdated,
   initialTab = "overview",
 }) => {
-  const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
+const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
+  // Every read and every write in this drawer goes through this one value, so an
+  // in-drawer mutation (which only calls `setCurrentBatch`) is reflected
+  // everywhere instead of half the tabs reading a stale `batch` prop.
+  const activeBatch: Batch = currentBatch || batch!;
   const [options, setOptions] = useState<{
     entities: BatchOption[];
     categories: BatchOption[];
@@ -302,19 +343,26 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
   const [activeTab, setActiveTab] = useState<BatchDetailTab>(initialTab);
 
+  const batchId = batch?.id ?? null;
+
   useEffect(() => {
     setCurrentBatch(batch);
     // Reopening the drawer for a different batch must not carry the previous
     // batch's tab forward, so the requested landing tab is re-applied here.
+    // Keyed on the id, not the object: every parent re-render that produces a new
+    // `batch` reference would otherwise reset the tab the user picked and
+    // re-fetch — including the `onBatchUpdated()` calls made by this drawer's own
+    // mutations.
     setActiveTab(initialTab);
-    if (batch?.id) {
-      api.getBatch(batch.id)
+    if (batchId) {
+      api.getBatch(batchId)
         .then((fresh) => {
           if (fresh) setCurrentBatch(fresh);
         })
         .catch((err) => console.error("Failed to load fresh batch details:", err));
     }
-  }, [batch, initialTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchId, initialTab]);
 
   useEffect(() => {
     if (isOpen) {
@@ -338,7 +386,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [editError, setEditError] = useState<string | null>(null);
 
   const openEditModal = () => {
-    const target = currentBatch || batch;
+    const target = activeBatch;
     if (!target) return;
     const deliveryModeVal = target.delivery_mode || (target.delivery_mode_id ? options.delivery_modes.find((m) => m.id === target.delivery_mode_id)?.name : null) || "Online";
     setEditForm({
@@ -364,12 +412,12 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const target = currentBatch || batch;
+    const target = activeBatch;
     if (!target) return;
     setIsSavingEdit(true);
     setEditError(null);
     try {
-      const payload: any = {
+      const payload: Partial<Batch> = {
         ...editForm,
         sow_number: editForm.sow_number ? String(editForm.sow_number).trim() : undefined,
         start_date: editForm.start_date ? new Date(editForm.start_date).toISOString() : undefined,
@@ -414,7 +462,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   };
 
   const openStatusModal = (newStatus: "OnHold" | "Cancelled" | "Resume" | string) => {
-    const target = currentBatch || batch;
+    const target = activeBatch;
     let effectiveStatus = newStatus;
     if (newStatus === "Resume" && target) {
       effectiveStatus = getResumedStatus(target);
@@ -427,7 +475,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
   const handleSaveStatus = async (e: React.FormEvent) => {
     e.preventDefault();
-    const target = currentBatch || batch;
+    const target = activeBatch;
     if (!target || !targetStatus) return;
     if (!statusReason.trim() || statusReason.trim().length < 3) {
       setStatusError("A reason (minimum 3 characters) is required.");
@@ -451,6 +499,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
 
   // Computed session stats
   const completedSessions = sessions.filter((s) => s.status === "Completed").length;
@@ -459,7 +508,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   // Ledger rows carry the raw values (ISO dates, numeric hours, enum strings) so
   // sorting and filtering never run on the DD-MM-YYYY / badge rendering.
   const ledgerRows = useMemo<UtilizationLedgerRow[]>(() => {
-    const source = currentBatch || batch;
+    const source = activeBatch;
     return sessions.map((s, idx) => ({
       id: s.id,
       seq: idx + 1,
@@ -473,7 +522,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       dateOfTraining: s.date_of_training || "",
       topic: s.topic || "",
       facultyName: s.faculty_name || "",
-      facultyVertical: s.vertical || "",
       facultyType: resolveFacultyType(s.vertical),
       hours: typeof s.no_of_hours === "number" && !Number.isNaN(s.no_of_hours) ? s.no_of_hours : null,
       moduleFeedback: s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : ""),
@@ -483,10 +531,34 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       coordinator: source?.coordinator?.full_name || source?.coordinator_id || "",
       status: s.status || "",
     }));
-  }, [sessions, currentBatch, batch]);
+  }, [sessions, activeBatch]);
 
   const ledgerSort = useTableSort(ledgerRows, LEDGER_ACCESSORS, { descFirstKeys: LEDGER_DESC_FIRST_KEYS });
-  const ledgerFilters = useTableFilters(ledgerSort.sortedRows, LEDGER_FILTER_FIELDS);
+  const ledgerFilters = useTableFilters(ledgerSort.sortedRows, LEDGER_FILTER_FIELDS, LEDGER_SEARCH_ACCESSOR);
+
+  const ledgerColumns = useColumnVisibility<LedgerColumnKey>({
+    columns: LEDGER_COLUMN_KEYS,
+    defaultHidden: LEDGER_DEFAULT_HIDDEN,
+    storageKey: "ops.table.delivery-ledger.columns",
+  });
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerPageSize, setLedgerPageSize] = usePersistentState("ops.table.delivery-ledger.page-size", 10, reviveNumber);
+  const ledgerVisibleColumnCount = LEDGER_COLUMN_KEYS.filter((column) => ledgerColumns.isVisible(column.key)).length;
+
+  useEffect(() => {
+    setLedgerPage(1);
+  }, [ledgerFilters.filtersVersion]);
+
+  useEffect(() => {
+    // A shorter page size can strand the user on a page that no longer exists.
+    const totalPages = Math.max(1, Math.ceil(ledgerFilters.filteredRows.length / ledgerPageSize));
+    if (ledgerPage > totalPages) setLedgerPage(totalPages);
+  }, [ledgerFilters.filteredRows.length, ledgerPage, ledgerPageSize]);
+
+  const ledgerPagedRows = useMemo(() => {
+    const start = (ledgerPage - 1) * ledgerPageSize;
+    return ledgerFilters.filteredRows.slice(start, start + ledgerPageSize);
+  }, [ledgerFilters.filteredRows, ledgerPage, ledgerPageSize]);
 
   // Log Faculty Utilization on Session Day Modal
   const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
@@ -511,7 +583,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [utilError, setUtilError] = useState<string | null>(null);
   const [utilConflicts, setUtilConflicts] = useState<string[]>([]);
   const [showDiscardPrompt, setShowDiscardPrompt] = useState(false);
-  const utilDialogRef = useRef<HTMLDivElement | null>(null);
   const utilTopicRef = useRef<HTMLInputElement | null>(null);
   const [isUtilDirty, setIsUtilDirty] = useState(false);
 
@@ -551,7 +622,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   };
 
   const openLogUtilizationModal = (day: ScheduledSession) => {
-    const target = currentBatch || batch;
+    const target = activeBatch;
     setSelectedScheduleDay(day);
     setUtilFacultyName(day.trainer_name || target?.faculty_assigned_text || "");
     setUtilDate(String(day.session_date).slice(0, 10));
@@ -580,27 +651,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setIsLogUtilizationOpen(true);
   };
 
+  // Radix owns Escape and the scroll lock now; only the initial focus is ours.
   useEffect(() => {
     if (!isLogUtilizationOpen) return;
     utilTopicRef.current?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
   }, [isLogUtilizationOpen]);
-
-  useEffect(() => {
-    if (!isLogUtilizationOpen) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        closeUtilModal();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isLogUtilizationOpen, isUtilDirty]);
 
   // The time window must be a real interval. The conflict engine only tests for
   // overlap, so an inverted window was persisted and then matched against every
@@ -621,7 +676,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
   const handleLogUtilizationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const target = currentBatch || batch;
+    const target = activeBatch;
     if (!selectedScheduleDay || !target) return;
     if (utilFeedbackCollected === null) {
       setUtilError("Please select whether feedback was collected");
@@ -669,7 +724,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         return;
       }
       const feedbackEntered = utilFeedbackCollected === "yes" && ratingValue !== null;
-      const payload: any = {
+      // `faculty_type_id` is accepted by the endpoint but is missing from the
+      // shared `CreateSessionPayload`, so it is declared alongside it here.
+      const payload: CreateSessionPayload & { faculty_type_id?: string } = {
         batch_id: target.id,
         training_session_id: selectedScheduleDay.id,
         date_of_training: dateOfTrainingIso,
@@ -721,8 +778,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const [sessionEndTime, setSessionEndTime] = useState("17:00");
   const [sessionHours, setSessionHours] = useState(8);
   const [sessionFacultyName, setSessionFacultyName] = useState("");
-  const [sessionVenue, setSessionVenue] = useState("");
-  const [sessionMode, setSessionMode] = useState("Online");
   const [isSubmittingSession, setIsSubmittingSession] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
@@ -775,7 +830,29 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   const timetableSort = useTableSort(timetableRows, TIMETABLE_ACCESSORS, {
     descFirstKeys: TIMETABLE_DESC_FIRST_KEYS,
   });
-  const timetableFilters = useTableFilters(timetableSort.sortedRows, TIMETABLE_FILTER_FIELDS);
+  const timetableFilters = useTableFilters(
+    timetableSort.sortedRows,
+    TIMETABLE_FILTER_FIELDS,
+    TIMETABLE_SEARCH_ACCESSOR
+  );
+  const timetableColumns = useColumnVisibility<TimetableColumnKey>({
+    columns: TIMETABLE_COLUMN_KEYS,
+    storageKey: "ops.table.timetable-preview.columns",
+  });
+  const [timetablePage, setTimetablePage] = useState(1);
+  const [timetablePageSize, setTimetablePageSize] = usePersistentState(
+    "ops.table.timetable-preview.page-size",
+    10,
+    reviveNumber
+  );
+  const timetableVisibleColumnCount = TIMETABLE_COLUMN_KEYS.filter((column) =>
+    timetableColumns.isVisible(column.key)
+  ).length;
+
+  useEffect(() => {
+    setTimetablePage(1);
+  }, [timetableFilters.filtersVersion]);
+
   const timetableSortedFilteredRows = timetableFilters.filteredRows;
   const timetableVisibleSet = useMemo(
     () => new Set(timetableSortedFilteredRows),
@@ -790,6 +867,20 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         : timetableRows.filter((view) => timetableVisibleSet.has(view)),
     [editingParsedRow, timetableSortedFilteredRows, timetableRows, timetableVisibleSet]
   );
+  const timetablePagedRows = useMemo(() => {
+    const start = (timetablePage - 1) * timetablePageSize;
+    const page = timetableVisibleRows.slice(start, start + timetablePageSize);
+    if (editingParsedRow === null) return page;
+    // Paging must never scroll the row being edited off screen.
+    const editing = timetableVisibleRows.find((view) => view.index === editingParsedRow);
+    return editing && !page.includes(editing) ? [editing, ...page] : page;
+  }, [timetableVisibleRows, timetablePage, timetablePageSize, editingParsedRow]);
+
+  useEffect(() => {
+    // A shorter page size can strand the user on a page that no longer exists.
+    const totalPages = Math.max(1, Math.ceil(timetableVisibleRows.length / timetablePageSize));
+    if (timetablePage > totalPages) setTimetablePage(totalPages);
+  }, [timetableVisibleRows.length, timetablePage, timetablePageSize]);
 
   const openScheduledSessionEdit = (session: ScheduledSession) => {
     setEditingScheduledSession(session);
@@ -829,32 +920,42 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
   // Load sessions when drawer opens or tab switches
   const loadSessions = async () => {
-    if (!batch) return;
+    const target = activeBatch;
+    if (!target) return;
     setIsLoadingSessions(true);
+    setSessionsError(null);
     try {
-      const [utilData, schedData] = await Promise.all([
-        api.getSessions({ batch_id: batch.id }).catch(() => []),
-        api.getScheduledSessions(batch.id).catch(() => []),
+      // Settled, not `all`: one failing request must not blank the other, but it
+      // must also never be swallowed — a rejected fetch used to render as "No
+      // Sessions Scheduled Yet", which reads as "nothing was ever delivered".
+      const [utilResult, schedResult] = await Promise.allSettled([
+        api.getSessions({ batch_id: target.id }),
+        api.getScheduledSessions(target.id),
       ]);
-      setSessions(utilData || []);
-      setScheduledSessions(schedData || []);
+      const failures = [utilResult, schedResult].filter((result) => result.status === "rejected");
+      if (failures.length > 0) {
+        const reasons = failures
+          .map((failure) => (failure as PromiseRejectedResult).reason?.message)
+          .filter(Boolean);
+        setSessionsError(reasons.length > 0 ? reasons.join("; ") : "Failed to load sessions for this batch.");
+      }
+      setSessions(utilResult.status === "fulfilled" ? utilResult.value || [] : []);
+      setScheduledSessions(schedResult.status === "fulfilled" ? schedResult.value || [] : []);
     } catch (err) {
       console.error("Failed to load sessions:", err);
+      setSessionsError("Failed to load sessions for this batch.");
     } finally {
       setIsLoadingSessions(false);
     }
   };
 
   useEffect(() => {
-    if (isOpen && batch) {
+    if (isOpen && batchId) {
       loadSessions();
     }
-  }, [isOpen, batch]);
+  }, [isOpen, batchId]);
 
   if (!isOpen || !batch) return null;
-
-  const activeBatch: Batch = currentBatch || batch;
-  if (!activeBatch) return null;
 
   const formatDate = (dStr?: string | null) => {
     return formatDateDMY(dStr, "Not set");
@@ -903,29 +1004,28 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         .filter(Boolean)
     : [];
 
-  const getStatusBadge = (status: string) => {
-    const s = (status || "").toLowerCase();
-    if (s === "requested") return <span className="badge badge-requested">Requested</span>;
-    if (s === "approval 1 pending") return <span className="badge badge-requested">Approval 1 Pending</span>;
-    if (s === "approval 2 pending") return <span className="badge badge-requested">Approval 2 Pending</span>;
-    if (s === "approved") return <span className="badge badge-approved">Approved</span>;
-    if (s === "upcoming") return <span className="badge badge-approved">Upcoming</span>;
-    if (s === "ongoing") return <span className="badge badge-ongoing">Ongoing</span>;
-    if (s === "completed") return <span className="badge badge-completed">Completed</span>;
-    if (s === "onhold") return <span className="badge badge-onhold">On Hold</span>;
-    if (s === "cancelled") return <span className="badge badge-cancelled">Cancelled</span>;
-    return <span className="badge badge-cancelled">{status}</span>;
+  // Parsed once per remarks change: the audit list is read five times per render
+  // otherwise, each read running two regex passes and a lookbehind split.
+  const remarkEntries = useMemo(() => parseRemarksList(activeBatch.remarks), [activeBatch.remarks]);
+
+  // Roving-tabindex arrow-key navigation, as the ARIA tabs pattern requires.
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, current: BatchDetailTab) => {
+    const index = DRAWER_TABS.findIndex((tab) => tab.id === current);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % DRAWER_TABS.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + DRAWER_TABS.length) % DRAWER_TABS.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = DRAWER_TABS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    setActiveTab(DRAWER_TABS[nextIndex].id);
+    document.getElementById(`batch-tab-${DRAWER_TABS[nextIndex].id}`)?.focus();
   };
 
-  const getStatusColor = (status: string) => {
-    const s = (status || "").toLowerCase();
-    if (s === "requested" || s.includes("pending")) return "#d97706";
-    if (s === "approved" || s === "upcoming") return "#0b5cab";
-    if (s === "ongoing") return "#06b6d4";
-    if (s === "completed") return "#16a34a";
-    if (s === "onhold") return "#b45309";
-    if (s === "cancelled") return "#e11d48";
-    return "#94a3b8";
+  const openGate1Modal = (session: TrainingSession) => {
+    setCompletingSession(session);
+    setGate1Rating(4.5);
+    setGate1Feedback("");
   };
 
   // Handle Add Single Session
@@ -936,7 +1036,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
     try {
       await api.createScheduledSession({
-        batch_id: batch.id,
+        batch_id: activeBatch.id,
         session_date: sessionDate,
         start_time: sessionStartTime,
         end_time: sessionEndTime,
@@ -1055,7 +1155,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setIsSubmittingGate2(true);
 
     try {
-      await api.closeBatchGate2(batch.id, {
+      await api.closeBatchGate2(activeBatch.id, {
         nps_score: Number(gate2Nps),
         average_feedback_score: Number(gate2AvgFeedback),
         retrospective_notes: gate2RetroNotes.trim() || undefined,
@@ -1082,7 +1182,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
     setValidationConflicts([]);
 
     try {
-      const res = await api.ingestScheduleFile(ingestFile, batch.batch_id);
+      const res = await api.ingestScheduleFile(ingestFile, activeBatch.batch_id);
       const rows = Array.isArray(res.extracted_schedule) && res.extracted_schedule.length > 0
         ? res.extracted_schedule
         : Array.isArray(res.items) ? res.items : [];
@@ -1111,10 +1211,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
 
     try {
       const validationPayload = extractedRows.map((r) => ({
-        batch_id: batch.batch_id,
+        batch_id: activeBatch.batch_id,
         date_of_training: r.date_of_training,
         no_of_hours: r.no_of_hours,
-        faculty_name: r.faculty_name || batch.faculty_assigned_text || undefined,
+        faculty_name: r.faculty_name || activeBatch.faculty_assigned_text || undefined,
         topic: r.topic,
         mode_of_delivery: r.mode_of_delivery,
       }));
@@ -1141,13 +1241,13 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
           ...row,
           start_time: row.start_time || "09:00",
           end_time: row.end_time || "17:00",
-          faculty_name: row.faculty_name || batch.faculty_assigned_text || undefined,
-          venue: row.venue || batch.location_city || undefined,
-          location_city: row.location_city || batch.location_city || undefined,
-          mode_of_delivery: row.mode_of_delivery || batch.delivery_mode,
-          batch_id: batch.batch_id,
+          faculty_name: row.faculty_name || activeBatch.faculty_assigned_text || undefined,
+          venue: row.venue || activeBatch.location_city || undefined,
+          location_city: row.location_city || activeBatch.location_city || undefined,
+          mode_of_delivery: row.mode_of_delivery || activeBatch.delivery_mode,
+          batch_id: activeBatch.batch_id,
         })),
-        batch.batch_id,
+        activeBatch.batch_id,
         ingestFile?.name,
       );
 
@@ -1164,46 +1264,35 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   };
 
   return (
-    <div
-      className="modal-overlay"
-      onClick={onClose}
-      style={{
-        zIndex: 990,
-        padding: "16px",
-      }}
-    >
-      <div
-        className="modal-content glass-panel"
-        onClick={(e) => e.stopPropagation()}
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent
+        className="glass-panel flex max-h-none flex-col gap-0 overflow-hidden p-0 [&>button]:hidden"
         style={{
           width: "100%",
-          maxWidth: 960,
-          maxHeight: "92vh",
+          maxWidth: "min(1560px, calc(100vw - 32px))",
+          maxHeight: "calc(100vh - 32px)",
           background: "#ffffff",
           borderRadius: 20,
           border: "1px solid rgba(160, 190, 223, 0.8)",
           boxShadow: "0 24px 48px rgba(15, 23, 42, 0.2), 0 8px 16px rgba(0, 0, 0, 0.08)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          animation: "scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
+        aria-describedby={undefined}
       >
         {/* Modal Header */}
-        <div className="flex items-center justify-between shrink-0 px-6 py-4 border-b" style={{
-          borderBottom: "1px solid var(--border-subtle)",
+        <DialogHeader className="flex-row items-center justify-between gap-4 space-y-0 border-b px-6 py-4" style={{
           background: "linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.94) 100%)",
+          borderColor: "var(--border-subtle)",
         }}>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2.5 mb-1">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Full Batch Details & Governance Hub
               </span>
-              {getStatusBadge(activeBatch.status)}
+              <StatusBadge status={activeBatch.status} />
             </div>
-            <h2 className="text-xl font-bold font-display" style={{ color: "#0b5cab", margin: 0 }}>
+            <DialogTitle className="text-xl font-bold font-display" style={{ color: "#0b5cab" }}>
               {activeBatch.batch_id}
-            </h2>
+            </DialogTitle>
           </div>
           <button
             onClick={onClose}
@@ -1219,68 +1308,75 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               alignItems: "center",
               justifyContent: "center",
               transition: "all 0.15s ease",
+              flexShrink: 0,
             }}
           >
-            <X size={20} />
+            <X size={20} aria-hidden="true" />
           </button>
-        </div>
+        </DialogHeader>
 
         {/* Tab Navigation */}
-        <div className="flex gap-3 px-6 border-b shrink-0" style={{
-          borderBottom: "1px solid var(--border-subtle)",
-          background: "#ffffff",
-        }}>
-          <button
-            onClick={() => setActiveTab("overview")}
-            className={cn(
-              "px-4 py-3 text-sm font-semibold transition-all",
-              "border-b-2 -mb-px",
-              activeTab === "overview"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Overview & Details
-          </button>
-
-          <button
-            onClick={() => setActiveTab("sessions")}
-            className={cn(
-              "px-4 py-3 text-sm font-semibold transition-all flex items-center gap-2",
-              "border-b-2 -mb-px",
-              activeTab === "sessions"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <span>Sessions & Timetable</span>
-            <span className={cn(
-              "px-2 py-0.5 text-xs font-bold rounded-full",
-              activeTab === "sessions"
-                ? "bg-primary/10 text-primary"
-                : "bg-muted text-muted-foreground"
-            )}>
-              {sessions.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("quality_gates")}
-            className={cn(
-              "px-4 py-3 text-sm font-semibold transition-all flex items-center gap-2",
-              "border-b-2 -mb-px",
-              activeTab === "quality_gates"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <Sparkles size={15} />
-            <span>Quality Checkpoints</span>
-          </button>
+        <div
+          role="tablist"
+          aria-label="Batch detail sections"
+          className="flex gap-3 overflow-x-auto px-6 border-b shrink-0"
+          style={{
+            borderBottom: "1px solid var(--border-subtle)",
+            background: "#ffffff",
+          }}
+        >
+          {DRAWER_TABS.map((tab) => {
+            const selected = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                id={`batch-tab-${tab.id}`}
+                role="tab"
+                type="button"
+                aria-selected={selected}
+                aria-controls={`batch-panel-${tab.id}`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+                className={cn(
+                  "px-4 py-3 text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap",
+                  "border-b-2 -mb-px",
+                  selected
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {tab.icon}
+                <span>{tab.label}</span>
+                {tab.id === "sessions" && (
+                  <span
+                    className={cn(
+                      "px-2 py-0.5 text-xs font-bold rounded-full",
+                      selected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    <span aria-hidden>{scheduledSessions.length}d / {sessions.length} logged</span>
+                    <span className="sr-only">
+                      {scheduledSessions.length} scheduled days, {sessions.length} logged utilization sessions
+                    </span>
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Modal Body — positioned so `strategy="absolute"` fullscreen tables fill the drawer, not the viewport. */}
-        <div className="modal-scroll-content flex-1 px-6 py-6 space-y-6" style={{ position: "relative" }}>
+        {/* Modal Body — positioned so `strategy="absolute"` fullscreen tables fill the drawer, not the viewport.
+            The shared `.modal-scroll-content` height cap is overridden: this panel is already a
+            flex column with its own max height, so the body just takes the remaining space. */}
+        <div
+          id={`batch-panel-${activeTab}`}
+          role="tabpanel"
+          aria-labelledby={`batch-tab-${activeTab}`}
+          tabIndex={0}
+          className="modal-scroll-content flex-1 px-6 py-6 space-y-6"
+          style={{ position: "relative", maxHeight: "none" }}
+        >
 
           {/* TAB 1: OVERVIEW */}
           {activeTab === "overview" && (
@@ -1685,22 +1781,15 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <h4 style={{ fontSize: "0.85rem", textTransform: "uppercase", color: "var(--text-dim)", fontWeight: 700, margin: 0, letterSpacing: "0.04em" }}>
                       Operational Remarks & Special Instructions
                     </h4>
-                    {parseRemarksList(activeBatch.remarks).length > 0 && (
-                      <span style={{
-                        background: "#e2e8f0",
-                        color: "#475569",
-                        fontSize: "0.72rem",
-                        fontWeight: 700,
-                        padding: "2px 8px",
-                        borderRadius: 12
-                      }}>
-                        {parseRemarksList(activeBatch.remarks).length} {parseRemarksList(activeBatch.remarks).length === 1 ? "entry" : "entries"}
-                      </span>
+                    {remarkEntries.length > 0 && (
+                      <Badge variant="secondary" size="sm" className="normal-case tracking-normal">
+                        {remarkEntries.length} {remarkEntries.length === 1 ? "entry" : "entries"}
+                      </Badge>
                     )}
                   </div>
                 </div>
 
-                {parseRemarksList(activeBatch.remarks).length === 0 ? (
+                {remarkEntries.length === 0 ? (
                   <div style={{
                     fontSize: "0.875rem",
                     color: "var(--text-dim)",
@@ -1715,7 +1804,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {parseRemarksList(activeBatch.remarks).map((entry, idx) => (
+                    {remarkEntries.map((entry, idx) => (
                       <div
                         key={entry.id}
                         style={{
@@ -1891,11 +1980,10 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </div>
               </div>
 
+              {sessionsError && <ErrorBanner message={sessionsError} />}
+
               {isLoadingSessions ? (
-                <div style={{ textAlign: "center", padding: "32px", color: "var(--text-muted)" }}>
-                  <RefreshCw className="animate-spin" size={24} color="#0b5cab" style={{ margin: "0 auto 8px" }} />
-                  <div>Loading curriculum schedule and sessions...</div>
-                </div>
+                <LoadingState label="Loading curriculum schedule and sessions..." />
               ) : scheduledSessions.length === 0 && sessions.length === 0 ? (
                 <div style={{
                   textAlign: "center",
@@ -1916,19 +2004,17 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   {/* SECTION 1: INGESTED CURRICULUM SCHEDULE */}
                   {scheduledSessions.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ fontSize: "0.825rem", fontWeight: 700, color: "var(--text-main)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                            Curriculum Schedule ({scheduledSessions.length} Days)
-                          </span>
-                        </div>
-                        <div style={{ display: "flex", gap: 12, fontSize: "0.775rem" }}>
-                          <span style={{ color: "#166534", fontWeight: 700, background: "#dcfce7", padding: "2px 8px", borderRadius: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, background: "#f8fafc", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
+                        <PanelTitle
+                          title={`Curriculum Schedule (${scheduledSessions.length} ${scheduledSessions.length === 1 ? "Day" : "Days"})`}
+                        />
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Badge variant="success" size="sm" className="normal-case tracking-normal">
                             {scheduledSessions.filter((s) => s.utilization_logged).length} Delivered
-                          </span>
-                          <span style={{ color: "#b45309", fontWeight: 700, background: "#fef3c7", padding: "2px 8px", borderRadius: 12 }}>
+                          </Badge>
+                          <Badge variant="warning" size="sm" className="normal-case tracking-normal">
                             {scheduledSessions.filter((s) => !s.utilization_logged).length} Pending
-                          </span>
+                          </Badge>
                         </div>
                       </div>
 
@@ -2055,16 +2141,23 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   {/* SECTION 2: FACULTY UTILIZATION / DELIVERY LEDGER */}
                   {sessions.length > 0 && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: scheduledSessions.length > 0 ? 8 : 0 }}>
-                      <div style={{ background: "#f8fafc", padding: "8px 12px", borderRadius: 6, border: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", gap: 6 }}>
-                        <Users size={14} color="#0b5cab" />
-                        <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", textTransform: "uppercase" }}>
-                          Faculty Utilization & Delivery Ledger ({sessions.length} Recorded)
-                        </span>
-                      </div>
                       <FullscreenTable
                         panelClassName=""
                         strategy="absolute"
+                        stickyThead
                         style={{ border: "1px solid var(--border-subtle)", borderRadius: 8, background: "#ffffff" }}
+                        title={
+                          <PanelTitle
+                            title="Faculty Utilization & Delivery Ledger"
+                            description="Every delivery day logged against this batch — the faculty timesheet."
+                            meta={
+                              <CountBadge
+                                value={ledgerFilters.filteredRows.length}
+                                label={`of ${sessions.length} ${sessions.length === 1 ? "session" : "sessions"}`}
+                              />
+                            }
+                          />
+                        }
                         toolbar={
                           <TableFilters
                             search={{
@@ -2107,11 +2200,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                                 width: 165,
                               },
                               {
-                                key: "feedback",
+                                key: "moduleFeedback",
                                 label: "Module Feedback",
-                                value: ledgerFilters.getFilter("feedback"),
-                                onChange: (value) => ledgerFilters.setFilter("feedback", value),
-                                options: ledgerFilters.optionsFor("feedback"),
+                                value: ledgerFilters.getFilter("moduleFeedback"),
+                                onChange: (value) => ledgerFilters.setFilter("moduleFeedback", value),
+                                options: ledgerFilters.optionsFor("moduleFeedback"),
                                 width: 170,
                               },
                               {
@@ -2134,168 +2227,228 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                             activeFilterCount={ledgerFilters.activeFilterCount}
                           />
                         }
+                        actions={
+                          <>
+                            <ColumnsMenu
+                              columns={LEDGER_COLUMN_KEYS}
+                              hidden={ledgerColumns.hidden}
+                              onToggle={ledgerColumns.toggle}
+                              onShowAll={ledgerColumns.showAll}
+                            />
+                            <ExportButton
+                              filename={`delivery-ledger-${activeBatch.batch_id}`}
+                              columns={LEDGER_EXPORT_COLUMNS}
+                              rows={ledgerFilters.filteredRows}
+                            />
+                          </>
+                        }
+                        footer={
+                          <PaginationControls
+                            label="Delivery ledger pages"
+                            currentPage={ledgerPage}
+                            totalItems={ledgerFilters.filteredRows.length}
+                            pageSize={ledgerPageSize}
+                            pageSizeOptions={[10, 25, 50, 100]}
+                            onPageChange={setLedgerPage}
+                            onPageSizeChange={setLedgerPageSize}
+                          />
+                        }
                       >
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.775rem" }}>
+                        <table
+                          className="glass-table table-pin-first-col w-full border-collapse"
+                          style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.775rem", minWidth: 960 }}
+                        >
+                          <TableCaption>
+                            Faculty utilization and delivery ledger for batch {activeBatch.batch_id}
+                          </TableCaption>
                           <thead>
-                            <tr style={{ background: "#f8fafc", borderBottom: "1px solid var(--border-subtle)" }}>
-                              <SortableHeaderCell columnKey="seq" label="#" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="entity" label="Entity" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="category" label="Category" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="vertical" label="Vertical" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="client" label="Client" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="program" label="Program" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="batchId" label="Batch ID" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="date" label="Date of Training" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="topic" label="Topic" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="faculty" label="Faculty Full Name" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="facultyVertical" label="Faculty Vertical" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="facultyType" label="Internal/External" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_CENTERED_TH_STYLE} />
-                              <SortableHeaderCell columnKey="hours" label="No. of Hours" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_CENTERED_TH_STYLE} />
-                              <SortableHeaderCell columnKey="feedback" label="Module Feedback" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="venue" label="Venue" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="city" label="Location/City" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="mode" label="Mode of Delivery" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <SortableHeaderCell columnKey="coordinator" label="Coordinator" sortKey={ledgerSort.sortKey} sortDir={ledgerSort.sortDir} onSort={ledgerSort.toggleSort} style={LEDGER_TH_STYLE} />
-                              <PlainHeaderCell style={LEDGER_TH_STYLE}>Actions</PlainHeaderCell>
+                            <tr>
+                              {LEDGER_COLUMN_DEFS.map((column) =>
+                                column.key === "actions" ? null : ledgerColumns.isVisible(column.key as LedgerColumnKey) ? (
+                                  <SortableHeaderCell
+                                    key={column.key}
+                                    columnKey={column.key}
+                                    label={column.label}
+                                    style={{ ...LEDGER_TH_STYLE, textAlign: column.align ?? "left" }}
+                                    sortKey={ledgerSort.sortKey}
+                                    sortDir={ledgerSort.sortDir}
+                                    onSort={ledgerSort.toggleSort}
+                                  />
+                                ) : null
+                              )}
+                              {ledgerColumns.isVisible("actions") && (
+                                <PlainHeaderCell style={LEDGER_ACTIONS_TH_STYLE}>Actions</PlainHeaderCell>
+                              )}
                             </tr>
                           </thead>
                           <tbody>
-                            {ledgerFilters.filteredRows.length === 0 ? (
-                              <tr>
-                                <td colSpan={LEDGER_COLUMNS} style={{ padding: "32px 10px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                                  No ledger rows match the current search or filters.
-                                </td>
-                              </tr>
+                            {ledgerPagedRows.length === 0 ? (
+                              <TableStateRow colSpan={ledgerVisibleColumnCount}>
+                                {sessionsError ? (
+                                  <ErrorBanner message={sessionsError} className="mx-auto my-6 max-w-lg" />
+                                ) : ledgerFilters.hasActiveFilters ? (
+                                  <EmptyState
+                                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                                    title="No sessions match your filters"
+                                    description="Clear the search or filter selections to see every logged session."
+                                    action={
+                                      <Button size="sm" variant="outline" onClick={ledgerFilters.clearFilters}>
+                                        Clear filters
+                                      </Button>
+                                    }
+                                  />
+                                ) : (
+                                  <EmptyState
+                                    icon={<Users className="h-5 w-5" aria-hidden="true" />}
+                                    title="No sessions recorded yet"
+                                    description="Log utilization against a scheduled day to build the faculty timesheet."
+                                  />
+                                )}
+                              </TableStateRow>
                             ) : (
-                              ledgerFilters.filteredRows.map((row) => {
+                              ledgerPagedRows.map((row) => {
                                 const s = row.session;
+                                const isOpenSession = !["Completed", "Cancelled", "Not Conducted"].includes(s.status);
+                                const facultyType = resolveFacultyType(s.vertical);
+                                const menuItems: MenuItem[] = isOpenSession
+                                  ? [
+                                      {
+                                        key: "edit",
+                                        label: "Edit session topic",
+                                        icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
+                                        onSelect: () => handleEditSession(s),
+                                      },
+                                      {
+                                        key: "not-conducted",
+                                        label: "Mark not conducted",
+                                        icon: <Ban className="h-4 w-4" aria-hidden="true" />,
+                                        onSelect: () => handleSessionOutcome(s, "not-conducted"),
+                                      },
+                                      {
+                                        key: "cancel",
+                                        label: "Cancel session",
+                                        icon: <AlertTriangle className="h-4 w-4" aria-hidden="true" />,
+                                        onSelect: () => handleSessionOutcome(s, "cancel"),
+                                        tone: "destructive",
+                                      },
+                                    ]
+                                  : [];
+
                                 return (
                                   <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                                    <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{row.seq}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.entity?.name || activeBatch.entity_id || "—"}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.category || "—"}</td>
-                                <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
-                                      <span style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 4,
-                                        padding: "2px 8px",
-                                        borderRadius: 4,
-                                        fontSize: "0.7rem",
-                                        fontWeight: 600,
-                                        background: s.vertical ? "#e8f2fb" : "#f1f5f9",
-                                        color: s.vertical ? "#0b5cab" : "var(--text-dim)",
-                                        border: s.vertical ? "1px solid #bfdbfe" : "1px solid var(--border-subtle)"
-                                      }}>
-                                        {s.vertical || "—"}
-                                      </span>
-                                    </td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.client_name || "—"}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.program_name || "—"}</td>
-                                    <td style={{ padding: "8px 10px", fontWeight: 600, color: "#0b5cab", fontFamily: "monospace", fontSize: "0.75rem" }}>{activeBatch.batch_id}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", whiteSpace: "nowrap" }}>{formatDate(s.date_of_training)}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{s.topic}</td>
-                                    <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-main)" }}>{s.faculty_name}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
-                                      <span style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 4,
-                                        padding: "2px 8px",
-                                        borderRadius: 4,
-                                        fontSize: "0.7rem",
-                                        fontWeight: 600,
-                                        background: "#fff7ed",
-                                        color: "#9a3412",
-                                        border: "1px solid #fed7aa"
-                                      }}>
-                                        {s.vertical || "—"}
-                                      </span>
-                                    </td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center" }}>
-                                      <span style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 4,
-                                        padding: "2px 8px",
-                                        borderRadius: 4,
-                                        fontSize: "0.7rem",
-                                        fontWeight: 600,
-                                        background: s.vertical?.includes("External") ? "#fef2f2" : "#f0fdf4",
-                                        color: s.vertical?.includes("External") ? "#b91c1c" : "#166534",
-                                        border: s.vertical?.includes("External") ? "1px solid #fecaca" : "1px solid #bbf7d0"
-                                      }}>
-                                        {s.vertical?.includes("Internal") && !s.vertical?.includes("External") ? "Internal" : s.vertical?.includes("External") && !s.vertical?.includes("Internal") ? "External" : s.vertical?.includes("HOP") ? "HOP" : "Mixed"}
-                                      </span>
-                                    </td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", textAlign: "center", fontWeight: 600 }}>{s.no_of_hours} hrs</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)", maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                                      {s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : "—")}
-                                    </td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.venue || "—"}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{s.location_city || activeBatch.location_city || "—"}</td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>
-                                      <span style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 4,
-                                        padding: "2px 8px",
-                                        borderRadius: 4,
-                                        fontSize: "0.7rem",
-                                        fontWeight: 600,
-                                        background: "#f8fafc",
-                                        color: "var(--text-main)",
-                                        border: "1px solid var(--border-subtle)"
-                                      }}>
-                                        {s.mode_of_delivery}
-                                      </span>
-                                    </td>
-                                    <td style={{ padding: "8px 10px", color: "var(--text-main)" }}>{activeBatch.coordinator?.full_name || activeBatch.coordinator_id || "—"}</td>
-                                    <td style={{ padding: "8px 10px" }}>
-                                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                                        {!(["Completed", "Cancelled", "Not Conducted"].includes(s.status)) && (
-                                          <>
-                                            <button onClick={() => handleEditSession(s)} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Edit">
-                                              Edit
+                                    {ledgerColumns.isVisible("seq") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, fontWeight: 600 }}>{row.seq}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("entity") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.entity || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("category") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.category || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("vertical") && (
+                                      <td style={LEDGER_TD_STYLE}>
+                                        <Badge variant={row.vertical ? "info" : "secondary"} size="sm" className="normal-case tracking-normal">
+                                          {row.vertical || "—"}
+                                        </Badge>
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("client") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.client || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("program") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.program || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("batchId") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, fontWeight: 600, color: "#0b5cab", fontFamily: "monospace", fontSize: "0.75rem" }}>
+                                        {row.batchId}
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("date") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, whiteSpace: "nowrap" }}>{formatDate(row.dateOfTraining)}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("topic") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                                        {row.topic}
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("faculty") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, fontWeight: 600 }}>{row.facultyName || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("facultyType") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, textAlign: "center" }}>
+                                        <Badge
+                                          variant={facultyType === "External" ? "destructive" : "success"}
+                                          size="sm"
+                                          className="normal-case tracking-normal"
+                                        >
+                                          {facultyType}
+                                        </Badge>
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("hours") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, textAlign: "center", fontWeight: 600 }}>
+                                        {row.hours === null ? "—" : `${row.hours} hrs`}
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("moduleFeedback") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                                        {row.moduleFeedback || "—"}
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("venue") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.venue || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("city") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.locationCity || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("mode") && (
+                                      <td style={LEDGER_TD_STYLE}>
+                                        <Badge variant="secondary" size="sm" className="normal-case tracking-normal">
+                                          {row.modeOfDelivery || "—"}
+                                        </Badge>
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("coordinator") && (
+                                      <td style={LEDGER_TD_STYLE}>{row.coordinator || "—"}</td>
+                                    )}
+                                    {ledgerColumns.isVisible("status") && (
+                                      <td style={{ ...LEDGER_TD_STYLE, textAlign: "center" }}>
+                                        <StatusBadge status={row.status} />
+                                      </td>
+                                    )}
+                                    {ledgerColumns.isVisible("actions") && (
+                                      <td style={{ ...LEDGER_ACTIONS_TH_STYLE, textAlign: "right", background: "#ffffff" }}>
+                                        <RowActions>
+                                          {isOpenSession ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleEditSession(s)}
+                                              className={ROW_ACTION_BUTTON}
+                                              aria-label={`Edit topic for session ${row.seq}`}
+                                              title="Edit session topic"
+                                            >
+                                              <Edit3 className="h-4 w-4" aria-hidden="true" />
                                             </button>
-                                            <button onClick={() => handleSessionOutcome(s, "not-conducted")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Not Conducted">
-                                              Not Conducted
+                                          ) : s.status === "Completed" ? null : (
+                                            <button
+                                              type="button"
+                                              onClick={() => openGate1Modal(s)}
+                                              className={ROW_ACTION_BUTTON}
+                                              aria-label={`Submit Gate 1 feedback for session ${row.seq}`}
+                                              title="Submit Gate 1 feedback"
+                                            >
+                                              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                                             </button>
-                                            <button onClick={() => handleSessionOutcome(s, "cancel")} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "0.7rem" }} title="Cancel">
-                                              Cancel
-                                            </button>
-                                          </>
-                                        )}
-                                        {s.status === "Completed" ? (
-                                          <span style={{
-                                            display: "inline-flex",
-                                            alignItems: "center",
-                                            gap: 4,
-                                            background: "#f0fdf4",
-                                            color: "#16a34a",
-                                            border: "1px solid #bbf7d0",
-                                            borderRadius: 4,
-                                            padding: "3px 8px",
-                                            fontSize: "0.7rem",
-                                            fontWeight: 700
-                                          }}>
-                                            <CheckCircle2 size={11} /> Completed
-                                          </span>
-                                        ) : (
-                                          <button
-                                            onClick={() => {
-                                              setCompletingSession(s);
-                                              setGate1Rating(4.5);
-                                              setGate1Feedback("");
-                                            }}
-                                            className="btn btn-primary"
-                                            style={{ padding: "4px 8px", fontSize: "0.7rem" }}
-                                          >
-                                            Gate 1 Complete
-                                          </button>
-                                        )}
-                                      </div>
-                                    </td>
+                                          )}
+                                          {menuItems.length > 0 && (
+                                            <TableMenu
+                                              items={menuItems}
+                                              label={`More actions for session ${row.seq}`}
+                                            />
+                                          )}
+                                        </RowActions>
+                                      </td>
+                                    )}
                                   </tr>
                                 );
                               })
@@ -2343,8 +2496,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Average Batch Feedback Rating</div>
                     <div style={{ fontSize: "1.3rem", fontWeight: 800, marginTop: 2 }}>
                       {allSessionsCompleted
-                        ? (batch.batch_avg_feedback ? (
-                            <span style={{ color: "#b45309" }}>{batch.batch_avg_feedback} / 5.0</span>
+                        ? (activeBatch.batch_avg_feedback ? (
+                            <span style={{ color: "#b45309" }}>{activeBatch.batch_avg_feedback} / 5.0</span>
                           ) : (
                             <span style={{ color: "var(--text-dim)" }}>No feedback submitted</span>
                           ))
@@ -2388,7 +2541,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   Import the final feedback workbook first. The system calculates NPS from promoters, passive responses, and detractors before closure.
                 </p>
 
-                {batch.status !== "Completed" && (
+                {activeBatch.status !== "Completed" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
                     <label style={{
                       display: "flex",
@@ -2440,7 +2593,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   </div>
                 )}
 
-                {batch.status === "Completed" ? (
+                {activeBatch.status === "Completed" ? (
                   <div style={{
                     background: "#f0fdf4",
                     border: "1px solid #bbf7d0",
@@ -2455,14 +2608,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       <div>
                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Final Batch NPS</div>
                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#16a34a" }}>
-                          {batch.batch_nps}
+                          {activeBatch.batch_nps}
                         </div>
                       </div>
-                      {batch.retrospective_notes && (
+                      {activeBatch.retrospective_notes && (
                         <div>
                           <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Retrospective Notes</div>
                           <div style={{ fontSize: "0.825rem", color: "var(--text-main)", marginTop: 2 }}>
-                            {batch.retrospective_notes}
+                            {activeBatch.retrospective_notes}
                           </div>
                         </div>
                       )}
@@ -2594,51 +2747,26 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
             )}
           </div>
         </div>
-      </div>
+      </DialogContent>
 
       {/* Modal: Add Single Session */}
-      {isAddSessionOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1050,
-          padding: 16
-        }} onClick={() => setIsAddSessionOpen(false)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
+      <Dialog open={isAddSessionOpen} onOpenChange={(next) => { if (!next) setIsAddSessionOpen(false); }}>
+        <DialogContent
+          className="glass-panel max-h-[calc(100vh-32px)] gap-0 overflow-y-auto p-6 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 480, background: "#ffffff", borderRadius: 16 }}
+        >
+          <DialogHeader className="block space-y-0 border-b-0 p-0">
+            <DialogTitle className="text-xl font-bold" style={{ color: "var(--text-main)" }}>
               Schedule Session
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px 0" }}>
-              Add a single delivery slot to <strong>{batch.batch_id}</strong>.
-            </p>
+            </DialogTitle>
+            <DialogDescription className="mb-4">
+              Add a single delivery slot to <strong>{activeBatch.batch_id}</strong>.
+            </DialogDescription>
+          </DialogHeader>
 
-            {sessionError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "8px 12px",
-                borderRadius: 6,
-                fontSize: "0.825rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 14
-              }}>
-                <AlertCircle size={15} />
-                <span>{sessionError}</span>
-              </div>
-            )}
+          {sessionError && <ErrorBanner message={sessionError} className="mb-3.5" />}
 
-            <form onSubmit={handleCreateSession} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <form onSubmit={handleCreateSession} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
                   Session Topic / Module *
@@ -2720,7 +2848,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   type="text"
                   value={sessionFacultyName}
                   onChange={(e) => setSessionFacultyName(e.target.value)}
-                  placeholder={batch.faculty_assigned_text || "e.g. Lead Trainer"}
+                  placeholder={activeBatch.faculty_assigned_text || "e.g. Lead Trainer"}
                   className="glass-input"
                   style={{ width: "100%" }}
                 />
@@ -2735,17 +2863,20 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
-      {editingScheduledSession && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1060, padding: 16 }} onClick={() => setEditingScheduledSession(null)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 520, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 5px" }}>Edit Scheduled Session</h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px" }}>Correct any missing or incorrectly parsed timetable details.</p>
-            {scheduledEditError && <div style={{ color: "#b91c1c", background: "#fef2f2", border: "1px solid #fecaca", padding: "8px 10px", borderRadius: 6, fontSize: "0.8rem", marginBottom: 12 }}>{scheduledEditError}</div>}
-            <form onSubmit={saveScheduledSessionEdit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Dialog open={!!editingScheduledSession} onOpenChange={(next) => { if (!next) setEditingScheduledSession(null); }}>
+        <DialogContent
+          className="glass-panel max-h-[calc(100vh-32px)] gap-0 overflow-y-auto p-6 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 520, background: "#ffffff", borderRadius: 16 }}
+        >
+          <DialogHeader className="block space-y-0 border-b-0 p-0">
+            <DialogTitle className="text-lg font-bold" style={{ color: "var(--text-main)" }}>Edit Scheduled Session</DialogTitle>
+            <DialogDescription className="mb-4">Correct any missing or incorrectly parsed timetable details.</DialogDescription>
+          </DialogHeader>
+          {scheduledEditError && <ErrorBanner message={scheduledEditError} className="mb-3" />}
+          <form onSubmit={saveScheduledSessionEdit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Module / Topic *<input required value={scheduledEditForm.module} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, module: e.target.value })} /></label>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <label style={{ fontSize: "0.8rem", fontWeight: 600 }}>Date *<input required type="date" value={scheduledEditForm.session_date} className="glass-input" style={{ width: "100%", marginTop: 4 }} onChange={(e) => setScheduledEditForm({ ...scheduledEditForm, session_date: e.target.value })} /></label>
@@ -2761,53 +2892,27 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 <button type="submit" className="btn btn-primary" disabled={isSavingScheduledEdit}>{isSavingScheduledEdit ? "Saving..." : "Save Changes"}</button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: Average Batch Feedback Completion */}
-      {completingSession && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1050,
-          padding: 16
-        }} onClick={() => setCompletingSession(null)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
+      <Dialog open={!!completingSession} onOpenChange={(next) => { if (!next) setCompletingSession(null); }}>
+        <DialogContent
+          className="glass-panel max-h-[calc(100vh-32px)] gap-0 overflow-y-auto p-6 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 460, background: "#ffffff", borderRadius: 16 }}
+        >
+          <DialogHeader className="block space-y-0 border-b-0 p-0">
+            <DialogTitle className="text-xl font-bold" style={{ color: "var(--text-main)" }}>
               Average Batch Feedback: Complete Session
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px 0" }}>
-              Submit verified module feedback for <strong>{completingSession.topic}</strong>.
-            </p>
+            </DialogTitle>
+            <DialogDescription className="mb-4">
+              Submit verified module feedback for <strong>{completingSession?.topic}</strong>.
+            </DialogDescription>
+          </DialogHeader>
 
-            {gate1Error && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "8px 12px",
-                borderRadius: 6,
-                fontSize: "0.825rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 14
-              }}>
-                <AlertCircle size={15} />
-                <span>{gate1Error}</span>
-              </div>
-            )}
+          {gate1Error && <ErrorBanner message={gate1Error} className="mb-3.5" />}
 
-            <form onSubmit={handleCompleteGate1} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <form onSubmit={handleCompleteGate1} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
                   Student Module Rating (1.0 to 5.0) *
@@ -2865,53 +2970,27 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: NPS Closure */}
-      {isGate2ModalOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1050,
-          padding: 16
-        }} onClick={() => setIsGate2ModalOpen(false)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 500, padding: 24, background: "#ffffff" }}>
-            <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--text-main)", margin: "0 0 6px 0" }}>
+      <Dialog open={isGate2ModalOpen} onOpenChange={(next) => { if (!next) setIsGate2ModalOpen(false); }}>
+        <DialogContent
+          className="glass-panel max-h-[calc(100vh-32px)] gap-0 overflow-y-auto p-6 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 500, background: "#ffffff", borderRadius: 16 }}
+        >
+          <DialogHeader className="block space-y-0 border-b-0 p-0">
+            <DialogTitle className="text-xl font-bold" style={{ color: "var(--text-main)" }}>
               NPS Closure: Batch NPS Closure
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 16px 0" }}>
-              Finalize batch performance metrics and close <strong>{batch.batch_id}</strong>.
-            </p>
+            </DialogTitle>
+            <DialogDescription className="mb-4">
+              Finalize batch performance metrics and close <strong>{activeBatch.batch_id}</strong>.
+            </DialogDescription>
+          </DialogHeader>
 
-            {gate2Error && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "8px 12px",
-                borderRadius: 6,
-                fontSize: "0.825rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 14
-              }}>
-                <AlertCircle size={15} />
-                <span>{gate2Error}</span>
-              </div>
-            )}
+          {gate2Error && <ErrorBanner message={gate2Error} className="mb-3.5" />}
 
-            <form onSubmit={handleCloseBatchGate2} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <form onSubmit={handleCloseBatchGate2} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
                   Official Batch NPS Score (0 to 10) *
@@ -2967,83 +3046,59 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: Timetable Excel Ingestion & Conflict Engine */}
-      {isIngestModalOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1050,
-          padding: 16
-        }} onClick={() => setIsIngestModalOpen(false)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: 640, maxHeight: "90vh", display: "flex", flexDirection: "column", padding: 24, background: "#ffffff" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div>
-                <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Workflow 2: Timetable Ingestion & Conflict Engine
-                </h3>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                  Upload `.xlsx` / `.csv` schedule, run dry-run conflict check, and batch schedule.
-                </p>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                  <a
-                    href="/batch_schedule_january_2027.xlsx"
-                    download="batch_schedule_january_2027.xlsx"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontSize: "0.75rem",
-                      fontWeight: 600,
-                      color: "#1e40af",
-                      background: "#eff6ff",
-                      border: "1px solid #bfdbfe",
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      textDecoration: "none",
-                    }}
-                  >
-                    <FileSpreadsheet size={14} color="#2563eb" />
-                    <span>Download January 2027 Schedule Template (.xlsx)</span>
-                  </a>
-                </div>
+      <Dialog open={isIngestModalOpen} onOpenChange={(next) => { if (!next) setIsIngestModalOpen(false); }}>
+        <DialogContent
+          className="glass-panel flex max-h-[calc(100vh-32px)] flex-col gap-0 overflow-hidden p-6 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 760, background: "#ffffff", borderRadius: 16, position: "relative" }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
+            <DialogHeader className="block space-y-0 border-b-0 p-0">
+              <DialogTitle className="text-xl font-bold" style={{ color: "var(--text-main)" }}>
+                Workflow 2: Timetable Ingestion & Conflict Engine
+              </DialogTitle>
+              <DialogDescription className="mt-1">
+                Upload `.xlsx` / `.csv` schedule, run dry-run conflict check, and batch schedule.
+              </DialogDescription>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <a
+                  href="/batch_schedule_january_2027.xlsx"
+                  download="batch_schedule_january_2027.xlsx"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    color: "#1e40af",
+                    background: "#eff6ff",
+                    border: "1px solid #bfdbfe",
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    textDecoration: "none",
+                  }}
+                >
+                  <FileSpreadsheet size={14} color="#2563eb" />
+                  <span>Download January 2027 Schedule Template (.xlsx)</span>
+                </a>
               </div>
-              <button onClick={() => setIsIngestModalOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-dim)" }}>
-                <X size={20} />
-              </button>
-            </div>
+            </DialogHeader>
+            <button
+              onClick={() => setIsIngestModalOpen(false)}
+              aria-label="Close timetable ingestion"
+              style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-dim)", flexShrink: 0 }}
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
 
-            {ingestError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "8px 12px",
-                borderRadius: 6,
-                fontSize: "0.825rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 12
-              }}>
-                <AlertCircle size={15} />
-                <span>{ingestError}</span>
-              </div>
-            )}
+          {ingestError && <ErrorBanner message={ingestError} className="mb-3" />}
 
-            {/* File Upload Section */}
-            {extractedRows.length === 0 ? (
+          {/* File Upload Section */}
+          {extractedRows.length === 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {ingestSummary && (
                   <div style={{
@@ -3118,23 +3173,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", gap: 12 }}>
-                {/* Extracted preview */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-main)" }}>
-                    Extracted {extractedRows.length} Delivery Slot(s)
-                  </span>
-                  <button
-                    onClick={handleValidateSchedule}
-                    disabled={isValidating}
-                    className="btn btn-secondary"
-                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", padding: "5px 12px" }}
-                  >
-                    <ShieldAlert size={14} color="#0b5cab" />
-                    <span>{isValidating ? "Validating..." : "Run Conflict Engine Check"}</span>
-                  </button>
-                </div>
-
-                {/* Validation Status Banner */}
+          {/* Validation Status Banner */}
                 {hasValidated && (
                   validationConflicts.length === 0 ? (
                     <div style={{
@@ -3152,19 +3191,11 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       <span><strong>All Clear:</strong> Zero faculty capacity conflicts detected! Ready to apply schedule.</span>
                     </div>
                   ) : (
-                    <div style={{
-                      background: "#fef2f2",
-                      border: "1px solid #fecaca",
-                      color: "#b91c1c",
-                      padding: "10px 14px",
-                      borderRadius: 6,
-                      fontSize: "0.825rem"
-                    }}>
-                      <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                        <AlertTriangle size={15} />
-                        <span>{validationConflicts.length} Conflict(s) Flagged by Conflict Engine:</span>
-                      </div>
-                      <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
+                    <div className="flex flex-col gap-2">
+                      <ErrorBanner
+                        message={`${validationConflicts.length} conflict(s) flagged by the conflict engine:`}
+                      />
+                      <ul className="ml-6 list-disc text-xs text-destructive" style={{ padding: 0 }}>
                         {validationConflicts.map((c, i) => (
                           <li key={i}>{c.reason} on {c.date} ({c.faculty_name})</li>
                         ))}
@@ -3173,12 +3204,54 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   )
                 )}
 
-                {/* Table of extracted rows */}
+          {/* Extracted preview */}
                 <FullscreenTable
                   panelClassName=""
                   strategy="absolute"
+                  stickyThead
                   style={{ flex: 1, minHeight: 0, border: "1px solid var(--border-subtle)", borderRadius: 6, background: "#ffffff" }}
                   contentStyle={{ flex: 1, overflowY: "auto", minHeight: 0 }}
+                  title={
+                    <PanelTitle
+                      title={`Extracted ${extractedRows.length} Delivery Slot${extractedRows.length === 1 ? "" : "s"}`}
+                      description="Review every parsed row before scheduling. Editing a row re-runs no checks until you validate again."
+                    />
+                  }
+                  actions={
+                    <>
+                      <button
+                        onClick={handleValidateSchedule}
+                        disabled={isValidating}
+                        className="btn btn-secondary"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem", padding: "5px 12px" }}
+                      >
+                        <ShieldAlert size={14} color="#0b5cab" />
+                        <span>{isValidating ? "Validating..." : "Run Conflict Engine Check"}</span>
+                      </button>
+                      <ColumnsMenu
+                        columns={TIMETABLE_COLUMN_KEYS}
+                        hidden={timetableColumns.hidden}
+                        onToggle={timetableColumns.toggle}
+                        onShowAll={timetableColumns.showAll}
+                      />
+                      <ExportButton
+                        filename={`timetable-preview-${activeBatch.batch_id}`}
+                        columns={TIMETABLE_EXPORT_COLUMNS}
+                        rows={timetableFilters.filteredRows}
+                      />
+                    </>
+                  }
+                  footer={
+                    <PaginationControls
+                      label="Timetable preview pages"
+                      currentPage={timetablePage}
+                      totalItems={timetableVisibleRows.length}
+                      pageSize={timetablePageSize}
+                      pageSizeOptions={[10, 25, 50, 100]}
+                      onPageChange={setTimetablePage}
+                      onPageSizeChange={setTimetablePageSize}
+                    />
+                  }
                   toolbar={
                     <TableFilters
                       search={{
@@ -3209,44 +3282,84 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     />
                   }
                 >
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                  <table
+                  className="glass-table table-pin-first-col w-full border-collapse"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}
+                >
+                    <TableCaption>Rows parsed from the uploaded timetable file</TableCaption>
                     <thead>
-                      <tr style={{ background: "#f8fafc", borderBottom: "1px solid var(--border-subtle)" }}>
-                        <SortableHeaderCell columnKey="date" label="Date" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
-                        <SortableHeaderCell columnKey="topic" label="Topic" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
-                        <SortableHeaderCell columnKey="faculty" label="Faculty" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
-                        <SortableHeaderCell columnKey="hours" label="Hours" sortKey={timetableSort.sortKey} sortDir={timetableSort.sortDir} onSort={timetableSort.toggleSort} style={TIMETABLE_TH_STYLE} />
-                        <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Action</PlainHeaderCell>
+                      <tr>
+                        {TIMETABLE_COLUMN_DEFS.map((column) =>
+                          column.key === "action" ? null : timetableColumns.isVisible(column.key as TimetableColumnKey) ? (
+                            <SortableHeaderCell
+                              key={column.key}
+                              columnKey={column.key}
+                              label={column.label}
+                              style={{ ...TIMETABLE_TH_STYLE, textAlign: column.align ?? "left" }}
+                              sortKey={timetableSort.sortKey}
+                              sortDir={timetableSort.sortDir}
+                              onSort={timetableSort.toggleSort}
+                            />
+                          ) : null
+                        )}
+                        {timetableColumns.isVisible("action") && (
+                          <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Action</PlainHeaderCell>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
-                      {timetableVisibleRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={TIMETABLE_COLUMNS} style={{ padding: "28px 12px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                            No timetable rows match the current search or filters.
-                          </td>
-                        </tr>
+                      {timetablePagedRows.length === 0 ? (
+                        <TableStateRow colSpan={timetableVisibleColumnCount}>
+                          {timetableFilters.hasActiveFilters ? (
+                            <EmptyState
+                              icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                              title="No rows match your filters"
+                              description="Clear the search or filter selections to see every parsed slot."
+                              action={
+                                <Button size="sm" variant="outline" onClick={timetableFilters.clearFilters}>
+                                  Clear filters
+                                </Button>
+                              }
+                            />
+                          ) : (
+                            <EmptyState
+                              icon={<FileSpreadsheet className="h-5 w-5" aria-hidden="true" />}
+                              title="No schedule rows were extracted"
+                              description="Check the column names and date values, then parse the file again."
+                            />
+                          )}
+                        </TableStateRow>
                       ) : (
-                        timetableVisibleRows.map(({ row: r, index: i }) => (
+                        timetablePagedRows.map(({ row: r, index: i }) => (
                           <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                            <td style={{ padding: "8px 12px", fontWeight: 600 }}>
-                              {editingParsedRow === i ? <input type="date" value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
-                            </td>
-                            <td style={{ padding: "8px 12px" }}>
-                              {editingParsedRow === i ? <input value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
-                            </td>
-                            <td style={{ padding: "8px 12px" }}>
-                              {editingParsedRow === i ? <input value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
-                            </td>
-                            <td style={{ padding: "8px 12px" }}>
-                              {editingParsedRow === i ? <input type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
-                            </td>
-                            <td style={{ padding: "8px 12px" }}>
-                              <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
-                                {editingParsedRow === i ? <Check size={13} /> : <Edit3 size={13} />}
-                                {editingParsedRow === i ? "Done" : "Edit"}
-                              </button>
-                            </td>
+                            {timetableColumns.isVisible("date") && (
+                              <td style={{ ...TIMETABLE_TD_STYLE, fontWeight: 600 }}>
+                                {editingParsedRow === i ? <input type="date" aria-label={`Date of training for parsed row ${i + 1}`} value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
+                              </td>
+                            )}
+                            {timetableColumns.isVisible("topic") && (
+                              <td style={TIMETABLE_TD_STYLE}>
+                                {editingParsedRow === i ? <input aria-label={`Topic for parsed row ${i + 1}`} value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
+                              </td>
+                            )}
+                            {timetableColumns.isVisible("faculty") && (
+                              <td style={TIMETABLE_TD_STYLE}>
+                                {editingParsedRow === i ? <input aria-label={`Faculty for parsed row ${i + 1}`} value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
+                              </td>
+                            )}
+                            {timetableColumns.isVisible("hours") && (
+                              <td style={TIMETABLE_TD_STYLE}>
+                                {editingParsedRow === i ? <input aria-label={`Hours for parsed row ${i + 1}`} type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
+                              </td>
+                            )}
+                            {timetableColumns.isVisible("action") && (
+                              <td style={TIMETABLE_TD_STYLE}>
+                                <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
+                                  {editingParsedRow === i ? <Check size={13} aria-hidden="true" /> : <Edit3 size={13} aria-hidden="true" />}
+                                  {editingParsedRow === i ? "Done" : "Edit"}
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))
                       )}
@@ -3277,61 +3390,34 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: Edit Batch */}
-      {isEditModalOpen && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(15, 23, 42, 0.6)",
-          backdropFilter: "blur(4px)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1050,
-          padding: 16
-        }} onClick={() => setIsEditModalOpen(false)}>
-          <div className="glass-panel" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 660, maxHeight: "90vh", overflowY: "auto", padding: 24, background: "#ffffff", borderRadius: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div>
-                <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>
-                  Edit Batch Details
-                </h3>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                  Modifying <strong>{activeBatch.batch_id}</strong>
-                </p>
-              </div>
-              <button
-                onClick={() => setIsEditModalOpen(false)}
-                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}
-              >
-                <X size={20} />
-              </button>
-            </div>
+      <Dialog open={isEditModalOpen} onOpenChange={(next) => { if (!next) setIsEditModalOpen(false); }}>
+        <DialogContent
+          className="glass-panel max-h-[calc(100vh-32px)] gap-0 overflow-y-auto p-6 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 660, background: "#ffffff", borderRadius: 16 }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+            <DialogHeader className="block space-y-0 border-b-0 p-0">
+              <DialogTitle className="text-xl font-bold" style={{ color: "var(--text-main)" }}>
+                Edit Batch Details
+              </DialogTitle>
+              <DialogDescription className="mt-1">
+                Modifying <strong>{activeBatch.batch_id}</strong>
+              </DialogDescription>
+            </DialogHeader>
+            <button
+              onClick={() => setIsEditModalOpen(false)}
+              aria-label="Close edit batch"
+              style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4, flexShrink: 0 }}
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
 
-            {editError && (
-              <div style={{
-                background: "#fef2f2",
-                border: "1px solid #fecaca",
-                color: "#f43f5e",
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: "0.825rem",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 14
-              }}>
-                <AlertCircle size={15} />
-                <span>{editError}</span>
-              </div>
-            )}
+          {editError && <ErrorBanner message={editError} className="mb-3.5" />}
 
             <form onSubmit={handleSaveEdit} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div style={{ gridColumn: "1 / -1" }}>
@@ -3550,98 +3636,55 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: Batch Lifecycle Status Transition (OnHold / Cancelled / Resume) */}
-      {isStatusModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(15, 23, 42, 0.65)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "center",
-            zIndex: 1100,
-            padding: 16,
-            overflowY: "auto",
-          }}
-          onClick={() => setIsStatusModalOpen(false)}
+      <Dialog open={isStatusModalOpen} onOpenChange={(next) => { if (!next) setIsStatusModalOpen(false); }}>
+        <DialogContent
+          className="glass-panel max-h-[calc(100vh-32px)] gap-0 overflow-y-auto p-0 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 490, background: "#ffffff", borderRadius: 14 }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxWidth: 490,
-              width: "100%",
-              background: "#ffffff",
-              borderRadius: 14,
-              overflow: "hidden",
-              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
-              border: "1px solid var(--border-subtle)",
-            }}
-          >
             {/* Modal Header */}
-            <div style={{
-              padding: "18px 22px",
-              borderBottom: "1px solid var(--border-subtle)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              background: targetStatus === "Cancelled" ? "#fef2f2" : targetStatus === "OnHold" ? "#fffbeb" : "#f0fdf4",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {targetStatus === "Cancelled" ? (
-                  <Ban size={22} color="#e11d48" />
-                ) : targetStatus === "OnHold" ? (
-                  <PauseCircle size={22} color="#d97706" />
-                ) : (
-                  <PlayCircle size={22} color="#16a34a" />
-                )}
-                <div>
-                  <h3 style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
-                    {targetStatus === "Cancelled" ? "Cancel Batch" : targetStatus === "OnHold" ? "Put Batch On Hold" : "Reactivate / Resume Batch"}
-                  </h3>
-                  <p style={{ fontSize: "0.775rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                    Batch Reference: <strong>{activeBatch.batch_id}</strong>
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsStatusModalOpen(false);
-                }}
-                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Modal Form */}
-            <form onSubmit={handleSaveStatus} style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
-              {statusError && (
-                <div style={{
-                  background: "#fef2f2",
-                  border: "1px solid #fecaca",
-                  color: "#f43f5e",
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  fontSize: "0.825rem",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6
-                }}>
-                  <AlertCircle size={15} />
-                  <span>{statusError}</span>
-                </div>
+          <div style={{
+            padding: "18px 22px",
+            borderBottom: "1px solid var(--border-subtle)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            background: targetStatus === "Cancelled" ? "#fef2f2" : targetStatus === "OnHold" ? "#fffbeb" : "#f0fdf4",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {targetStatus === "Cancelled" ? (
+                <Ban size={22} color="#e11d48" aria-hidden="true" />
+              ) : targetStatus === "OnHold" ? (
+                <PauseCircle size={22} color="#d97706" aria-hidden="true" />
+              ) : (
+                <PlayCircle size={22} color="#16a34a" aria-hidden="true" />
               )}
+              <DialogHeader className="block space-y-0 border-b-0 p-0">
+                <DialogTitle className="text-base font-bold" style={{ color: "var(--text-main)" }}>
+                  {targetStatus === "Cancelled" ? "Cancel Batch" : targetStatus === "OnHold" ? "Put Batch On Hold" : "Reactivate / Resume Batch"}
+                </DialogTitle>
+                <DialogDescription className="mt-0.5 text-xs">
+                  Batch Reference: <strong>{activeBatch.batch_id}</strong>
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsStatusModalOpen(false)}
+              aria-label="Close status change"
+              style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4, flexShrink: 0 }}
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* Modal Form */}
+          <form onSubmit={handleSaveStatus} style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+            {statusError && <ErrorBanner message={statusError} />}
 
               <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.45 }}>
                 {targetStatus === "Cancelled" ? (
@@ -3715,153 +3758,112 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6, paddingTop: 12, borderTop: "1px solid var(--border-subtle)" }}>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsStatusModalOpen(false);
-                  }}
-                  className="btn btn-secondary"
-                  style={{ padding: "8px 14px", fontSize: "0.85rem" }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingStatus || statusReason.trim().length < 3}
-                  className="btn btn-primary"
-                  style={{
-                    padding: "8px 16px",
-                    fontSize: "0.85rem",
-                    background: targetStatus === "Cancelled" ? "#e11d48" : targetStatus === "OnHold" ? "#d97706" : "#059669",
-                  }}
-                >
-                  {isSubmittingStatus ? "Saving..." : targetStatus === "Cancelled" ? "Confirm Cancellation" : targetStatus === "OnHold" ? "Confirm On Hold" : "Confirm Resume"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Log Faculty Utilization on Session Day */}
-      {isLogUtilizationOpen && selectedScheduleDay && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(15, 23, 42, 0.65)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1100,
-            padding: 16,
-          }}
-        >
-          {/* This modal is a sibling of the drawer panel, not a child of it, so the
-              drawer's click-to-close overlay is its parent. Every click in this form
-              therefore bubbled to that overlay and unmounted the whole drawer the
-              moment anyone pressed a field — including the native popups (faculty
-              datalist, selects, date and time pickers), whose presses on Windows land
-              outside the field. The guard above keeps every press inside the dialog,
-              backdrop included, from reaching the drawer. X, Cancel and Escape all
-              route through the discard guard, so nothing is lost without a prompt. */}
-          <div
-            ref={utilDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="util-modal-title"
-            style={{
-              maxWidth: 720,
-              width: "100%",
-              maxHeight: "calc(100vh - 32px)",
-              background: "#ffffff",
-              borderRadius: 14,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
-              border: "1px solid var(--border-subtle)",
-            }}
-          >
-            {/* Modal Header */}
-            <div
-              style={{
-                padding: "16px 22px",
-                borderBottom: "1px solid var(--border-subtle)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                background: "#f8fafc",
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
-                    background: "#eff6ff",
-                    color: "#2563eb",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Calendar size={20} />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <h3 id="util-modal-title" style={{ fontSize: "1.05rem", fontWeight: 700, margin: 0, color: "var(--text-main)" }}>
-                    Log Faculty Utilization
-                  </h3>
-                  <p style={{ fontSize: "0.775rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                    Day {selectedScheduleDay.sequence_number} &bull; {formatDate(selectedScheduleDay.session_date)}
-                    {activeBatch?.batch_id ? ` • ${activeBatch.batch_id}` : ""}
-                  </p>
-                </div>
-              </div>
               <button
                 type="button"
-                onClick={() => closeUtilModal()}
-                aria-label="Close"
-                style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4, flexShrink: 0 }}
+                onClick={() => setIsStatusModalOpen(false)}
+                className="btn btn-secondary"
+                style={{ padding: "8px 14px", fontSize: "0.85rem" }}
               >
-                <X size={20} />
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmittingStatus || statusReason.trim().length < 3}
+                className="btn btn-primary"
+                style={{
+                  padding: "8px 16px",
+                  fontSize: "0.85rem",
+                  background: targetStatus === "Cancelled" ? "#e11d48" : targetStatus === "OnHold" ? "#d97706" : "#059669",
+                }}
+              >
+                {isSubmittingStatus ? "Saving..." : targetStatus === "Cancelled" ? "Confirm Cancellation" : targetStatus === "OnHold" ? "Confirm On Hold" : "Confirm Resume"}
               </button>
             </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-            {/* Scrollable body. The submit button lives in the sticky footer and
-                targets this form, so Enter-to-submit still works. */}
-            <form
-              id="log-utilization-form"
-              onSubmit={handleLogUtilizationSubmit}
-              style={{ overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}
+      {/* Modal: Log Faculty Utilization on Session Day */}
+      {/* This dialog renders in a portal above the drawer, so no press inside it can
+          reach the drawer's dismiss layer — the previous hand-rolled overlay was a
+          sibling of the drawer panel and every field press unmounted the whole drawer,
+          including the native popups (faculty datalist, selects, date and time pickers)
+          whose presses on Windows land outside the field. Backdrop presses are refused
+          outright so a stray click cannot throw away a half-filled timesheet; X, Cancel
+          and Escape all route through the discard guard instead. */}
+      <Dialog
+        open={isLogUtilizationOpen && !!selectedScheduleDay}
+        onOpenChange={(next) => { if (!next) closeUtilModal(); }}
+      >
+        <DialogContent
+          className="glass-panel flex max-h-[calc(100vh-32px)] flex-col gap-0 overflow-hidden p-0 [&>button]:hidden"
+          style={{ width: "100%", maxWidth: 720, background: "#ffffff", borderRadius: 14 }}
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          {/* Modal Header */}
+          <div
+            style={{
+              padding: "16px 22px",
+              borderBottom: "1px solid var(--border-subtle)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              background: "#f8fafc",
+              flexShrink: 0,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: "#eff6ff",
+                  color: "#2563eb",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Calendar size={20} aria-hidden="true" />
+              </div>
+              <DialogHeader className="block min-w-0 space-y-0 border-b-0 p-0">
+                <DialogTitle className="text-base font-bold" style={{ color: "var(--text-main)" }}>
+                  Log Faculty Utilization
+                </DialogTitle>
+                <DialogDescription className="mt-0.5 text-xs">
+                  Day {selectedScheduleDay?.sequence_number} &bull; {formatDate(selectedScheduleDay?.session_date)}
+                  {activeBatch?.batch_id ? ` • ${activeBatch.batch_id}` : ""}
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            <button
+              type="button"
+              onClick={() => closeUtilModal()}
+              aria-label="Close log utilization dialog"
+              style={{ background: "transparent", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4, flexShrink: 0 }}
             >
-              {utilError && (
-                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", padding: "10px 14px", borderRadius: 8, fontSize: "0.825rem" }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                    <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600 }}>{utilError}</div>
-                      {utilConflicts.length > 0 && (
-                        <ul style={{ margin: "6px 0 0 0", paddingLeft: 18 }}>
-                          {utilConflicts.map((conflict, i) => (
-                            <li key={i} style={{ marginTop: 2 }}>{conflict}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* Scrollable body. The submit button lives in the sticky footer and
+              targets this form, so Enter-to-submit still works. */}
+          <form
+            id="log-utilization-form"
+            onSubmit={handleLogUtilizationSubmit}
+            style={{ overflowY: "auto", padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16, flex: 1, minHeight: 0 }}
+          >
+            {utilError && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <ErrorBanner message={utilError} />
+                {utilConflicts.length > 0 && (
+                  <ErrorBanner message={utilConflicts.join("  •  ")} />
+                )}
+              </div>
+)}
 
               {/* Batch context, read-only. These are facts about the batch, so the
                   ledger resolves them through the relationship rather than asking
@@ -3893,12 +3895,12 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                   Planned &mdash; from the timetable
                 </div>
                 <div style={{ color: "#1e293b", fontWeight: 600, marginTop: 4 }}>
-                  {selectedScheduleDay.module || "—"}
+                  {selectedScheduleDay?.module || "—"}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 5, color: "#475569", fontSize: "0.775rem" }}>
-                  <span>Trainer: <strong>{selectedScheduleDay.trainer_name || activeBatch?.faculty_assigned_text || "Unassigned"}</strong></span>
+                  <span>Trainer: <strong>{selectedScheduleDay?.trainer_name || activeBatch?.faculty_assigned_text || "Unassigned"}</strong></span>
                   <span>&bull;</span>
-                  <span>Hours: <strong>{selectedScheduleDay.duration_hours}</strong></span>
+                  <span>Hours: <strong>{selectedScheduleDay?.duration_hours}</strong></span>
                   <span>&bull;</span>
                   <span>
                     Window: <strong>{utilStartTime}&ndash;{utilEndTime}</strong>
@@ -3918,7 +3920,7 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     type="text"
                     value={utilTopic}
                     onChange={(e) => { setUtilTopic(e.target.value); markUtilDirty(); }}
-                    placeholder={selectedScheduleDay.module || "Topic delivered"}
+                    placeholder={selectedScheduleDay?.module || "Topic delivered"}
                     className="glass-input"
                     style={{ width: "100%" }}
                     required
@@ -4280,9 +4282,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                 </>
               )}
             </div>
-          </div>
-        </div>
-      )}
-    </div>
+        </DialogContent>
+      </Dialog>
+    </Dialog>
   );
 };

@@ -1,32 +1,22 @@
 from typing import List, Optional
 from decimal import Decimal
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.models.user import User
-from app.models.session import FacultyUtilization
-from app.models.batch import Batch
 from app.schemas.faculty import (
     FacultyResponse,
     FacultyUtilizationOverview,
     DomainUtilization,
 )
+from app.api.v1.faculty.repository_interfaces import IFacultyRepository
 
 
 class FacultyService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, faculty_repo: IFacultyRepository):
+        self.faculty_repo = faculty_repo
 
     def list(self, faculty_type: Optional[str] = None, domain: Optional[str] = None) -> List[FacultyResponse]:
-        query = self.db.query(User).filter(
-            User.role.ilike("faculty"),
-            User.is_active == True,
-        )
-        faculty_users = query.order_by(User.full_name.asc()).all()
-
-        results = []
-        for fac in faculty_users:
-            results.append(FacultyResponse(
+        return [
+            FacultyResponse(
                 id=fac.id,
                 full_name=fac.full_name,
                 email=fac.email,
@@ -35,21 +25,20 @@ class FacultyService:
                 domain=domain or "IT/ITES",
                 is_active=fac.is_active,
                 created_at=fac.created_at,
-            ))
-        return results
+            )
+            for fac in self.faculty_repo.list_active_faculty()
+        ]
 
     def utilization(self) -> FacultyUtilizationOverview:
-        faculty_users = self.db.query(User).filter(
-            User.role.ilike("faculty"),
-            User.is_active == True,
-        ).all()
+        faculty_users = self.faculty_repo.list_active_faculty()
         total_faculty = len(faculty_users)
 
-        deployed_rows = self.db.query(FacultyUtilization.faculty_name).filter(
-            FacultyUtilization.status.notin_(["Cancelled"])
-        ).distinct().all()
-        deployed_names = {row[0].strip().lower() for row in deployed_rows if row[0]}
-        active_deployed = len(deployed_names.intersection({f.full_name.strip().lower() for f in faculty_users}))
+        deployed_names = {
+            name.strip().lower()
+            for name in self.faculty_repo.get_distinct_deployed_faculty_names()
+        }
+        roster_names = {fac.full_name.strip().lower() for fac in faculty_users}
+        active_deployed = len(deployed_names.intersection(roster_names))
 
         if total_faculty > 0:
             utilization_pct = Decimal(str(round((active_deployed / total_faculty) * 100, 1)))
@@ -57,21 +46,14 @@ class FacultyService:
             utilization_pct = Decimal("0.0")
 
         # Compute breakdown by domain across batches and sessions
-        domains = ["IT/ITES", "Cloud", "DS/ML", "CyberSecurity", "FullStack"]
         breakdown = []
-        for d in domains:
-            domain_sessions = self.db.query(FacultyUtilization).join(
-                Batch, FacultyUtilization.batch_id == Batch.id
-            ).filter(
-                Batch.domain.ilike(f"%{d}%"),
-                FacultyUtilization.status.notin_(["Cancelled"])
-            ).all()
-
-            fac_in_domain = len({s.faculty_name.strip().lower() for s in domain_sessions if s.faculty_name})
+        for domain in ("IT/ITES", "Cloud", "DS/ML", "CyberSecurity", "FullStack"):
+            domain_sessions = self.faculty_repo.list_non_cancelled_deliveries_for_domain(domain)
+            faculty_in_domain = {s.faculty_name.strip().lower() for s in domain_sessions if s.faculty_name}
             hours = sum((s.no_of_hours for s in domain_sessions), Decimal("0.0"))
             breakdown.append(DomainUtilization(
-                domain=d,
-                faculty_count=fac_in_domain,
+                domain=domain,
+                faculty_count=len(faculty_in_domain),
                 hours_scheduled=hours,
             ))
 
@@ -80,4 +62,17 @@ class FacultyService:
             active_deployed_faculty=active_deployed,
             overall_utilization_percentage=utilization_pct,
             domain_breakdown=breakdown,
+        )
+
+    def utilization_export_rows(
+        self,
+        faculty_type: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List:
+        """Delivery ledger rows backing the utilization CSV export."""
+        return self.faculty_repo.list_utilization_for_export(
+            faculty_type=faculty_type,
+            start_date=start_date,
+            end_date=end_date,
         )

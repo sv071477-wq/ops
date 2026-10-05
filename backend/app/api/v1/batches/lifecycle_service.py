@@ -1,19 +1,15 @@
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Optional
 from uuid import UUID
 
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
-
-from app.models.batch import Batch
-from app.models.session import TrainingSession, FacultyUtilization
+from app.api.v1.batches.repository_interfaces import IBatchLifecycleRepository
 
 
 class BatchLifecycleService:
     """Service for managing automatic batch lifecycle state transitions."""
 
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, lifecycle_repo: IBatchLifecycleRepository):
+        self.lifecycle_repo = lifecycle_repo
 
     def sync_statuses(self) -> int:
         """
@@ -24,32 +20,20 @@ class BatchLifecycleService:
         updated_count = 0
 
         # Upcoming -> Ongoing (start_date == today)
-        upcoming_batches = self.db.query(Batch).filter(
-            Batch.status == "Upcoming",
-            Batch.start_date.isnot(None),
-            Batch.start_date <= datetime.combine(today, datetime.max.time()).replace(tzinfo=timezone.utc)
-        ).all()
-
-        for batch in upcoming_batches:
+        for batch in self.lifecycle_repo.list_upcoming_batches_started_by(today):
             if batch.start_date and batch.start_date.date() <= today:
                 batch.status = "Ongoing"
                 batch.updated_at = datetime.now(timezone.utc)
                 updated_count += 1
 
         # Ongoing -> Pending for Closure (end_date < today)
-        ongoing_batches = self.db.query(Batch).filter(
-            Batch.status == "Ongoing",
-            Batch.end_date.isnot(None),
-            Batch.end_date < datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
-        ).all()
-
-        for batch in ongoing_batches:
+        for batch in self.lifecycle_repo.list_ongoing_batches_ended_before(today):
             if batch.end_date and batch.end_date.date() < today:
                 batch.status = "Pending for Closure"
                 batch.updated_at = datetime.now(timezone.utc)
                 updated_count += 1
 
-        self.db.commit()
+        self.lifecycle_repo.commit()
         return updated_count
 
     def sync_session_statuses(self) -> int:
@@ -57,24 +41,15 @@ class BatchLifecycleService:
         Update TrainingSession status to Completed when faculty utilization is logged as Completed.
         Returns the number of sessions updated.
         """
-        # Find sessions with faculty utilization marked as Completed
-        completed_utilizations = self.db.query(FacultyUtilization).filter(
-            FacultyUtilization.training_session_id.isnot(None),
-            FacultyUtilization.status == "Completed"
-        ).all()
-
         updated_count = 0
         seen_session_ids = set()
 
-        for utilization in completed_utilizations:
+        for utilization in self.lifecycle_repo.list_completed_utilizations_with_session():
             if utilization.training_session_id in seen_session_ids:
                 continue
             seen_session_ids.add(utilization.training_session_id)
 
-            session = self.db.query(TrainingSession).filter(
-                TrainingSession.id == utilization.training_session_id
-            ).first()
-
+            session = self.lifecycle_repo.get_training_session_by_id(utilization.training_session_id)
             if session and session.status != "Completed":
                 session.status = "Completed"
                 # Copy feedback from utilization to session
@@ -85,7 +60,7 @@ class BatchLifecycleService:
                 session.updated_at = datetime.now(timezone.utc)
                 updated_count += 1
 
-        self.db.commit()
+        self.lifecycle_repo.commit()
         return updated_count
 
     def calculate_batch_avg_feedback(self, batch_id: UUID) -> Optional[float]:
@@ -93,39 +68,26 @@ class BatchLifecycleService:
         Calculate average batch feedback from all non-cancelled completed sessions.
         Called when all non-cancelled sessions are completed.
         """
-        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        batch = self.lifecycle_repo.get_batch_by_id(batch_id)
         if not batch:
             return None
 
-        # Get all non-cancelled sessions for this batch
-        sessions = self.db.query(TrainingSession).filter(
-            TrainingSession.batch_id == batch_id,
-            TrainingSession.status != "Cancelled"
-        ).all()
-
+        sessions = self.lifecycle_repo.list_non_cancelled_training_sessions(batch_id)
         if not sessions:
             return None
 
-        # Check if all non-cancelled sessions are completed
-        all_completed = all(s.status == "Completed" for s in sessions)
-        if not all_completed:
+        # Only write an average once the whole batch has been delivered.
+        if not all(s.status == "Completed" for s in sessions):
             return None
 
-        # Feedback is captured on the delivery ledger, not on the planned timetable:
-        # `training_sessions` has no feedback columns, so reading them off the
-        # TrainingSession rows raised AttributeError on every fully-delivered batch.
-        feedbacks = [row.feedback_rating for row in self.db.query(FacultyUtilization).filter(
-            FacultyUtilization.batch_id == batch_id,
-            FacultyUtilization.status == "Completed",
-            FacultyUtilization.feedback_rating.isnot(None),
-        ).all()]
+        feedbacks = self.lifecycle_repo.list_completed_feedback_ratings(batch_id)
         if not feedbacks:
             return None
 
         avg_feedback = sum(float(f) for f in feedbacks) / len(feedbacks)
         batch.batch_avg_feedback = round(avg_feedback, 2)
         batch.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
+        self.lifecycle_repo.commit()
 
         return avg_feedback
 
@@ -139,12 +101,8 @@ class BatchLifecycleService:
         session_updates = self.sync_session_statuses()
 
         # Check for batch feedback calculation on batches that might have completed all sessions
-        batches_pending_closure = self.db.query(Batch).filter(
-            Batch.status == "Pending for Closure"
-        ).all()
-
         feedback_calculated = 0
-        for batch in batches_pending_closure:
+        for batch in self.lifecycle_repo.list_batches_with_status("Pending for Closure"):
             if self.calculate_batch_avg_feedback(batch.id) is not None:
                 feedback_calculated += 1
 

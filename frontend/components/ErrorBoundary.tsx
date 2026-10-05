@@ -1,7 +1,10 @@
 "use client";
 
-import React, { Component, ErrorInfo, ReactNode } from "react";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { Component, ErrorInfo, ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { AlertTriangle, RefreshCw, RotateCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ErrorBanner } from "@/components/ui/panel";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -11,24 +14,41 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
+  /** Stack and message are internals; they stay collapsed until asked for. */
+  showDetails: boolean;
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
+type ErrorBoundaryRootProps = ErrorBoundaryProps & { resetKey: string | null };
+
+class ErrorBoundaryRoot extends Component<ErrorBoundaryRootProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryRootProps) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, showDetails: false };
   }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
+    return { hasError: true, error, showDetails: false };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("ErrorBoundary caught an error:", error, errorInfo);
   }
 
+  // A class cannot call `usePathname`, so the exported function component below
+  // feeds the route in as `resetKey`. Without this a single transient throw
+  // bricks the session: every later route renders the fallback.
+  componentDidUpdate(prevProps: ErrorBoundaryRootProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.handleRetry();
+    }
+  }
+
   handleRetry = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, showDetails: false });
+  };
+
+  handleReload = () => {
+    if (typeof window !== "undefined") window.location.reload();
   };
 
   render() {
@@ -37,95 +57,66 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         return this.props.fallback;
       }
 
+      const details = this.state.error?.stack ?? this.state.error?.message ?? null;
+
       return (
-        <div style={{
-          minHeight: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "24px",
-          background: "#f8fafc",
-          textAlign: "center"
-        }}>
-          <div style={{
-            background: "#fff",
-            border: "1px solid #e2e8f0",
-            borderRadius: 12,
-            padding: "32px",
-            maxWidth: 480,
-            width: "100%",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.08)"
-          }}>
-            <div style={{
-              width: 64,
-              height: 64,
-              borderRadius: "50%",
-              background: "#fef2f2",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              margin: "0 auto 16px"
-            }}>
-              <AlertTriangle size={28} color="#ef4444" />
-            </div>
-            <h2 style={{
-              fontSize: "1.25rem",
-              fontWeight: 700,
-              color: "var(--text-main)",
-              margin: "0 0 8px"
-            }}>
-              Something went wrong
-            </h2>
-            <p style={{
-              fontSize: "0.95rem",
-              color: "var(--text-muted)",
-              margin: "0 0 24px",
-              lineHeight: 1.5
-            }}>
-              An unexpected error occurred. Please try refreshing the page or contact support if the problem persists.
+        <div
+          role="alert"
+          className="flex min-h-[60vh] w-full items-center justify-center bg-background p-6"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-sm">
+            <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive-light text-destructive">
+              <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+            </span>
+            <h2 className="text-lg font-bold tracking-tight text-foreground">Something went wrong</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              An unexpected error stopped this screen from rendering.
             </p>
-            {this.state.error && (
-              <details style={{ textAlign: "left", marginBottom: 16 }}>
-                <summary style={{ cursor: "pointer", color: "var(--text-dim)", fontSize: "0.85rem" }}>
-                  Error details
-                </summary>
-                <pre style={{
-                  marginTop: 8,
-                  padding: 12,
-                  background: "#f1f5f9",
-                  borderRadius: 6,
-                  fontSize: "0.75rem",
-                  color: "var(--text-muted)",
-                  overflow: "auto",
-                  maxHeight: 200
-                }}>
-                  {this.state.error.toString()}
-                </pre>
-              </details>
+
+            <ErrorBanner
+              className="mt-4"
+              message="Try again to re-render this screen. If the error comes back, reload the page."
+            />
+
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                onClick={this.handleRetry}
+                aria-label="Try rendering this screen again"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                Try again
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={this.handleReload}
+                aria-label="Reload the page"
+              >
+                <RotateCw className="h-4 w-4" aria-hidden="true" />
+                Reload the page
+              </Button>
+            </div>
+
+            {details && (
+              <div className="mt-5 border-t border-border pt-4">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={this.state.showDetails}
+                  onClick={() => this.setState((prev) => ({ showDetails: !prev.showDetails }))}
+                  className="px-0 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {this.state.showDetails ? "Hide technical details" : "Show technical details"}
+                </Button>
+                {this.state.showDetails && (
+                  <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-border bg-muted p-3 font-mono text-xs text-muted-foreground">
+                    {details}
+                  </pre>
+                )}
+              </div>
             )}
-            <button
-              onClick={this.handleRetry}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 20px",
-                background: "#0b5cab",
-                color: "#fff",
-                border: "none",
-                borderRadius: 8,
-                fontSize: "0.9rem",
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "background 0.2s"
-              }}
-              onMouseOver={(e) => { e.currentTarget.style.background = "#0d74c8"; }}
-              onMouseOut={(e) => { e.currentTarget.style.background = "#0b5cab"; }}
-            >
-              <RefreshCw size={16} />
-              Try Again
-            </button>
           </div>
         </div>
       );
@@ -133,4 +124,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     return this.props.children;
   }
+}
+
+export function ErrorBoundary({ children, fallback }: ErrorBoundaryProps) {
+  const pathname = usePathname();
+
+  return (
+    <ErrorBoundaryRoot resetKey={pathname} fallback={fallback}>
+      {children}
+    </ErrorBoundaryRoot>
+  );
 }

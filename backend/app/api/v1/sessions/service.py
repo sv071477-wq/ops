@@ -1,11 +1,9 @@
-import re
-from datetime import datetime, timedelta, timezone, date, time
+from datetime import datetime, timedelta, timezone, time
 from decimal import Decimal
-from typing import Any, Optional, List
+from typing import Optional, List
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, joinedload
 
 from app.models.batch import Batch
 from app.models.session import FacultyUtilization, TrainingSession
@@ -14,66 +12,71 @@ from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionOutcomeRequest, SessionRescheduleRequest,
     TrainingSessionCreate,
-    TrainingSessionResponse, TrainingSessionUpdate,
+    TrainingSessionUpdate,
 )
+from app.api.v1.auth.repository_interfaces import IUserRepository
+from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.gates.service import GatekeeperService
 from app.api.v1.schedules.conflict_engine import ConflictEngine
-from app.api.deps import get_manager_scope_user_ids
+from app.api.v1.sessions.repository_interfaces import ISessionRepository
 
 
-def _check_and_update_batch_completion(db: Session, batch_id: UUID) -> None:
-    """Mark the batch Completed once every session (scheduled + logged) is terminal."""
-    sessions = db.query(TrainingSession).filter(TrainingSession.batch_id == batch_id).all()
-    util_sessions = db.query(FacultyUtilization).filter(FacultyUtilization.batch_id == batch_id).all()
-    all_sessions = list(sessions) + list(util_sessions)
-
-    if all_sessions:
-        terminal_statuses = {"Completed", "Cancelled", "Not Conducted"}
-        all_terminal = all(session.status in terminal_statuses for session in all_sessions)
-        if all_terminal:
-            batch = db.query(Batch).filter(Batch.id == batch_id).first()
-            if batch and batch.status not in ["Completed", "Cancelled"]:
-                batch.status = "Completed"
-                batch.updated_at = datetime.now(timezone.utc)
-                db.commit()
+_TERMINAL_STATUSES = {"Completed", "Cancelled", "Not Conducted"}
 
 
 class SessionService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(
+        self,
+        session_repo: ISessionRepository,
+        user_repo: IUserRepository,
+        lifecycle_service: BatchLifecycleService,
+        gatekeeper: GatekeeperService,
+    ):
+        self.session_repo = session_repo
+        self.user_repo = user_repo
+        self.lifecycle_service = lifecycle_service
+        self.gatekeeper = gatekeeper
+
+    def _check_and_update_batch_completion(self, batch_id: UUID) -> None:
+        """Mark the batch Completed once every session (scheduled + logged) is terminal."""
+        all_sessions = self.session_repo.list_all_sessions_for_batch(batch_id)
+        if not all_sessions:
+            return
+        if not all(session.status in _TERMINAL_STATUSES for session in all_sessions):
+            return
+
+        batch = self.session_repo.get_batch_by_id(batch_id)
+        if batch and batch.status not in ("Completed", "Cancelled"):
+            batch.status = "Completed"
+            batch.updated_at = datetime.now(timezone.utc)
+            self.session_repo.commit()
 
     def list(self, batch_id: Optional[UUID], faculty_name: Optional[str], status_filter: Optional[str], user_id: Optional[UUID] = None) -> List[FacultyUtilization]:
         """Lists actual faculty delivery records (utilization ledger)."""
         if batch_id and user_id:
-            batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+            batch = self.session_repo.get_batch_by_id(batch_id)
             if batch:
                 self._require_batch_scope(batch, user_id)
-        query = self.db.query(FacultyUtilization).options(
-            joinedload(FacultyUtilization.batch).joinedload(Batch.entity),
-            joinedload(FacultyUtilization.batch).joinedload(Batch.coordinator)
-        ).join(Batch, FacultyUtilization.batch_id == Batch.id)
-        if batch_id:
-            query = query.filter(FacultyUtilization.batch_id == batch_id)
-        if faculty_name:
-            query = query.filter(FacultyUtilization.faculty_name.ilike(f"%{faculty_name}%"))
-        if status_filter:
-            query = query.filter(FacultyUtilization.status == status_filter)
-        return query.order_by(FacultyUtilization.date_of_training.asc()).all()
+        return self.session_repo.list_utilizations(
+            batch_id=batch_id,
+            faculty_name=faculty_name,
+            status_filter=status_filter,
+        )
 
     def list_scheduled(self, batch_id: UUID, user_id: Optional[UUID] = None) -> List[dict]:
         """Lists the curriculum schedule days with status and linked utilization details."""
-        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        batch = self.session_repo.get_batch_by_id(batch_id)
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
         if user_id:
             self._require_batch_scope(batch, user_id)
 
-        scheduled_days = self.db.query(TrainingSession).filter(
-            TrainingSession.batch_id == batch_id
-        ).order_by(TrainingSession.session_date.asc(), TrainingSession.sequence_number.asc()).all()
-
-        utilizations = self.db.query(FacultyUtilization).filter(FacultyUtilization.batch_id == batch_id).all()
-        util_map = {u.training_session_id: u for u in utilizations if u.training_session_id}
+        scheduled_days = self.session_repo.list_scheduled_for_batch(batch_id)
+        util_map = {
+            u.training_session_id: u
+            for u in self.session_repo.list_utilizations_for_batch(batch_id)
+            if u.training_session_id
+        }
 
         result = []
         for idx, s in enumerate(scheduled_days, start=1):
@@ -101,10 +104,10 @@ class SessionService:
         return result
 
     def update_scheduled(self, session_id: UUID, session_in: TrainingSessionUpdate, user_id: Optional[UUID] = None) -> TrainingSession:
-        session = self.db.query(TrainingSession).filter(TrainingSession.id == session_id).first()
+        session = self.session_repo.get_scheduled_by_id(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Scheduled session not found")
-        batch = self.db.query(Batch).filter(Batch.id == session.batch_id).first()
+        batch = self.session_repo.get_batch_by_id(session.batch_id)
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
         if user_id:
@@ -118,28 +121,23 @@ class SessionService:
         for field, value in updates.items():
             setattr(session, field, value)
         session.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
-        self.db.refresh(session)
+        self.session_repo.commit()
+        self.session_repo.refresh(session)
         return session
 
     def create_scheduled(self, session_in: TrainingSessionCreate, user_id: Optional[UUID] = None) -> TrainingSession:
-        batch = self.db.query(Batch).filter(Batch.id == session_in.batch_id).first()
+        batch = self.session_repo.get_batch_by_id(session_in.batch_id)
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
         if user_id:
             self._require_batch_scope(batch, user_id)
-        last_sequence = self.db.query(TrainingSession.sequence_number).filter(
-            TrainingSession.batch_id == batch.id
-        ).order_by(TrainingSession.sequence_number.desc()).first()
+        last_sequence = self.session_repo.get_max_sequence_number(batch.id)
         session = TrainingSession(
             **session_in.model_dump(exclude={"batch_id", "sequence_number"}),
             batch_id=batch.id,
-            sequence_number=session_in.sequence_number or ((last_sequence[0] or 0) + 1 if last_sequence else 1),
+            sequence_number=session_in.sequence_number or ((last_sequence or 0) + 1),
         )
-        self.db.add(session)
-        self.db.commit()
-        self.db.refresh(session)
-        return session
+        return self.session_repo.create_scheduled(session)
 
     def _resolve_faculty(self, faculty_id: Optional[UUID], faculty_name: Optional[str]) -> tuple[Optional[User], str]:
         """Resolve the faculty user for a ledger row, plus the name to persist.
@@ -153,25 +151,18 @@ class SessionService:
         back to the value the caller supplied instead of failing the request.
         """
         if faculty_id:
-            faculty = self.db.query(User).filter(User.id == faculty_id, User.is_active.is_(True)).first()
+            faculty = self.session_repo.get_active_user(faculty_id)
             if faculty:
                 return faculty, faculty.full_name
 
         clean_name = str(faculty_name).strip() if faculty_name else ""
         if clean_name:
             # Prefer a Faculty-role match, then fall back to any active user.
-            faculty = self.db.query(User).filter(
-                User.role.ilike("faculty"),
-                User.full_name.ilike(clean_name),
-                User.is_active.is_(True)
-            ).first()
+            faculty = self.session_repo.find_active_faculty_by_name(clean_name, faculty_role_only=True)
             if faculty:
                 return faculty, faculty.full_name
 
-            faculty = self.db.query(User).filter(
-                User.full_name.ilike(clean_name),
-                User.is_active.is_(True)
-            ).first()
+            faculty = self.session_repo.find_active_faculty_by_name(clean_name)
             if faculty:
                 return faculty, faculty.full_name
 
@@ -194,9 +185,14 @@ class SessionService:
                 detail=f"End time must be after start time (got {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}).",
             )
 
+    @staticmethod
+    def _day_bounds(target: datetime) -> tuple[datetime, datetime]:
+        day_start = target.replace(hour=0, minute=0, second=0, microsecond=0)
+        return day_start, day_start + timedelta(days=1)
+
     def create(self, session_in: SessionCreate, user_id: Optional[UUID] = None) -> FacultyUtilization:
         """Logs a faculty utilization delivery record, optionally linking to a scheduled session day."""
-        batch = self.db.query(Batch).filter(Batch.id == session_in.batch_id).first()
+        batch = self.session_repo.get_batch_by_id(session_in.batch_id)
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
         if user_id:
@@ -218,15 +214,13 @@ class SessionService:
             if not session_dict.get("outcome_at"):
                 session_dict["outcome_at"] = datetime.now(timezone.utc)
 
-        daily_hours = self.db.query(FacultyUtilization).filter(
-            FacultyUtilization.faculty_name.ilike(faculty_name),
-            FacultyUtilization.date_of_training >= session_in.date_of_training.replace(hour=0, minute=0, second=0, microsecond=0),
-            FacultyUtilization.date_of_training < session_in.date_of_training.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1),
-            FacultyUtilization.status.notin_(["Cancelled"]),
-        ).all()
-        existing_hours = sum((row.no_of_hours for row in daily_hours), Decimal("0"))
+        day_start, day_end = self._day_bounds(session_in.date_of_training)
+        daily_hours = self.session_repo.list_daily_deliveries(
+            faculty_name, day_start, day_end, excluded_statuses=("Cancelled",)
+        )
+        existing_hours = self.session_repo.sum_hours(daily_hours)
         conflicts = ConflictEngine.check_session_conflict(
-            db=self.db,
+            session_repo=self.session_repo,
             faculty_name=faculty_name,
             date_of_training=session_in.date_of_training,
             requested_hours=session_in.no_of_hours,
@@ -237,33 +231,28 @@ class SessionService:
         )
         if conflicts:
             raise HTTPException(status_code=409, detail=[conflict.model_dump() for conflict in conflicts])
-        
-        session = FacultyUtilization(**session_dict)
-        self.db.add(session)
+
+        session = self.session_repo.create_utilization(FacultyUtilization(**session_dict))
 
         # If linked to a scheduled training session day and status is Completed, mark it Completed.
         # The timetable has no feedback columns; the rating stays on this ledger row.
         if session_in.training_session_id and session_in.status == "Completed":
-            sched = self.db.query(TrainingSession).filter(TrainingSession.id == session_in.training_session_id).first()
+            sched = self.session_repo.get_training_session_by_id(session_in.training_session_id)
             if sched:
                 sched.status = "Completed"
+                self.session_repo.commit()
 
-        self.db.commit()
-        self.db.refresh(session)
-        
         # Check and update batch completion/feedback
-        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
-        lifecycle_service = BatchLifecycleService(self.db)
-        lifecycle_service.check_and_update_batch_feedback(session.batch_id)
-        
+        self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
+
         return session
 
     def update(self, session_id: UUID, session_in: SessionUpdate, user_id: Optional[UUID] = None) -> FacultyUtilization:
-        session = self.db.query(FacultyUtilization).filter(FacultyUtilization.id == session_id).first()
+        session = self.session_repo.get_utilization_by_id(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         update_dict = session_in.model_dump(exclude_unset=True)
-        batch = self.db.query(Batch).filter(Batch.id == session.batch_id).first()
+        batch = self.session_repo.get_batch_by_id(session.batch_id)
         if user_id:
             self._require_batch_scope(batch, user_id)
         if batch and batch.status == "Completed":
@@ -282,16 +271,13 @@ class SessionService:
         if "faculty_name" in update_dict or "date_of_training" in update_dict or "no_of_hours" in update_dict:
             faculty_name = update_dict.get("faculty_name", session.faculty_name)
             requested_hours = update_dict.get("no_of_hours", session.no_of_hours)
-            day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day_start + timedelta(days=1)
-            existing = self.db.query(FacultyUtilization).filter(
-                FacultyUtilization.id != session.id,
-                FacultyUtilization.faculty_name.ilike(faculty_name),
-                FacultyUtilization.date_of_training >= day_start,
-                FacultyUtilization.date_of_training < day_end,
-                FacultyUtilization.status.notin_(["Cancelled", "Not Conducted"]),
-            ).all()
-            existing_hours = sum((row.no_of_hours for row in existing), Decimal("0"))
+            day_start, day_end = self._day_bounds(target_date)
+            existing = self.session_repo.list_daily_deliveries(
+                faculty_name, day_start, day_end,
+                exclude_id=session.id,
+                excluded_statuses=("Cancelled", "Not Conducted"),
+            )
+            existing_hours = self.session_repo.sum_hours(existing)
             if existing_hours + requested_hours > ConflictEngine.MAX_DAILY_FACULTY_HOURS:
                 raise HTTPException(status_code=409, detail="Faculty daily capacity would be exceeded")
 
@@ -313,28 +299,26 @@ class SessionService:
         for field, value in update_dict.items():
             setattr(session, field, value)
         session.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
-        self.db.refresh(session)
+        self.session_repo.commit()
+        self.session_repo.refresh(session)
 
         # If linked to a scheduled training session day and status changed to Completed, mark it Completed
         if session.training_session_id and not was_completed and will_be_completed:
-            sched = self.db.query(TrainingSession).filter(TrainingSession.id == session.training_session_id).first()
+            sched = self.session_repo.get_training_session_by_id(session.training_session_id)
             if sched:
                 sched.status = "Completed"
-                self.db.commit()
+                self.session_repo.commit()
 
         # Check and update batch completion/feedback
-        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
-        lifecycle_service = BatchLifecycleService(self.db)
-        lifecycle_service.check_and_update_batch_feedback(session.batch_id)
+        self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
 
         return session
 
     def _transition(self, session_id: UUID, status: str, reason: str, user_id: UUID) -> FacultyUtilization:
-        session = self.db.query(FacultyUtilization).filter(FacultyUtilization.id == session_id).first()
+        session = self.session_repo.get_utilization_by_id(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        batch = self.db.query(Batch).filter(Batch.id == session.batch_id).first()
+        batch = self.session_repo.get_batch_by_id(session.batch_id)
         self._require_batch_scope(batch, user_id)
         if session.status == "Completed":
             raise HTTPException(status_code=409, detail="Completed sessions cannot be changed")
@@ -346,34 +330,32 @@ class SessionService:
 
         # Sync the linked timetable day so lifecycle checks see the terminal status.
         if session.training_session_id:
-            sched = self.db.query(TrainingSession).filter(TrainingSession.id == session.training_session_id).first()
+            sched = self.session_repo.get_training_session_by_id(session.training_session_id)
             if sched and sched.status != status:
                 sched.status = status
                 sched.updated_at = datetime.now(timezone.utc)
 
-        self.db.commit()
-        self.db.refresh(session)
+        self.session_repo.commit()
+        self.session_repo.refresh(session)
 
         # Mark batch Completed when every (scheduled + logged) session is terminal.
-        _check_and_update_batch_completion(self.db, session.batch_id)
+        self._check_and_update_batch_completion(session.batch_id)
 
         # Delegate feedback calculation to the lifecycle service — it only writes
         # batch_avg_feedback once all non-cancelled sessions are Completed.
-        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
-        lifecycle_service = BatchLifecycleService(self.db)
-        lifecycle_service.check_and_update_batch_feedback(session.batch_id)
+        self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
 
         return session
 
     def _require_batch_scope(self, batch: Batch, user_id: UUID) -> None:
-        user = self.db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+        user = self.session_repo.get_active_user(user_id)
         if not user:
             raise HTTPException(status_code=401, detail="Active user not found")
         role = (user.role or "").lower()
         team = (user.team_detail.name if user.team_detail else "").strip().lower()
         if role == "admin" or team == "finance":
             return
-        scope_ids = set(get_manager_scope_user_ids(user, self.db))
+        scope_ids = set(self.user_repo.get_manager_scope_user_ids(user))
         batch_user_ids = {batch.primary_manager_id, batch.coordinator_id, batch.sales_spoc_id}
         if not scope_ids.intersection({value for value in batch_user_ids if value is not None}):
             raise HTTPException(status_code=403, detail="You can only view or edit sessions within your manager scope.")
@@ -385,7 +367,7 @@ class SessionService:
         return self._transition(session_id, "Not Conducted", request.reason, user_id)
 
     def reschedule(self, session_id: UUID, request: SessionRescheduleRequest, user_id: UUID) -> FacultyUtilization:
-        session = self.db.query(FacultyUtilization).filter(FacultyUtilization.id == session_id).first()
+        session = self.session_repo.get_utilization_by_id(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         if session.status == "Completed":
@@ -399,13 +381,12 @@ class SessionService:
         updated.outcome_reason = request.reason.strip()
         updated.outcome_at = datetime.now(timezone.utc)
         updated.outcome_by = user_id
-        self.db.commit()
-        self.db.refresh(updated)
+        self.session_repo.commit()
+        self.session_repo.refresh(updated)
         return updated
 
     def complete_gate1(self, session_id: str, feedback: SessionFeedbackCreate, user_id: UUID) -> dict:
-        return GatekeeperService.complete_session_gate1(
-            db=self.db,
+        return self.gatekeeper.complete_session_gate1(
             session_id=session_id,
             feedback_data=feedback,
             user_id=user_id,

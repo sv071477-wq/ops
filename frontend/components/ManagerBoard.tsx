@@ -1,35 +1,57 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
-import {
-  Batch,
-  ManagerDashboardSummary,
-  User,
-} from "@/lib/api";
+import React, { useEffect, useMemo, useState } from "react";
+import { Batch, ManagerDashboardSummary, User } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
-import { FullscreenTable, SortableHeaderCell, TableFilters } from "@/components/table";
+import {
+  ColumnsMenu,
+  ExportButton,
+  FullscreenTable,
+  RefreshButton,
+  SortableHeaderCell,
+  TableCaption,
+  TableFilters,
+  TableStateRow,
+} from "@/components/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  CountBadge,
+  EmptyState,
+  ErrorBanner,
+  LoadingState,
+  NAVBAR_HEIGHT,
+  PANEL_CLASS,
+  PanelTitle,
+  StatusPill,
+} from "@/components/ui/panel";
+import { PaginationControls } from "@/components/PaginationControls";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
+import { reviveNumber, usePersistentState } from "@/hooks/usePersistentState";
 import { useTableSort } from "@/hooks/useTableSort";
-import { useTableFilters, type TableFilterField } from "@/hooks/useTableFilters";
-import type { SortAccessors } from "@/lib/tableUtils";
+import { useTableFilters } from "@/hooks/useTableFilters";
+import {
+  buildFilterFields,
+  buildSearchAccessor,
+  buildSortAccessors,
+  buildSortOptions,
+  type TableColumnDef,
+} from "@/lib/tableColumns";
+import type { CsvColumn } from "@/lib/csv";
 import {
   Kanban,
   BarChart3,
   Search,
-  Filter,
   Download,
   AlertTriangle,
   Clock,
   PlayCircle,
   CheckCircle2,
   Users,
-  Building2,
-  Calendar,
-  Sparkles,
   Award,
   ChevronRight,
   ShieldCheck,
   RefreshCw,
-  ExternalLink,
   Flame,
 } from "lucide-react";
 
@@ -38,6 +60,7 @@ interface ManagerBoardProps {
   summary: ManagerDashboardSummary | null;
   reports: User[];
   isLoading: boolean;
+  error?: string | null;
   onRefresh: () => void;
   onOpenBatchDetail: (batch: Batch) => void;
   onOpenApproval: (batch: Batch) => void;
@@ -70,45 +93,152 @@ interface PersonnelRow {
   status: string;
 }
 
-const PERSONNEL_COLUMNS = 6;
+// globals.css has no violet token, so the sign-off and domain accents keep
+// their own hue while everything else reads from the shared palette.
+const VIOLET = "hsl(262 83% 52%)";
+const VIOLET_SOFT = "hsl(262 100% 96%)";
 
-// Heading padding matches the `12px 14px` body cells of the personnel table.
-const PERSONNEL_TH_STYLE: React.CSSProperties = { padding: "12px 14px" };
+/** Token fills are tuned for large surfaces; darken them for text on a card. */
+function shade(token: string): string {
+  return `color-mix(in srgb, ${token} 80%, black)`;
+}
 
-const PERSONNEL_ACCESSORS: SortAccessors<PersonnelRow> = {
-  name: (row) => row.fullName,
-  email: (row) => row.email,
-  role: (row) => row.role,
-  team: (row) => row.team,
-  batches: (row) => row.batchesHandled,
-  status: (row) => row.status,
+/** Pale variant of a token, for borders that must not shout. */
+function softBorder(token: string): string {
+  return `color-mix(in srgb, ${token} 42%, var(--color-card))`;
+}
+
+interface StagePalette {
+  badgeBg: string;
+  badgeColor: string;
+  borderColor: string;
+}
+
+const STAGE_PALETTE: Record<string, StagePalette> = {
+  slate: {
+    badgeBg: "var(--color-muted)",
+    badgeColor: shade("var(--color-muted-foreground)"),
+    borderColor: "var(--color-border)",
+  },
+  warning: {
+    badgeBg: "var(--color-warning-light)",
+    badgeColor: shade("var(--color-warning)"),
+    borderColor: softBorder("var(--color-warning)"),
+  },
+  violet: {
+    badgeBg: VIOLET_SOFT,
+    badgeColor: VIOLET,
+    borderColor: softBorder(VIOLET),
+  },
+  info: {
+    badgeBg: "var(--color-info-light)",
+    badgeColor: shade("var(--color-info)"),
+    borderColor: softBorder("var(--color-info)"),
+  },
+  danger: {
+    badgeBg: "var(--color-destructive-light)",
+    badgeColor: "var(--color-destructive)",
+    borderColor: softBorder("var(--color-destructive)"),
+  },
+  success: {
+    badgeBg: "var(--color-success-light)",
+    badgeColor: "var(--color-success)",
+    borderColor: softBorder("var(--color-success)"),
+  },
 };
 
-const PERSONNEL_FILTER_FIELDS: readonly TableFilterField<PersonnelRow>[] = [
-  { key: "name", accessor: PERSONNEL_ACCESSORS.name },
-  { key: "email", accessor: PERSONNEL_ACCESSORS.email },
-  { key: "role", accessor: PERSONNEL_ACCESSORS.role },
-  { key: "team", accessor: PERSONNEL_ACCESSORS.team },
-  { key: "batches", accessor: PERSONNEL_ACCESSORS.batches },
-  { key: "status", accessor: PERSONNEL_ACCESSORS.status },
+// Kanban columns cannot be narrower than this before the board starts
+// scrolling sideways.
+const KANBAN_COLUMN_MIN = 260;
+
+/**
+ * A short viewport can push `100vh - 280px` to zero, and a zero-height
+ * scroll region makes the column header unreachable.
+ */
+const KANBAN_MAX_HEIGHT = "max(420px, calc(100vh - 280px))";
+
+/** Whole days since a batch was requested; 0 when it has no request date. */
+function daysPendingRequest(batch: Batch): number {
+  return batch.batch_request_date
+    ? Math.floor((Date.now() - new Date(batch.batch_request_date).getTime()) / 86400000)
+    : 0;
+}
+
+/**
+ * Both NPS stages agree that "not recorded" means a missing value, not only a
+ * literal null — testing one of the two made an undefined NPS match neither.
+ */
+function hasNoNps(batch: Batch): boolean {
+  return batch.batch_nps === null || batch.batch_nps === undefined;
+}
+
+const PERSONNEL_COLUMN_KEYS = [
+  "name",
+  "email",
+  "role",
+  "team",
+  "batchesHandled",
+  "status",
+] as const;
+
+type PersonnelColumnKey = (typeof PERSONNEL_COLUMN_KEYS)[number];
+
+const PERSONNEL_COLUMN_DEFS: readonly TableColumnDef<PersonnelRow, PersonnelColumnKey>[] = [
+  {
+    key: "name",
+    label: "Employee Name",
+    accessor: (row) => row.fullName,
+    filterable: true,
+  },
+  { key: "email", label: "Corporate Email", accessor: (row) => row.email, filterable: true },
+  { key: "role", label: "Assigned Role", accessor: (row) => row.role, filterable: true },
+  { key: "team", label: "Ops Team", accessor: (row) => row.team, filterable: true },
+  {
+    key: "batchesHandled",
+    label: "Batches Handled",
+    accessor: (row) => row.batchesHandled,
+    filterable: true,
+  },
+  { key: "status", label: "Account Status", accessor: (row) => row.status, filterable: true },
 ];
 
-const PERSONNEL_SORT_OPTIONS = [
-  { key: "name", label: "Employee Name" },
+const PERSONNEL_COLUMN_MENU: readonly { key: PersonnelColumnKey; label: string }[] =
+  PERSONNEL_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label }));
+
+const PERSONNEL_ACCESSORS = buildSortAccessors(PERSONNEL_COLUMN_DEFS);
+const PERSONNEL_SORT_OPTIONS = buildSortOptions(PERSONNEL_COLUMN_DEFS);
+const PERSONNEL_FILTER_FIELDS = buildFilterFields(PERSONNEL_COLUMN_DEFS);
+const PERSONNEL_SEARCH_ACCESSOR = buildSearchAccessor(PERSONNEL_COLUMN_DEFS);
+
+const PERSONNEL_DESC_FIRST_KEYS = ["batchesHandled"];
+
+const PERSONNEL_EXPORT_COLUMNS: readonly CsvColumn<PersonnelRow>[] = [
+  { key: "fullName", label: "Employee Name" },
   { key: "email", label: "Corporate Email" },
   { key: "role", label: "Assigned Role" },
   { key: "team", label: "Ops Team" },
-  { key: "batches", label: "Batches Handled" },
+  { key: "batchesHandled", label: "Batches Handled" },
   { key: "status", label: "Account Status" },
 ];
 
-const PERSONNEL_DESC_FIRST_KEYS = ["batches"];
+const PERSONNEL_PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const PERSONNEL_DEFAULT_PAGE_SIZE = 25;
+
+// Headings and body cells share one padding value so the columns stay aligned.
+const PERSONNEL_CELL_PADDING = "12px 14px";
+const PERSONNEL_TH_STYLE: React.CSSProperties = { padding: PERSONNEL_CELL_PADDING };
+const PERSONNEL_TD_STYLE: React.CSSProperties = { padding: PERSONNEL_CELL_PADDING };
+const PERSONNEL_ROW_STYLE: React.CSSProperties = {
+  borderBottom: "1px solid var(--border-subtle)",
+  fontSize: "0.85rem",
+};
 
 export const ManagerBoard: React.FC<ManagerBoardProps> = ({
   batches,
   summary,
   reports,
   isLoading,
+  error,
   onRefresh,
   onOpenBatchDetail,
   onOpenApproval,
@@ -120,6 +250,15 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDomain, setSelectedDomain] = useState("ALL");
   const [showUrgentOnly, setShowUrgentOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = usePersistentState<number>(
+    "ops.table.manager-board.personnel.page-size",
+    PERSONNEL_DEFAULT_PAGE_SIZE,
+    reviveNumber
+  );
+
+  const domainSelectId = React.useId();
+  const kpiHeadingId = React.useId();
 
   // Extract distinct domains for filter dropdown
   const domainList = useMemo(() => {
@@ -136,9 +275,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       id: "requested",
       title: "Requested",
       subtitle: "Awaiting submission for approval",
-      badgeBg: "#f1f5f9",
-      badgeColor: "#475569",
-      borderColor: "#cbd5e1",
+      ...STAGE_PALETTE.slate,
       icon: Clock,
       filterFn: (b) => b.status === "Requested",
     },
@@ -146,9 +283,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       id: "l1_pending",
       title: "Level 1 Review",
       subtitle: "Coordinator verification",
-      badgeBg: "#fef3c7",
-      badgeColor: "#d97706",
-      borderColor: "#fcd34d",
+      ...STAGE_PALETTE.warning,
       icon: ShieldCheck,
       filterFn: (b) => b.status === "Approval 1 Pending",
     },
@@ -156,9 +291,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       id: "l2_pending",
       title: "Level 2 Manager Action",
       subtitle: "Requires your sign-off",
-      badgeBg: "#f3e8ff",
-      badgeColor: "#7c3aed",
-      borderColor: "#d8b4fe",
+      ...STAGE_PALETTE.violet,
       icon: AlertTriangle,
       filterFn: (b) => b.status === "Approval 2 Pending",
     },
@@ -166,39 +299,33 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       id: "inflight",
       title: "In-Flight Delivery",
       subtitle: "Active training sessions",
-      badgeBg: "#eff6ff",
-      badgeColor: "#0284c7",
-      borderColor: "#93c5fd",
+      ...STAGE_PALETTE.info,
       icon: PlayCircle,
       filterFn: (b) => {
         if (b.status !== "Approved" && b.status !== "Upcoming" && b.status !== "Ongoing") return false;
         const isPastEnd = b.end_date ? new Date(b.end_date).getTime() < Date.now() : false;
         // In-flight if delivery is not overdue for NPS closure
-        return !isPastEnd && b.batch_nps === null;
+        return !isPastEnd && hasNoNps(b);
       },
     },
     {
       id: "nps_closure",
       title: "NPS Closure",
       subtitle: "Delivery done • Needs NPS",
-      badgeBg: "#fff1f2",
-      badgeColor: "#e11d48",
-      borderColor: "#fda4af",
+      ...STAGE_PALETTE.danger,
       icon: Award,
       filterFn: (b) => {
         if (b.status === "Completed" || b.status === "Cancelled" || b.status === "OnHold") return false;
         const isPastEnd = b.end_date ? new Date(b.end_date).getTime() < Date.now() : false;
         // NPS closure if past end date or sessions completed, but NPS not yet recorded
-        return isPastEnd && (b.batch_nps === null || b.batch_nps === undefined);
+        return isPastEnd && hasNoNps(b);
       },
     },
     {
       id: "on_hold",
       title: "On Hold",
       subtitle: "Paused delivery",
-      badgeBg: "#fef3c7",
-      badgeColor: "#b45309",
-      borderColor: "#fcd34d",
+      ...STAGE_PALETTE.warning,
       icon: Clock,
       filterFn: (b) => b.status === "OnHold",
     },
@@ -206,9 +333,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
       id: "completed",
       title: "Completed & Locked",
       subtitle: "NPS logged & archived",
-      badgeBg: "#ecfdf5",
-      badgeColor: "#059669",
-      borderColor: "#a7f3d0",
+      ...STAGE_PALETTE.success,
       icon: CheckCircle2,
       filterFn: (b) => b.status === "Completed",
     },
@@ -237,10 +362,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
       // Urgency matching: > 3 days pending approval or pending closure past end date
       if (showUrgentOnly) {
-        const daysPending = b.batch_request_date
-          ? Math.floor((Date.now() - new Date(b.batch_request_date).getTime()) / 86400000)
-          : 0;
-        const isOverdueApproval = b.status.includes("Pending") && daysPending >= 3;
+        const isOverdueApproval = b.status.includes("Pending") && daysPendingRequest(b) >= 3;
         const isOverdueClosure = b.end_date && new Date(b.end_date).getTime() < Date.now() && !b.batch_nps;
         return isOverdueApproval || isOverdueClosure;
       }
@@ -254,10 +376,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
     const l2Count = batches.filter((b) => b.status === "Approval 2 Pending").length;
     const activeCount = batches.filter((b) => ["Approved", "Upcoming", "Ongoing"].includes(b.status)).length;
     const overdueCount = batches.filter((b) => {
-      const days = b.batch_request_date
-        ? Math.floor((Date.now() - new Date(b.batch_request_date).getTime()) / 86400000)
-        : 0;
-      return b.status.includes("Pending") && days >= 3;
+      return b.status.includes("Pending") && daysPendingRequest(b) >= 3;
     }).length;
     return { l2Count, activeCount, overdueCount };
   }, [batches]);
@@ -281,7 +400,48 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
   const personnelSort = useTableSort(personnelRows, PERSONNEL_ACCESSORS, {
     descFirstKeys: PERSONNEL_DESC_FIRST_KEYS,
   });
-  const personnelFilters = useTableFilters(personnelSort.sortedRows, PERSONNEL_FILTER_FIELDS);
+  const personnelFilters = useTableFilters(
+    personnelSort.sortedRows,
+    PERSONNEL_FILTER_FIELDS,
+    PERSONNEL_SEARCH_ACCESSOR
+  );
+
+  const personnelColumns = useColumnVisibility<PersonnelColumnKey>({
+    columns: PERSONNEL_COLUMN_MENU,
+    storageKey: "ops.table.manager-board.personnel.columns",
+    defaultHidden: ["batchesHandled"],
+  });
+
+  useEffect(() => {
+    setPage(1);
+  }, [personnelFilters.filtersVersion]);
+
+  const personnelStart = (page - 1) * pageSize;
+  const pagedPersonnel = useMemo(
+    () => personnelFilters.filteredRows.slice(personnelStart, personnelStart + pageSize),
+    [personnelFilters.filteredRows, personnelStart, pageSize]
+  );
+
+  const personnelVisibleColumns = PERSONNEL_COLUMN_DEFS.filter((column) =>
+    personnelColumns.isVisible(column.key)
+  ).length;
+
+  const personnelPanelTitle = (
+    <PanelTitle
+      title="Supervised Personnel & Reporting Team"
+      description="Operational team members reporting to you for scheduling, attendance, and batch management."
+      meta={
+        <CountBadge
+          value={`${personnelFilters.filteredRows.length} of ${personnelRows.length}`}
+          label={
+            personnelFilters.filteredRows.length === personnelRows.length
+              ? "direct reports"
+              : "direct reports match"
+          }
+        />
+      }
+    />
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -292,17 +452,9 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
             <h2 style={{ fontSize: "1.45rem", fontWeight: 800, color: "var(--text-main)", margin: 0, letterSpacing: "-0.02em" }}>
               Manager Control Board
             </h2>
-            <span style={{
-              background: "#e0f2fe",
-              color: "#0369a1",
-              border: "1px solid #bae6fd",
-              borderRadius: 999,
-              padding: "2px 10px",
-              fontSize: "0.75rem",
-              fontWeight: 700,
-            }}>
+            <Badge variant="info" size="sm" className="normal-case tracking-normal">
               Operational Pipeline
-            </span>
+            </Badge>
           </div>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
             Real-time managerial board across intake, approvals, session delivery, and quality checkpoints.
@@ -311,15 +463,21 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           {/* View Mode Toggle Button Group */}
-          <div style={{
-            display: "inline-flex",
-            background: "#f1f5f9",
-            borderRadius: 10,
-            padding: 3,
-            border: "1px solid var(--border-subtle)",
-          }}>
+          <div
+            role="group"
+            aria-label="Manager board view"
+            style={{
+              display: "inline-flex",
+              background: "var(--color-muted)",
+              borderRadius: 10,
+              padding: 3,
+              border: "1px solid var(--border-subtle)",
+            }}
+          >
             <button
+              type="button"
               onClick={() => setViewMode("kanban")}
+              aria-pressed={viewMode === "kanban"}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -330,17 +488,19 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                 fontSize: "0.825rem",
                 fontWeight: 700,
                 cursor: "pointer",
-                background: viewMode === "kanban" ? "#ffffff" : "transparent",
-                color: viewMode === "kanban" ? "#0b5cab" : "var(--text-muted)",
+                background: viewMode === "kanban" ? "var(--color-card)" : "transparent",
+                color: viewMode === "kanban" ? "var(--color-primary)" : "var(--text-muted)",
                 boxShadow: viewMode === "kanban" ? "0 2px 6px rgba(0,0,0,0.06)" : "none",
                 transition: "all 0.15s",
               }}
             >
-              <Kanban size={15} />
+              <Kanban size={15} aria-hidden="true" />
               <span>Pipeline Stages</span>
             </button>
             <button
+              type="button"
               onClick={() => setViewMode("executive")}
+              aria-pressed={viewMode === "executive"}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -351,13 +511,13 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                 fontSize: "0.825rem",
                 fontWeight: 700,
                 cursor: "pointer",
-                background: viewMode === "executive" ? "#ffffff" : "transparent",
-                color: viewMode === "executive" ? "#0b5cab" : "var(--text-muted)",
+                background: viewMode === "executive" ? "var(--color-card)" : "transparent",
+                color: viewMode === "executive" ? "var(--color-primary)" : "var(--text-muted)",
                 boxShadow: viewMode === "executive" ? "0 2px 6px rgba(0,0,0,0.06)" : "none",
                 transition: "all 0.15s",
               }}
             >
-              <BarChart3 size={15} />
+              <BarChart3 size={15} aria-hidden="true" />
               <span>Executive Oversight</span>
             </button>
           </div>
@@ -368,86 +528,96 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
             className="btn btn-primary"
             style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: "0.825rem" }}
           >
-            <Download size={15} />
+            <Download size={15} aria-hidden="true" />
             <span>{isExportingMbr ? "Generating..." : "Export MBR (.xlsx)"}</span>
           </button>
         </div>
       </div>
 
       {/* Executive KPI Ribbon */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
-        <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #0b5cab" }}>
-          <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            Active Operating Batches
+      <section aria-labelledby={kpiHeadingId}>
+        <h2 id={kpiHeadingId} className="sr-only">
+          Executive key performance indicators
+        </h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid var(--color-primary)" }}>
+            <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              Active Operating Batches
+            </div>
+            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--color-primary)", marginTop: 4 }}>
+              {summary?.total_active_batches ?? quickStats.activeCount}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+              Approved, Upcoming &amp; Ongoing
+            </div>
           </div>
-          <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#0b5cab", marginTop: 4 }}>
-            {summary?.total_active_batches ?? quickStats.activeCount}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-            Approved, Upcoming & Ongoing
-          </div>
-        </div>
 
-        <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #7c3aed" }}>
-          <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            Delivered Training Hours
+          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: `4px solid ${VIOLET}` }}>
+            <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              Delivered Training Hours
+            </div>
+            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: VIOLET, marginTop: 4 }}>
+              {summary?.total_hours_delivered ? `${summary.total_hours_delivered}h` : "0.0h"}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+              Completed session curriculum
+            </div>
           </div>
-          <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#7c3aed", marginTop: 4 }}>
-            {summary?.total_hours_delivered ? `${summary.total_hours_delivered}h` : "0.0h"}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-            Completed session curriculum
-          </div>
-        </div>
 
-        <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #16a34a" }}>
-          <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            NPS Closure Rating
+          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid var(--color-success)" }}>
+            <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              NPS Closure Rating
+            </div>
+            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--color-success)", marginTop: 4 }}>
+              {summary?.overall_avg_nps !== null && summary?.overall_avg_nps !== undefined ? `${summary.overall_avg_nps} / 10` : "—"}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+              Executive Net Promoter Score
+            </div>
           </div>
-          <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
-            {summary?.overall_avg_nps !== null && summary?.overall_avg_nps !== undefined ? `${summary.overall_avg_nps} / 10` : "—"}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-            Executive Net Promoter Score
-          </div>
-        </div>
 
-        <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #d97706" }}>
-          <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            Average Batch Feedback
+          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: `4px solid ${shade("var(--color-warning)")}` }}>
+            <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              Average Batch Feedback
+            </div>
+            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: shade("var(--color-warning)"), marginTop: 4 }}>
+              {summary?.overall_avg_feedback !== null && summary?.overall_avg_feedback !== undefined ? `⭐ ${summary.overall_avg_feedback} / 5` : "—"}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+              Cumulative trainer ratings
+            </div>
           </div>
-          <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#d97706", marginTop: 4 }}>
-            {summary?.overall_avg_feedback !== null && summary?.overall_avg_feedback !== undefined ? `⭐ ${summary.overall_avg_feedback} / 5` : "—"}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-            Cumulative trainer ratings
-          </div>
-        </div>
 
-        <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid #dc2626" }}>
-          <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
-            Urgent Manager Action
-          </div>
-          <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "#dc2626", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-            {quickStats.l2Count + quickStats.overdueCount}
-            {(quickStats.l2Count + quickStats.overdueCount > 0) && (
-              <Flame size={20} color="#dc2626" />
-            )}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-            {quickStats.l2Count} L2 Sign-offs • {quickStats.overdueCount} Overdue
+          <div className="glass-panel" style={{ padding: "16px 18px", borderLeft: "4px solid var(--color-destructive)" }}>
+            <div style={{ fontSize: "0.725rem", color: "var(--text-dim)", textTransform: "uppercase", fontWeight: 700 }}>
+              Urgent Manager Action
+            </div>
+            <div style={{ fontSize: "1.85rem", fontWeight: 800, color: "var(--color-destructive)", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+              {quickStats.l2Count + quickStats.overdueCount}
+              {(quickStats.l2Count + quickStats.overdueCount > 0) && (
+                <Flame size={20} color="var(--color-destructive)" aria-hidden="true" />
+              )}
+            </div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+              {quickStats.l2Count} L2 Sign-offs • {quickStats.overdueCount} Overdue
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Filter and Control Bar */}
       <div className="glass-panel" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, flexWrap: "wrap" }}>
           {/* Search Input */}
           <div style={{ position: "relative", minWidth: 260 }}>
-            <Search size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
+            <Search
+              size={15}
+              aria-hidden="true"
+              style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }}
+            />
             <input
               type="text"
+              aria-label="Search batches by ID, client, program or trainer"
               placeholder="Search by ID, client, program, trainer..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -457,7 +627,11 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
           </div>
 
           {/* Domain Dropdown */}
+          <label htmlFor={domainSelectId} className="sr-only">
+            Domain
+          </label>
           <select
+            id={domainSelectId}
             value={selectedDomain}
             onChange={(e) => setSelectedDomain(e.target.value)}
             className="glass-input"
@@ -471,23 +645,29 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
           {/* Overdue / Urgent Only Filter Toggle */}
           <button
+            type="button"
             onClick={() => setShowUrgentOnly(!showUrgentOnly)}
+            aria-pressed={showUrgentOnly}
             style={{
               display: "flex",
               alignItems: "center",
               gap: 6,
               padding: "7px 12px",
               borderRadius: 8,
-              border: showUrgentOnly ? "1px solid #f87171" : "1px solid var(--border-subtle)",
-              background: showUrgentOnly ? "#fef2f2" : "#ffffff",
-              color: showUrgentOnly ? "#dc2626" : "var(--text-muted)",
+              border: showUrgentOnly ? "1px solid var(--color-destructive)" : "1px solid var(--border-subtle)",
+              background: showUrgentOnly ? "var(--color-destructive-light)" : "var(--color-card)",
+              color: showUrgentOnly ? "var(--color-destructive)" : "var(--text-muted)",
               fontSize: "0.8rem",
               fontWeight: 700,
               cursor: "pointer",
               transition: "all 0.15s",
             }}
           >
-            <Flame size={14} color={showUrgentOnly ? "#dc2626" : "#94a3b8"} />
+            <Flame
+              size={14}
+              aria-hidden="true"
+              color={showUrgentOnly ? "var(--color-destructive)" : "var(--color-muted-foreground)"}
+            />
             <span>Urgent Attention Only</span>
           </button>
         </div>
@@ -499,7 +679,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", fontSize: "0.8rem" }}
             title="Refresh Board"
           >
-            <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} />
+            <RefreshCw size={14} className={isLoading ? "animate-spin" : ""} aria-hidden="true" />
             <span>Refresh</span>
           </button>
         </div>
@@ -507,250 +687,257 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
       {/* VIEW 1: PIPELINE KANBAN BOARD */}
       {viewMode === "kanban" && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${stages.length}, minmax(280px, 1fr))`,
-          gap: 16,
-          overflowX: "auto",
-          paddingBottom: 16,
-        }}>
-          {stages.map((stage) => {
-            const stageBatches = filteredBatches.filter(stage.filterFn);
-            const Icon = stage.icon;
+        <div
+          style={{
+            overflowX: "auto",
+            paddingBottom: 16,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              // `min(100%, …)` keeps a single stage usable on a phone instead of
+              // forcing the whole board to scroll sideways.
+              gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${KANBAN_COLUMN_MIN}px), 1fr))`,
+              gap: 16,
+              minWidth: 0,
+            }}
+          >
+            {stages.map((stage) => {
+              const stageBatches = filteredBatches.filter(stage.filterFn);
+              const Icon = stage.icon;
 
-            return (
-              <div
-                key={stage.id}
-                style={{
-                  background: "#f8fafc",
-                  borderRadius: 12,
-                  border: `1px solid ${stage.borderColor}`,
-                  display: "flex",
-                  flexDirection: "column",
-                  minHeight: 520,
-                  maxHeight: "calc(100vh - 280px)",
-                }}
-              >
-                {/* Column Header */}
-                <div style={{
-                  padding: "12px 14px",
-                  borderBottom: `1px solid ${stage.borderColor}`,
-                  background: "#ffffff",
-                  borderTopLeftRadius: 12,
-                  borderTopRightRadius: 12,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}>
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <Icon size={16} color={stage.badgeColor} />
-                      <span style={{ fontWeight: 800, fontSize: "0.875rem", color: "var(--text-main)" }}>
-                        {stage.title}
-                      </span>
+              return (
+                <div
+                  key={stage.id}
+                  style={{
+                    background: "var(--color-muted)",
+                    borderRadius: 12,
+                    border: `1px solid ${stage.borderColor}`,
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: 520,
+                    maxHeight: KANBAN_MAX_HEIGHT,
+                    minWidth: 0,
+                  }}
+                >
+                  {/* Column Header */}
+                  <div style={{
+                    padding: "12px 14px",
+                    borderBottom: `1px solid ${stage.borderColor}`,
+                    background: "var(--color-card)",
+                    borderTopLeftRadius: 12,
+                    borderTopRightRadius: 12,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                  }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Icon size={16} color={stage.badgeColor} aria-hidden="true" />
+                        <span style={{ fontWeight: 800, fontSize: "0.875rem", color: "var(--text-main)" }}>
+                          {stage.title}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
+                        {stage.subtitle}
+                      </div>
                     </div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
-                      {stage.subtitle}
-                    </div>
+
+                    <span style={{
+                      background: stage.badgeBg,
+                      color: stage.badgeColor,
+                      fontSize: "0.75rem",
+                      fontWeight: 800,
+                      borderRadius: 999,
+                      padding: "2px 8px",
+                    }}>
+                      {stageBatches.length}
+                    </span>
                   </div>
 
-                  <span style={{
-                    background: stage.badgeBg,
-                    color: stage.badgeColor,
-                    fontSize: "0.75rem",
-                    fontWeight: 800,
-                    borderRadius: 999,
-                    padding: "2px 8px",
+                  {/* Cards Container */}
+                  <div style={{
+                    padding: "10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    overflowY: "auto",
+                    flex: 1,
+                    minHeight: 0,
                   }}>
-                    {stageBatches.length}
-                  </span>
-                </div>
+                    {stageBatches.length === 0 ? (
+                      <div style={{
+                        textAlign: "center",
+                        padding: "36px 12px",
+                        color: "var(--text-dim)",
+                        fontSize: "0.8rem",
+                      }}>
+                        No batches in this stage
+                      </div>
+                    ) : (
+                      stageBatches.map((batch) => {
+                        const daysPending = daysPendingRequest(batch);
+                        const isOverdue = daysPending >= 3 && batch.status.includes("Pending");
 
-                {/* Cards Container */}
-                <div style={{
-                  padding: "10px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                  overflowY: "auto",
-                  flex: 1,
-                }}>
-                  {stageBatches.length === 0 ? (
-                    <div style={{
-                      textAlign: "center",
-                      padding: "36px 12px",
-                      color: "var(--text-dim)",
-                      fontSize: "0.8rem",
-                    }}>
-                      No batches in this stage
-                    </div>
-                  ) : (
-                    stageBatches.map((batch) => {
-                      const daysPending = batch.batch_request_date
-                        ? Math.floor((Date.now() - new Date(batch.batch_request_date).getTime()) / 86400000)
-                        : null;
-                      const isOverdue = daysPending !== null && daysPending >= 3 && batch.status.includes("Pending");
-
-                      return (
-                        <div
-                          key={batch.id}
-                          className="glass-panel"
-                          style={{
-                            padding: "12px 14px",
-                            background: isOverdue ? "#fffbfb" : "#ffffff",
-                            border: isOverdue ? "1px solid #fca5a5" : "1px solid var(--border-subtle)",
-                            borderRadius: 10,
-                            boxShadow: "0 2px 4px rgba(0,0,0,0.03)",
-                            cursor: "pointer",
-                            transition: "all 0.15s ease-in-out",
-                          }}
-                          onClick={() => onOpenBatchDetail(batch)}
-                        >
-                          {/* Card Top: Batch ID & Urgency */}
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
-                            <span style={{
-                              fontWeight: 800,
-                              fontSize: "0.8rem",
-                              color: "#0b5cab",
-                              fontFamily: "monospace",
-                            }}>
-                              {batch.batch_id}
-                            </span>
-                            {isOverdue && (
+                        return (
+                          <div
+                            key={batch.id}
+                            className="glass-panel"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Open details for batch ${batch.batch_id}`}
+                            style={{
+                              padding: "12px 14px",
+                              background: isOverdue ? "var(--color-destructive-light)" : "var(--color-card)",
+                              border: isOverdue ? "1px solid var(--color-destructive)" : "1px solid var(--border-subtle)",
+                              borderRadius: 10,
+                              boxShadow: "0 2px 4px rgba(0,0,0,0.03)",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease-in-out",
+                            }}
+                            onClick={() => onOpenBatchDetail(batch)}
+                            onKeyDown={(event) => {
+                              // The card's own action buttons answer their own keys;
+                              // only a press on the card itself opens the batch.
+                              if (event.target !== event.currentTarget) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                onOpenBatchDetail(batch);
+                              }
+                            }}
+                          >
+                            {/* Card Top: Batch ID & Urgency */}
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
                               <span style={{
-                                fontSize: "0.65rem",
                                 fontWeight: 800,
-                                background: "#fee2e2",
-                                color: "#dc2626",
-                                border: "1px solid #fecaca",
-                                borderRadius: 4,
-                                padding: "1px 5px",
+                                fontSize: "0.8rem",
+                                color: "var(--color-primary)",
+                                fontFamily: "monospace",
                               }}>
-                                {daysPending}d OVERDUE
+                                {batch.batch_id}
                               </span>
-                            )}
-                          </div>
+                              {isOverdue && (
+                                <Badge variant="destructive" size="sm">
+                                  {daysPending}d OVERDUE
+                                </Badge>
+                              )}
+                            </div>
 
-                          {/* Program Name */}
-                          <div style={{
-                            fontWeight: 700,
-                            fontSize: "0.85rem",
-                            color: "var(--text-main)",
-                            margin: "4px 0 6px 0",
-                            lineHeight: 1.3,
-                          }}>
-                            {batch.program_name}
-                          </div>
-
-                          {/* Client & Domain Chips */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                            {batch.client_name && (
-                              <span style={{
-                                fontSize: "0.72rem",
-                                fontWeight: 600,
-                                color: "#334155",
-                                background: "#f1f5f9",
-                                borderRadius: 4,
-                                padding: "2px 6px",
-                              }}>
-                                {batch.client_name}
-                              </span>
-                            )}
-                            {batch.domain && (
-                              <span style={{
-                                fontSize: "0.72rem",
-                                fontWeight: 600,
-                                color: "#7c3aed",
-                                background: "#f3e8ff",
-                                borderRadius: 4,
-                                padding: "2px 6px",
-                              }}>
-                                {batch.domain}
-                              </span>
-                            )}
-                            <span style={{
-                              fontSize: "0.7rem",
-                              color: "var(--text-dim)",
+                            {/* Program Name */}
+                            <div style={{
+                              fontWeight: 700,
+                              fontSize: "0.85rem",
+                              color: "var(--text-main)",
+                              margin: "4px 0 6px 0",
+                              lineHeight: 1.3,
                             }}>
-                              {batch.delivery_mode || "Online"} {batch.location_city ? `• ${batch.location_city}` : ""}
-                            </span>
-                          </div>
+                              {batch.program_name}
+                            </div>
 
-                          {/* Trainer / Headcount Info */}
-                          <div style={{
-                            fontSize: "0.75rem",
-                            color: "var(--text-muted)",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            borderTop: "1px dashed var(--border-subtle)",
-                            paddingTop: 6,
-                            marginTop: 6,
-                          }}>
-                            <div>
-                              <span>Faculty: </span>
-                              <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
-                                {batch.faculty_assigned_text || "Unassigned"}
+                            {/* Client & Domain Chips */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                              {batch.client_name && (
+                                <Badge variant="secondary" size="sm" className="normal-case tracking-normal">
+                                  {batch.client_name}
+                                </Badge>
+                              )}
+                              {batch.domain && (
+                                <Badge variant="violet" size="sm" className="normal-case tracking-normal">
+                                  {batch.domain}
+                                </Badge>
+                              )}
+                              <span style={{
+                                fontSize: "0.7rem",
+                                color: "var(--text-dim)",
+                              }}>
+                                {batch.delivery_mode || "Online"} {batch.location_city ? `• ${batch.location_city}` : ""}
                               </span>
                             </div>
-                            <div>
-                              <span style={{ fontWeight: 700, color: "#0b5cab" }}>
-                                {batch.total_enrollments}
+
+                            {/* Trainer / Headcount Info */}
+                            <div style={{
+                              fontSize: "0.75rem",
+                              color: "var(--text-muted)",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 8,
+                              borderTop: "1px dashed var(--border-subtle)",
+                              paddingTop: 6,
+                              marginTop: 6,
+                            }}>
+                              <div>
+                                <span>Faculty: </span>
+                                <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
+                                  {batch.faculty_assigned_text || "Unassigned"}
+                                </span>
+                              </div>
+                              <div>
+                                <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>
+                                  {batch.total_enrollments}
+                                </span>
+                                <span style={{ fontSize: "0.7rem" }}> pax</span>
+                              </div>
+                            </div>
+
+                            {/* Action Button Strip */}
+                            <div style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              marginTop: 10,
+                              paddingTop: 8,
+                              borderTop: "1px solid var(--border-subtle)",
+                            }}>
+                              <span style={{ fontSize: "0.72rem", color: "var(--text-dim)" }}>
+                                {batch.start_date ? formatDate(batch.start_date) : "No date"}
                               </span>
-                              <span style={{ fontSize: "0.7rem" }}> pax</span>
+
+                              {batch.status === "Approval 2 Pending"
+                                && currentUser?.id?.toLowerCase() === batch.approver_2_id?.toLowerCase() ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenApproval(batch);
+                                  }}
+                                  className="btn btn-primary"
+                                  style={{ padding: "3px 8px", fontSize: "0.72rem", background: VIOLET }}
+                                >
+                                  Sign Off
+                                </button>
+                              ) : batch.status === "Ongoing" && !batch.batch_nps ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenBatchDetail(batch);
+                                  }}
+                                  className="btn btn-secondary"
+                                  style={{
+                                    padding: "3px 8px",
+                                    fontSize: "0.72rem",
+                                    color: "var(--color-destructive)",
+                                    borderColor: "var(--color-destructive-light)",
+                                  }}
+                                >
+                                  Log NPS Closure
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: "0.72rem", color: "var(--color-primary)", fontWeight: 700, display: "flex", alignItems: "center" }}>
+                                  View <ChevronRight size={12} aria-hidden="true" />
+                                </span>
+                              )}
                             </div>
                           </div>
-
-                          {/* Action Button Strip */}
-                          <div style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            marginTop: 10,
-                            paddingTop: 8,
-                            borderTop: "1px solid var(--border-subtle)",
-                          }}>
-                            <span style={{ fontSize: "0.72rem", color: "var(--text-dim)" }}>
-                              {batch.start_date ? formatDate(batch.start_date) : "No date"}
-                            </span>
-
-                            {batch.status === "Approval 2 Pending"
-                              && currentUser?.id?.toLowerCase() === batch.approver_2_id?.toLowerCase() ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenApproval(batch);
-                                }}
-                                className="btn btn-primary"
-                                style={{ padding: "3px 8px", fontSize: "0.72rem", background: "#7c3aed" }}
-                              >
-                                Sign Off
-                              </button>
-                            ) : batch.status === "Ongoing" && !batch.batch_nps ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onOpenBatchDetail(batch);
-                                }}
-                                className="btn btn-secondary"
-                                style={{ padding: "3px 8px", fontSize: "0.72rem", color: "#e11d48", borderColor: "#fecdd3" }}
-                              >
-                                Log NPS Closure
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: "0.72rem", color: "#0b5cab", fontWeight: 700, display: "flex", alignItems: "center" }}>
-                                View <ChevronRight size={12} />
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -762,7 +949,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-                  Vertical & Domain Performance
+                  Vertical &amp; Domain Performance
                 </h3>
                 <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
                   Active batch distribution, committed curriculum hours, and customer quality indices across verticals.
@@ -779,24 +966,17 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                       border: "1px solid var(--border-subtle)",
                       borderRadius: 10,
                       padding: 24,
-                      background: "#ffffff",
+                      background: "var(--color-card)",
                       boxShadow: "0 2px 5px rgba(0,0,0,0.02)",
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontWeight: 800, fontSize: "1rem", color: "#0b5cab" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontWeight: 800, fontSize: "1rem", color: "var(--color-primary)" }}>
                         {v.vertical}
                       </span>
-                      <span style={{
-                        background: "#e8f2fb",
-                        color: "#0b5cab",
-                        padding: "2px 8px",
-                        borderRadius: 6,
-                        fontSize: "0.75rem",
-                        fontWeight: 700,
-                      }}>
+                      <Badge variant="info" size="sm" className="normal-case tracking-normal">
                         {v.active_batches} Active Batch(es)
-                      </span>
+                      </Badge>
                     </div>
 
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
@@ -808,7 +988,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
                       </div>
                       <div>
                         <div style={{ fontSize: "0.72rem", color: "var(--text-dim)" }}>Quality Rating</div>
-                        <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#d97706", marginTop: 2 }}>
+                        <div style={{ fontSize: "1.1rem", fontWeight: 700, color: shade("var(--color-warning)"), marginTop: 2 }}>
                           {v.average_feedback > 0 ? `⭐ ${v.average_feedback} / 5` : "Pending"}
                         </div>
                       </div>
@@ -824,193 +1004,188 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
           </div>
 
           {/* Supervised Personnel & Reporting Team */}
-          <div className="glass-panel" style={{ padding: 24, background: "#ffffff" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <h3 style={{ fontSize: "1.15rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-                    Supervised Personnel & Reporting Team
-                  </h3>
-                  <span style={{
-                    fontSize: "0.75rem",
-                    fontWeight: 700,
-                    padding: "2px 8px",
-                    borderRadius: 12,
-                    background: "#e8f2fb",
-                    color: "#0b5cab",
-                    border: "1px solid #bae6fd",
-                  }}>
-                    {reports.length} Direct Report(s)
-                  </span>
-                </div>
-                <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Operational team members reporting to you for scheduling, attendance, and batch management.
-                </p>
-              </div>
-            </div>
-
-            {reports.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-                <Users size={32} color="#94a3b8" style={{ margin: "0 auto 8px" }} />
-                <div style={{ fontWeight: 600, color: "var(--text-main)" }}>No Direct Reports Assigned</div>
-                <div style={{ fontSize: "0.8rem", color: "var(--text-dim)", marginTop: 4 }}>
-                  Assigned coordinators and team members reporting to your leadership line will appear here.
-                </div>
-              </div>
-            ) : (
-              <FullscreenTable
-                panelClassName=""
-                style={{ border: "1px solid var(--border-subtle)", borderRadius: 10, background: "#ffffff" }}
-                toolbar={
-                  <TableFilters
-                    search={{
-                      value: personnelFilters.search,
-                      onChange: personnelFilters.setSearch,
-                      placeholder: "Search name, email, role...",
-                      width: 240,
-                    }}
-                    selects={[
-                      {
-                        key: "role",
-                        label: "Role",
-                        value: personnelFilters.getFilter("role"),
-                        onChange: (value) => personnelFilters.setFilter("role", value),
-                        options: personnelFilters.optionsFor("role"),
-                        width: 150,
-                      },
-                      {
-                        key: "team",
-                        label: "Ops Team",
-                        value: personnelFilters.getFilter("team"),
-                        onChange: (value) => personnelFilters.setFilter("team", value),
-                        options: personnelFilters.optionsFor("team"),
-                        width: 160,
-                      },
-                      {
-                        key: "status",
-                        label: "Account Status",
-                        value: personnelFilters.getFilter("status"),
-                        onChange: (value) => personnelFilters.setFilter("status", value),
-                        options: personnelFilters.optionsFor("status"),
-                        width: 150,
-                      },
-                    ]}
-                    sort={{
-                      options: PERSONNEL_SORT_OPTIONS,
-                      sortKey: personnelSort.sortKey,
-                      sortDir: personnelSort.sortDir,
-                      onChange: personnelSort.applySort,
-                    }}
-                    onClear={personnelFilters.clearFilters}
-                    hasActiveFilters={personnelFilters.hasActiveFilters}
-                    activeFilterCount={personnelFilters.activeFilterCount}
+          {reports.length === 0 ? (
+            <section className={PANEL_CLASS}>
+              <div className="border-b border-border/70 px-5 py-4">{personnelPanelTitle}</div>
+              <EmptyState
+                icon={<Users className="h-5 w-5" aria-hidden="true" />}
+                title="No Direct Reports Assigned"
+                description="Assigned coordinators and team members reporting to your leadership line will appear here."
+              />
+            </section>
+          ) : (
+            <FullscreenTable
+              stickyHeader
+              stickyTop={NAVBAR_HEIGHT}
+              panelClassName={PANEL_CLASS}
+              title={personnelPanelTitle}
+              toolbar={
+                <TableFilters
+                  search={{
+                    value: personnelFilters.search,
+                    onChange: personnelFilters.setSearch,
+                    placeholder: "Search name, email, role...",
+                    width: 240,
+                  }}
+                  selects={[
+                    {
+                      key: "role",
+                      label: "Role",
+                      value: personnelFilters.getFilter("role"),
+                      onChange: (value) => personnelFilters.setFilter("role", value),
+                      options: personnelFilters.optionsFor("role"),
+                      width: 150,
+                    },
+                    {
+                      key: "team",
+                      label: "Ops Team",
+                      value: personnelFilters.getFilter("team"),
+                      onChange: (value) => personnelFilters.setFilter("team", value),
+                      options: personnelFilters.optionsFor("team"),
+                      width: 160,
+                    },
+                    {
+                      key: "status",
+                      label: "Account Status",
+                      value: personnelFilters.getFilter("status"),
+                      onChange: (value) => personnelFilters.setFilter("status", value),
+                      options: personnelFilters.optionsFor("status"),
+                      width: 150,
+                    },
+                  ]}
+                  sort={{
+                    options: PERSONNEL_SORT_OPTIONS,
+                    sortKey: personnelSort.sortKey,
+                    sortDir: personnelSort.sortDir,
+                    onChange: personnelSort.applySort,
+                  }}
+                  onClear={personnelFilters.clearFilters}
+                  hasActiveFilters={personnelFilters.hasActiveFilters}
+                  activeFilterCount={personnelFilters.activeFilterCount}
+                />
+              }
+              actions={
+                <>
+                  <ColumnsMenu
+                    columns={PERSONNEL_COLUMN_MENU}
+                    hidden={personnelColumns.hidden}
+                    onToggle={personnelColumns.toggle}
+                    onShowAll={personnelColumns.showAll}
                   />
-                }
-              >
-                <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <SortableHeaderCell
-                        columnKey="name"
-                        label="Employee Name"
-                        sortKey={personnelSort.sortKey}
-                        sortDir={personnelSort.sortDir}
-                        onSort={personnelSort.toggleSort}
-                        style={PERSONNEL_TH_STYLE}
-                      />
-                      <SortableHeaderCell
-                        columnKey="email"
-                        label="Corporate Email"
-                        sortKey={personnelSort.sortKey}
-                        sortDir={personnelSort.sortDir}
-                        onSort={personnelSort.toggleSort}
-                        style={PERSONNEL_TH_STYLE}
-                      />
-                      <SortableHeaderCell
-                        columnKey="role"
-                        label="Assigned Role"
-                        sortKey={personnelSort.sortKey}
-                        sortDir={personnelSort.sortDir}
-                        onSort={personnelSort.toggleSort}
-                        style={PERSONNEL_TH_STYLE}
-                      />
-                      <SortableHeaderCell
-                        columnKey="team"
-                        label="Ops Team"
-                        sortKey={personnelSort.sortKey}
-                        sortDir={personnelSort.sortDir}
-                        onSort={personnelSort.toggleSort}
-                        style={PERSONNEL_TH_STYLE}
-                      />
-                      <SortableHeaderCell
-                        columnKey="batches"
-                        label="Batches Handled"
-                        sortKey={personnelSort.sortKey}
-                        sortDir={personnelSort.sortDir}
-                        onSort={personnelSort.toggleSort}
-                        style={PERSONNEL_TH_STYLE}
-                      />
-                      <SortableHeaderCell
-                        columnKey="status"
-                        label="Account Status"
-                        sortKey={personnelSort.sortKey}
-                        sortDir={personnelSort.sortDir}
-                        onSort={personnelSort.toggleSort}
-                        style={PERSONNEL_TH_STYLE}
-                      />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {personnelFilters.filteredRows.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={PERSONNEL_COLUMNS}
-                          style={{ padding: "32px 14px", textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem" }}
-                        >
-                          No direct reports match the current search or filters.
-                        </td>
-                      </tr>
-                    ) : (
-                      personnelFilters.filteredRows.map((r) => (
-                        <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.85rem" }}>
-                          <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--text-main)" }}>
-                            {r.fullName}
-                          </td>
-                          <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
-                            {r.email}
-                          </td>
-                          <td style={{ padding: "12px 14px" }}>
-                            <span style={{ padding: "2px 8px", borderRadius: 4, background: "#e8f2fb", color: "#0b5cab", fontSize: "0.75rem", fontWeight: 600 }}>
-                              {r.role}
-                            </span>
-                          </td>
-                          <td style={{ padding: "12px 14px", color: "var(--text-muted)" }}>
-                            {r.team}
-                          </td>
-                          <td style={{ padding: "12px 14px", fontWeight: 700, color: "#0b5cab" }}>
-                            {r.batchesHandled} Batch(es)
-                          </td>
-                          <td style={{ padding: "12px 14px" }}>
-                            <span style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: 5,
-                              color: r.status === "Active" ? "#16a34a" : "#94a3b8",
-                              fontSize: "0.8rem",
-                              fontWeight: 600,
-                            }}>
-                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: r.status === "Active" ? "#16a34a" : "#94a3b8" }} />
-                              {r.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
+                  <ExportButton
+                    filename="manager-board-personnel"
+                    columns={PERSONNEL_EXPORT_COLUMNS}
+                    rows={personnelFilters.filteredRows}
+                  />
+                  <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />
+                </>
+              }
+              footer={
+                <PaginationControls
+                  label="Direct reports pages"
+                  currentPage={page}
+                  totalItems={personnelFilters.filteredRows.length}
+                  pageSize={pageSize}
+                  pageSizeOptions={PERSONNEL_PAGE_SIZE_OPTIONS}
+                  onPageChange={setPage}
+                  onPageSizeChange={(nextSize) => {
+                    setPageSize(nextSize);
+                    setPage(1);
+                  }}
+                />
+              }
+            >
+              <table className="glass-table table-pin-first-col w-full border-collapse">
+                <TableCaption>Direct reports, their assigned role and ops team, and how many batches they handle</TableCaption>
+                <thead>
+                  <tr>
+                    {PERSONNEL_COLUMN_DEFS.map((column) =>
+                      personnelColumns.isVisible(column.key) ? (
+                        <SortableHeaderCell
+                          key={column.key}
+                          columnKey={column.key}
+                          label={column.label}
+                          style={{ ...PERSONNEL_TH_STYLE, textAlign: column.align ?? "left" }}
+                          sortKey={personnelSort.sortKey}
+                          sortDir={personnelSort.sortDir}
+                          onSort={personnelSort.toggleSort}
+                        />
+                      ) : null
                     )}
-                  </tbody>
-                </table>
-              </FullscreenTable>
-            )}
-          </div>
+                  </tr>
+                </thead>
+                <tbody>
+                  {error ? (
+                    <TableStateRow colSpan={personnelVisibleColumns}>
+                      <ErrorBanner message={error} className="mx-auto my-6 max-w-lg" />
+                    </TableStateRow>
+                  ) : isLoading && personnelFilters.filteredRows.length === 0 ? (
+                    <TableStateRow colSpan={personnelVisibleColumns}>
+                      <LoadingState label="Loading your direct reports..." />
+                    </TableStateRow>
+                  ) : pagedPersonnel.length === 0 ? (
+                    <TableStateRow colSpan={personnelVisibleColumns}>
+                      {personnelFilters.hasActiveFilters ? (
+                        <EmptyState
+                          icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                          title="No direct reports match your filters"
+                          description="Clear the search or filter selections to see the whole team."
+                          action={
+                            <Button size="sm" variant="outline" onClick={personnelFilters.clearFilters}>
+                              Clear filters
+                            </Button>
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          icon={<Users className="h-5 w-5" aria-hidden="true" />}
+                          title="No direct reports yet"
+                          description="Assigned coordinators and team members reporting to you will appear here."
+                        />
+                      )}
+                    </TableStateRow>
+                  ) : (
+                    pagedPersonnel.map((row) => (
+                      <tr key={row.id} style={PERSONNEL_ROW_STYLE}>
+                        {personnelColumns.isVisible("name") && (
+                          <td style={{ ...PERSONNEL_TD_STYLE, fontWeight: 700, color: "var(--text-main)" }}>
+                            {row.fullName}
+                          </td>
+                        )}
+                        {personnelColumns.isVisible("email") && (
+                          <td style={{ ...PERSONNEL_TD_STYLE, color: "var(--text-muted)" }}>
+                            {row.email}
+                          </td>
+                        )}
+                        {personnelColumns.isVisible("role") && (
+                          <td style={PERSONNEL_TD_STYLE}>
+                            <Badge variant="info" size="sm" className="normal-case tracking-normal">
+                              {row.role}
+                            </Badge>
+                          </td>
+                        )}
+                        {personnelColumns.isVisible("team") && (
+                          <td style={{ ...PERSONNEL_TD_STYLE, color: "var(--text-muted)" }}>
+                            {row.team}
+                          </td>
+                        )}
+                        {personnelColumns.isVisible("batchesHandled") && (
+                          <td style={{ ...PERSONNEL_TD_STYLE, fontWeight: 700, color: "var(--color-primary)" }}>
+                            {row.batchesHandled} Batch(es)
+                          </td>
+                        )}
+                        {personnelColumns.isVisible("status") && (
+                          <td style={PERSONNEL_TD_STYLE}>
+                            <StatusPill active={row.status === "Active"} />
+                          </td>
+                        )}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </FullscreenTable>
+          )}
         </div>
       )}
     </div>

@@ -15,6 +15,7 @@ const badgeVariants = cva(
         success: "bg-success/10 text-success border border-success/20",
         warning: "bg-warning/10 text-warning border border-warning/20",
         info: "bg-info/10 text-info border border-info/20",
+        violet: "bg-violet-500/10 text-violet-700 border border-violet-500/20",
         outline: "bg-transparent text-foreground border border-border",
       },
       size: {

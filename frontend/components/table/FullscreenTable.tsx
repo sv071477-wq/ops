@@ -2,15 +2,16 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { Maximize2, Minimize2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export interface FullscreenTableProps {
   children: React.ReactNode;
-  /** Heading shown in the panel header (left of the toolbar). */
+  /** Heading shown on its own line above the toolbar row. */
   title?: React.ReactNode;
-  /** Usually a `<TableFilters />` instance; rendered next to the title. */
+  /** Usually a `<TableFilters />` instance; takes the free width on the toolbar row. */
   toolbar?: React.ReactNode;
-  /** Right-aligned controls (export, refresh, save, ...). */
+  /** Right-aligned controls (create, export, refresh, ...). */
   actions?: React.ReactNode;
   /** Rendered after the scroll area, e.g. `<PaginationControls />`. */
   footer?: React.ReactNode;
@@ -33,12 +34,26 @@ export interface FullscreenTableProps {
   strategy?: "fixed" | "absolute";
   initialFullscreen?: boolean;
   onFullscreenChange?: (isFullscreen: boolean) => void;
+  /**
+   * Pins the whole panel below `stickyTop` (the shared Navbar) and scrolls the
+   * table body inside it, so the toolbar, the primary actions and the column
+   * headings stay on screen no matter how long the table is.
+   */
+  stickyHeader?: boolean;
+  /** Height of whatever global header sits above the table. */
+  stickyTop?: number;
+  /** Pins `<thead>` directly under the sticky header. Implied by `stickyHeader`. */
+  stickyThead?: boolean;
 }
+
+const HEADER_PADDING = "14px 20px";
+const TOOLBAR_ROW_GAP = 10;
 
 /**
  * Panel wrapper that gives any table a fullscreen mode, Escape-to-exit,
- * body scroll locking and a sticky toolbar header. It only controls layout —
- * the table markup stays with the consumer.
+ * body scroll locking and a header that holds the title, the filter toolbar and
+ * the row/table actions. It only controls layout — the table markup stays with
+ * the consumer.
  */
 export function FullscreenTable({
   children,
@@ -60,6 +75,9 @@ export function FullscreenTable({
   strategy = "fixed",
   initialFullscreen = false,
   onFullscreenChange,
+  stickyHeader = false,
+  stickyTop = 0,
+  stickyThead,
 }: FullscreenTableProps) {
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
 
@@ -93,6 +111,12 @@ export function FullscreenTable({
     };
   }, [isFullscreen, strategy]);
 
+  // With a pinned header the table body becomes the scroll container, so the
+  // header stays on screen without any viewport math and `<thead>` can stick to
+  // the top of that container instead of to the page.
+  const scrollBody = stickyHeader || isFullscreen;
+  const pinThead = stickyThead ?? stickyHeader;
+
   return (
     <div
       className={cn(panelClassName, isFullscreen ? "table-fullscreen-panel" : null, className)}
@@ -115,90 +139,112 @@ export function FullscreenTable({
               background: fullscreenBackground,
             }
           : null),
+        ...(stickyHeader && !isFullscreen
+          ? {
+              position: "sticky",
+              top: stickyTop,
+              zIndex: 20,
+              maxHeight: `calc(100vh - ${stickyTop}px - 24px)`,
+            }
+          : null),
         ...style,
       }}
     >
       {(title || toolbar || actions || showFullscreenButton) && (
         <div
-style={{
-          padding: "14px 20px",
-          borderBottom: "1px solid var(--border-subtle)",
-          background: isFullscreen ? "#ffffff" : undefined,
-          ...headerStyle,
-          // Structural layout is owned by this component and re-declared after
-          // the spread, so a caller's `headerStyle` can theme the padding,
-          // background and border but can never collapse the two-row header
-          // into one row and squeeze the toolbar.
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-          {(title || actions || showFullscreenButton) && (
+          style={{
+            padding: HEADER_PADDING,
+            borderBottom: "1px solid var(--border-subtle)",
+            background: isFullscreen ? "#ffffff" : "var(--color-card)",
+            ...headerStyle,
+            // Structural layout is owned by this component and re-declared after
+            // the spread, so a caller's `headerStyle` can theme the padding,
+            // background and border but can never reorder the header rows.
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "stretch",
+            justifyContent: "flex-start",
+            gap: TOOLBAR_ROW_GAP,
+            flexShrink: 0,
+          }}
+        >
+          {title && (
+            <div
+              style={{
+                fontSize: "1rem",
+                fontWeight: 700,
+                color: "var(--text-main)",
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                ...titleStyle,
+              }}
+            >
+              {title}
+            </div>
+          )}
+
+          {(toolbar || actions || showFullscreenButton) && (
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
+                alignItems: "flex-end",
                 justifyContent: "space-between",
-                gap: 12,
                 flexWrap: "wrap",
+                gap: TOOLBAR_ROW_GAP,
                 minWidth: 0,
               }}
             >
-              {title ? (
-                <div
-                  style={{
-                    fontSize: "1rem",
-                    fontWeight: 700,
-                    color: "var(--text-main)",
-                    whiteSpace: "nowrap",
-                    ...titleStyle,
-                  }}
-                >
-                  {title}
-                </div>
+              {toolbar ? (
+                <div style={{ flex: "1 1 380px", minWidth: 0, display: "flex" }}>{toolbar}</div>
               ) : (
-                <span />
+                <span style={{ flex: "1 1 auto" }} />
               )}
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  marginLeft: "auto",
+                  flexShrink: 0,
+                }}
+              >
                 {actions}
                 {showFullscreenButton && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={toggleFullscreen}
-                    className="btn btn-secondary"
                     aria-pressed={isFullscreen}
                     title={isFullscreen ? exitFullscreenLabel : fullscreenLabel}
-                    style={{ padding: "8px 11px", fontSize: "0.8rem" }}
                   >
-                {isFullscreen ? (
-                      <Minimize2 size={15} aria-hidden="true" />
+                    {isFullscreen ? (
+                      <Minimize2 className="h-4 w-4" aria-hidden="true" />
                     ) : (
-                      <Maximize2 size={15} aria-hidden="true" />
+                      <Maximize2 className="h-4 w-4" aria-hidden="true" />
                     )}
                     <span>{isFullscreen ? exitFullscreenLabel : fullscreenLabel}</span>
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
           )}
-
-          {/* The filter grid gets the full panel width so it wraps predictably. */}
-          {toolbar ? <div style={{ width: "100%", minWidth: 0 }}>{toolbar}</div> : null}
         </div>
       )}
 
       <div
-        className={cn("table-scroll-wrapper", contentClassName)}
+        className={cn("table-scroll-wrapper", pinThead && "table-pin-thead", contentClassName)}
         style={{
           overflowX: "auto",
-          overflowY: isFullscreen ? "auto" : "visible",
+          overflowY: scrollBody ? "auto" : "visible",
           minHeight: 0,
           width: "100%",
+          // Only meaningful when this box is the scroll container.
+          ...(scrollBody && stickyHeader && !isFullscreen ? { flex: "1 1 auto" } : null),
           ...contentStyle,
         }}
       >

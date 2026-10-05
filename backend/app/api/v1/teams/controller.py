@@ -7,13 +7,19 @@ from app.core.database import get_db
 from app.models.user import User
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse
 from app.api.deps import get_current_user, require_admin
+from app.api.v1.teams.repository import TeamRepository
+from app.api.v1.teams.repository_interfaces import ITeamRepository
 from app.api.v1.teams.service import TeamService
 
 router = APIRouter()
 
 
-def get_team_service(db: Session = Depends(get_db)) -> TeamService:
-    return TeamService(db)
+def get_team_repository(db: Session = Depends(get_db)) -> ITeamRepository:
+    return TeamRepository(db)
+
+
+def get_team_service(team_repo: ITeamRepository = Depends(get_team_repository)) -> TeamService:
+    return TeamService(team_repo)
 
 
 @router.get("", response_model=List[TeamResponse])

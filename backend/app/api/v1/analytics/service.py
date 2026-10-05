@@ -5,22 +5,24 @@ from typing import Optional
 
 import pandas as pd
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, and_, cast, Date
-from sqlalchemy.orm import Session
 
-from app.api.deps import get_managed_coordinator_ids
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, TrainingSession
-from app.models.user import User, UserManagerMapping
+from app.models.user import User
 from app.schemas.analytics import ManagerDashboardSummary, VerticalBreakdown
+from app.api.v1.analytics.repository_interfaces import IAnalyticsRepository
+from app.api.v1.auth.repository_interfaces import IUserRepository
+
+
+_ACTIVE_STATUSES = ["Approved", "Upcoming", "Ongoing"]
 
 
 class AnalyticsService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, analytics_repo: IAnalyticsRepository, user_repo: IUserRepository):
+        self.analytics_repo = analytics_repo
+        self.user_repo = user_repo
 
     @staticmethod
-    def _average(values) -> Decimal | None:
+    def _average(values) -> Optional[Decimal]:
         if not values:
             return None
         valid_floats = []
@@ -36,21 +38,14 @@ class AnalyticsService:
         return Decimal(str(round(sum(valid_floats) / len(valid_floats), 2)))
 
     def _get_scoped_batch_ids(self, current_user: Optional[User]) -> Optional[list]:
-        """Returns a list of batch IDs scoped to the manager hierarchy, or None if admin/unrestricted."""
-        if not current_user or current_user.role.lower() == "admin":
+        """Batch IDs scoped to the manager hierarchy, or None for admin/unrestricted."""
+        if not current_user or (current_user.role or "").lower() == "admin":
             return None
 
         scope_user_ids = {current_user.id}
-        scope_user_ids.update(get_managed_coordinator_ids(current_user.id, self.db))
+        scope_user_ids.update(self.user_repo.get_managed_coordinator_ids(current_user.id))
 
-        batch_filters = [
-            Batch.primary_manager_id == current_user.id,
-            Batch.coordinator_id.in_(list(scope_user_ids)),
-        ]
-
-        scoped_batches = self.db.query(Batch.id).filter(or_(*batch_filters)).all()
-        scoped_ids = [b[0] for b in scoped_batches]
-
+        scoped_ids = self.analytics_repo.list_scoped_batch_ids(list(scope_user_ids), current_user.id)
         if not scoped_ids:
             return None
         return scoped_ids
@@ -58,94 +53,34 @@ class AnalyticsService:
     def manager_dashboard(self, current_user: Optional[User] = None) -> ManagerDashboardSummary:
         scoped_ids = self._get_scoped_batch_ids(current_user)
 
-        base_batch_query = self.db.query(Batch)
-        if scoped_ids is not None:
-            base_batch_query = base_batch_query.filter(Batch.id.in_(scoped_ids))
-
-        active_statuses = ["Approved", "Upcoming", "Ongoing"]
-        total_active = base_batch_query.filter(Batch.status.in_(active_statuses)).count()
-
-        # Avg NPS and Feedback
-        nps_vals = base_batch_query.filter(Batch.batch_nps.isnot(None)).with_entities(Batch.batch_nps).all()
-        avg_nps = self._average(nps_vals)
-
-        feedback_vals = base_batch_query.filter(Batch.batch_avg_feedback.isnot(None)).with_entities(Batch.batch_avg_feedback).all()
-        avg_feedback = self._average(feedback_vals)
-
-        # Gate 2 closures pending (batches not yet completed, or completed without NPS)
-        now_utc = datetime.now(timezone.utc)
-        pending_gate2 = base_batch_query.filter(
-            Batch.status.in_(active_statuses),
-            or_(Batch.batch_nps.is_(None), Batch.status == "Ongoing")
-        ).count()
-
-        # Sessions query scoped to batches
-        session_query = self.db.query(FacultyUtilization)
-        if scoped_ids is not None:
-            session_query = session_query.filter(FacultyUtilization.batch_id.in_(scoped_ids))
+        total_active = self.analytics_repo.count_batches(scoped_ids, _ACTIVE_STATUSES)
+        avg_nps = self._average(self.analytics_repo.list_column_values(scoped_ids, Batch.batch_nps))
+        avg_feedback = self._average(self.analytics_repo.list_column_values(scoped_ids, Batch.batch_avg_feedback))
+        pending_gate2 = self.analytics_repo.count_pending_gate2(scoped_ids, _ACTIVE_STATUSES)
 
         # Real ongoing sessions
-        today = date.today()
-        total_ongoing_sessions = session_query.filter(
-            or_(
-                FacultyUtilization.status == "InProgress",
-                and_(
-                    FacultyUtilization.status != "Cancelled",
-                    cast(FacultyUtilization.date_of_training, Date) == today
-                )
-            )
-        ).count()
+        total_ongoing_sessions = self.analytics_repo.count_ongoing_sessions(scoped_ids, date.today())
 
         # Total hours delivered from completed sessions
-        delivered_hours_sum = session_query.filter(
-            FacultyUtilization.status == "Completed"
-        ).with_entities(func.sum(FacultyUtilization.no_of_hours)).scalar()
-
+        delivered_hours_sum = self.analytics_repo.sum_delivered_hours(scoped_ids)
         if delivered_hours_sum is not None:
-            total_hours_delivered = Decimal(str(round(float(delivered_hours_sum), 2)))
+            total_hours_delivered = delivered_hours_sum
         else:
             # Fallback: sum total_hours from Completed batches
-            completed_batch_hours = base_batch_query.filter(
-                Batch.status == "Completed"
-            ).with_entities(func.sum(Batch.total_hours)).scalar()
-            total_hours_delivered = Decimal(str(round(float(completed_batch_hours or 0.0), 2)))
+            total_hours_delivered = self.analytics_repo.sum_batch_hours(scoped_ids, status_filter="Completed")
 
         # Pending Gate 1 Feedbacks (sessions completed or past date without rating)
-        pending_gate1 = session_query.filter(
-            or_(
-                FacultyUtilization.status == "Completed",
-                FacultyUtilization.date_of_training <= now_utc
-            ),
-            FacultyUtilization.status != "Cancelled",
-            or_(
-                FacultyUtilization.feedback_rating.is_(None),
-                FacultyUtilization.feedback_submitted == False
-            )
-        ).count()
+        pending_gate1 = self.analytics_repo.count_pending_gate1(scoped_ids, datetime.now(timezone.utc))
 
         # Faculty utilization ratio: deployed faculty / total faculty count within the manager's hierarchy scope
         if scoped_ids is not None:
-            related_faculty_ids = self.db.query(User.id).filter(
-                User.role == "Faculty",
-                User.is_active == True,
-                User.manager_id.in_(list(scope_user_ids))
-            ).all()
-            faculty_ids = {u[0] for u in related_faculty_ids}
-            total_fac_count = len(faculty_ids)
-
-            deployed_fac_count = self.db.query(FacultyUtilization.faculty_name).filter(
-                FacultyUtilization.batch_id.in_(scoped_ids),
-                FacultyUtilization.status.in_(["Scheduled", "InProgress", "Completed"])
-            ).distinct().count()
+            scope_user_ids = [current_user.id]
+            scope_user_ids.extend(self.user_repo.get_managed_coordinator_ids(current_user.id))
+            total_fac_count = self.analytics_repo.count_active_faculty(scope_user_ids)
         else:
-            total_fac_count = self.db.query(User).filter(
-                User.role == "Faculty",
-                User.is_active == True
-            ).count()
+            total_fac_count = self.analytics_repo.count_active_faculty()
 
-            deployed_fac_count = self.db.query(FacultyUtilization.faculty_name).filter(
-                FacultyUtilization.status.in_(["Scheduled", "InProgress", "Completed"])
-            ).distinct().count()
+        deployed_fac_count = self.analytics_repo.count_distinct_deployed_faculty(scoped_ids)
 
         if total_fac_count > 0:
             util_ratio = Decimal(str(round((min(deployed_fac_count, total_fac_count) / total_fac_count) * 100, 1)))
@@ -153,28 +88,21 @@ class AnalyticsService:
             util_ratio = Decimal("0.0")
 
         # Dynamic vertical breakdown from distinct domains in DB
-        distinct_domains = base_batch_query.filter(
-            Batch.domain.isnot(None),
-            Batch.domain != ""
-        ).with_entities(Batch.domain).distinct().all()
-
-        domain_names = [d[0] for d in distinct_domains if d[0]]
+        domain_names = self.analytics_repo.list_distinct_domains(scoped_ids)
         if not domain_names:
             domain_names = ["IT/ITES", "Cloud", "DS/ML", "BFSI"]
 
-        verticals = []
-        for domain_name in domain_names:
-            d_query = base_batch_query.filter(Batch.domain == domain_name)
-            d_active = d_query.filter(Batch.status.in_(active_statuses)).count()
-            d_hours = d_query.with_entities(func.sum(Batch.total_hours)).scalar() or 0.0
-            d_feedbacks = d_query.filter(Batch.batch_avg_feedback.isnot(None)).with_entities(Batch.batch_avg_feedback).all()
-
-            verticals.append(VerticalBreakdown(
-                vertical=domain_name,
-                active_batches=d_active,
-                total_hours=Decimal(str(round(float(d_hours), 2))),
-                average_feedback=self._average(d_feedbacks) or Decimal("0.0"),
-            ))
+        verticals = [
+            VerticalBreakdown(
+                vertical=domain,
+                active_batches=aggregate.active_batches,
+                total_hours=aggregate.total_hours,
+                average_feedback=aggregate.average_feedback,
+            )
+            for domain, aggregate in self.analytics_repo.aggregate_by_domain(
+                scoped_ids, domain_names, _ACTIVE_STATUSES
+            )
+        ]
 
         # Sort verticals by active batches descending
         verticals.sort(key=lambda x: x.active_batches, reverse=True)
@@ -207,7 +135,7 @@ class AnalyticsService:
             "Batch NPS": float(batch.batch_nps) if batch.batch_nps else None,
             "Batch Avg Feedback": float(batch.batch_avg_feedback) if batch.batch_avg_feedback else None,
             "Schema Locked": "Yes" if batch.is_schema_locked else "No",
-        } for batch in self.db.query(Batch).all()]
+        } for batch in self.analytics_repo.list_all_batches()]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             pd.DataFrame(data).to_excel(writer, index=False, sheet_name="Active Batches")

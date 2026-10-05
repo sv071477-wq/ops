@@ -6,15 +6,13 @@ from pydantic import BaseModel
 
 from app.models.user import User
 from app.schemas.user import (
-    UserUpdate, UserResponse, UserLogin, Token, TokenPair,
+    UserCreate, UserUpdate, UserResponse, UserLogin, Token, TokenPair,
     CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode,
     ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
 from app.api.v1.auth.service import AuthService
-from app.core.database import get_db
-from app.core.security import decode_refresh_token
 
 router = APIRouter()
 
@@ -73,8 +71,7 @@ def change_my_password(
 @router.get("/my-reports", response_model=List[UserResponse])
 def get_my_reports(current_user: User = Depends(get_current_user), service: AuthService = Depends(get_auth_service)) -> Any:
     """Fetch list of active users reporting directly to the authenticated user."""
-    reports = service.db.query(User).filter(User.manager_id == current_user.id, User.is_active.is_(True)).all()
-    return [service._enrich_user(u) for u in reports]
+    return service.list_direct_reports(current_user)
 
 
 @router.get("/users", response_model=List[UserResponse], dependencies=[Depends(require_manager_or_admin)])
@@ -83,13 +80,23 @@ def list_users(service: AuthService = Depends(get_auth_service)) -> Any:
     return service.list_all_users()
 
 
+@router.post("/users", response_model=UserResponse, dependencies=[Depends(require_admin)])
+def create_user(
+    user_in: UserCreate,
+    service: AuthService = Depends(get_auth_service),
+    current_user: User = Depends(require_admin),
+) -> Any:
+    """Admin Only: Create a new user with an explicitly chosen password."""
+    return service.create_user(user_in)
+
+
 @router.get("/users/assignable", response_model=List[UserResponse])
 def list_assignable_users(
     role: str = Query(..., pattern="^(Sales|Coordinator|Manager)$"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    service: AuthService = Depends(get_auth_service),
 ) -> Any:
-    return db.query(User).filter(User.role == role, User.is_active.is_(True)).order_by(User.full_name).all()
+    return service.list_assignable_users(role)
 
 
 @router.get("/hierarchy", response_model=List[UserHierarchyNode], dependencies=[Depends(get_current_user)])

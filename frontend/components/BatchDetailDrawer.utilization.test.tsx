@@ -98,6 +98,10 @@ function renderDrawerWired() {
   return render(<Host />);
 }
 
+/** The drawer is now itself a Radix dialog, so the modal is found by name. */
+const utilDialog = () => screen.getByRole("dialog", { name: /log faculty utilization/i }) as HTMLElement;
+const queryUtilDialog = () => screen.queryByRole("dialog", { name: /log faculty utilization/i });
+
 /** Opens the modal and returns queries scoped to the dialog itself. */
 async function openLogUtilization() {
   renderDrawer();
@@ -106,9 +110,9 @@ async function openLogUtilization() {
   });
   fireEvent.click(screen.getByRole("button", { name: /Log Utilization/i }));
   await waitFor(() => {
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
   });
-  const dialog = screen.getByRole("dialog") as HTMLElement;
+  const dialog = utilDialog();
   return {
     dialog,
     q: within(dialog),
@@ -143,21 +147,21 @@ describe("Log Faculty Utilization modal", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Log Utilization/i }));
     await waitFor(() => {
-      expect(screen.getByRole("dialog")).toBeTruthy();
+      expect(utilDialog()).toBeTruthy();
     });
-    const dialog = screen.getByRole("dialog") as HTMLElement;
+    const dialog = utilDialog();
 
     const topic = within(dialog).getByLabelText(/Training Topic/i) as HTMLInputElement;
     fireEvent.mouseDown(topic);
     fireEvent.click(topic);
     fireEvent.change(topic, { target: { value: "Module 1: Orientation" } });
 
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
     expect(topic.value).toBe("Module 1: Orientation");
 
     // The backdrop press must not take the drawer down either.
     fireEvent.click(dialog.parentElement!);
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
   });
 
   it("stays open when a press lands on the overlay while editing a field", async () => {
@@ -169,7 +173,7 @@ describe("Log Faculty Utilization modal", () => {
     fireEvent.mouseDown(overlay);
     fireEvent.click(overlay);
 
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
     expect(field(/Training Topic/i).value).toBe("Module 1: Orientation");
   });
 
@@ -185,7 +189,7 @@ describe("Log Faculty Utilization modal", () => {
     fireEvent.mouseDown(hours);
     fireEvent.change(hours, { target: { value: "6" } });
 
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
     expect(field(/Actual Faculty/i).value).toBe("Rohan Dutta");
     expect(field(/Actual Hours/i).value).toBe("6");
   });
@@ -197,18 +201,18 @@ describe("Log Faculty Utilization modal", () => {
     fireEvent.click(button(/^Cancel$/i));
 
     expect(q.getByText(/Discard the changes you made/i)).toBeTruthy();
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
 
     fireEvent.click(button(/Keep Editing/i));
     expect(q.queryByText(/Discard the changes you made/i)).toBeNull();
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(utilDialog()).toBeTruthy();
   });
 
   it("closes on Cancel when nothing was edited", async () => {
     const { button } = await openLogUtilization();
     fireEvent.click(button(/^Cancel$/i));
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(queryUtilDialog()).toBeNull();
     });
   });
 
@@ -216,15 +220,15 @@ describe("Log Faculty Utilization modal", () => {
     await openLogUtilization();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(queryUtilDialog()).toBeNull();
     });
   });
 
   it("closes on the close button", async () => {
     const { button } = await openLogUtilization();
-    fireEvent.click(button(/^Close$/i));
+    fireEvent.click(button(/^Close log utilization dialog$/i));
     await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(queryUtilDialog()).toBeNull();
     });
   });
 

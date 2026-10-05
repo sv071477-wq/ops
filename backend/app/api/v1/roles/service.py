@@ -1,26 +1,23 @@
 from typing import List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 
-from app.models.user import Role, User
+from app.models.user import Role
 from app.schemas.user import RoleCreate, RoleUpdate
+from app.api.v1.roles.repository_interfaces import IRoleRepository
 
 VALID_SYSTEM_ROLES = {"Admin", "Manager", "Coordinator", "Sales", "Faculty"}
 
 
 class RoleService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, role_repo: IRoleRepository):
+        self.role_repo = role_repo
 
     def list_roles(self, is_active: Optional[bool] = None) -> List[Role]:
-        query = self.db.query(Role)
-        if is_active is not None:
-            query = query.filter(Role.is_active == is_active)
-        return query.order_by(Role.name.asc()).all()
+        return self.role_repo.list_roles(is_active=is_active)
 
     def get_role(self, role_id: UUID) -> Role:
-        role = self.db.query(Role).filter(Role.id == role_id).first()
+        role = self.role_repo.get_by_id(role_id)
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
         return role
@@ -36,8 +33,7 @@ class RoleService:
                 detail=f"Invalid system_role '{role_in.system_role}'. Must be one of {list(VALID_SYSTEM_ROLES)}"
             )
 
-        existing = self.db.query(Role).filter(Role.name.ilike(clean_name)).first()
-        if existing:
+        if self.role_repo.exists_by_name(clean_name):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Role with name '{clean_name}' already exists")
 
         role = Role(
@@ -45,10 +41,7 @@ class RoleService:
             system_role=role_in.system_role,
             is_active=role_in.is_active
         )
-        self.db.add(role)
-        self.db.commit()
-        self.db.refresh(role)
-        return role
+        return self.role_repo.create(role)
 
     def update_role(self, role_id: UUID, role_in: RoleUpdate) -> Role:
         role = self.get_role(role_id)
@@ -56,8 +49,7 @@ class RoleService:
 
         if "name" in update_data and update_data["name"]:
             clean_name = update_data["name"].strip()
-            existing = self.db.query(Role).filter(Role.name.ilike(clean_name), Role.id != role_id).first()
-            if existing:
+            if self.role_repo.exists_by_name(clean_name, exclude_id=role_id):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Role with name '{clean_name}' already exists")
             role.name = clean_name
 
@@ -72,19 +64,20 @@ class RoleService:
         if "is_active" in update_data and update_data["is_active"] is not None:
             role.is_active = update_data["is_active"]
 
-        self.db.commit()
-        self.db.refresh(role)
-        return role
+        return self.role_repo.update(
+            role,
+            name=update_data.get("name"),
+            system_role=update_data.get("system_role"),
+            is_active=update_data.get("is_active")
+        )
 
     def delete_role(self, role_id: UUID) -> dict:
         role = self.get_role(role_id)
-        # Check if users are assigned to this role
-        assigned_user_count = self.db.query(User).filter(User.role_id == role_id).count()
+        assigned_user_count = self.role_repo.get_assigned_user_count(role_id)
         if assigned_user_count > 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot delete role '{role.name}' because {assigned_user_count} user(s) are currently assigned to it. Deactivate the role instead."
             )
-        self.db.delete(role)
-        self.db.commit()
+        self.role_repo.delete(role)
         return {"detail": f"Role '{role.name}' successfully deleted"}

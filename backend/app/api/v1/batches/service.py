@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 import io
 import json
 import pandas as pd
@@ -7,28 +7,56 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, Date
-from sqlalchemy.orm import Session
 
 from app.models.batch import (
     Accommodation,
-    ApprovalConfiguration,
     Batch,
     BatchCategory,
     DeliveryMode,
     Entity,
 )
-from app.models.session import FacultyUtilization, TrainingSession
 from app.models.user import User
 from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreateRequest, BatchUpdateRequest, ActiveBatchesResponse
 from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
-from app.api.deps import get_manager_scope_user_ids
+from app.api.v1.auth.repository_interfaces import IUserRepository
+from app.api.v1.batches.repository_interfaces import BatchScope, IBatchRepository
 from app.api.v1.gates.service import GatekeeperService
 
 
 class BatchService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(
+        self,
+        batch_repo: IBatchRepository,
+        user_repo: IUserRepository,
+        gatekeeper: GatekeeperService,
+    ):
+        self.batch_repo = batch_repo
+        self.user_repo = user_repo
+        self.gatekeeper = gatekeeper
+
+    @staticmethod
+    def _is_unrestricted(current_user: User) -> bool:
+        """Admins and the Finance team see every batch."""
+        role_lower = (current_user.role or "").lower()
+        team_lower = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
+        return role_lower == "admin" or team_lower == "finance"
+
+    def _scope(self, current_user: User, ownership_user_id: Optional[UUID] = None) -> BatchScope:
+        role_lower = (current_user.role or "").lower()
+        return BatchScope(
+            user_id=current_user.id,
+            scope_user_ids=(
+                None if self._is_unrestricted(current_user)
+                else self.user_repo.get_manager_scope_user_ids(current_user)
+            ),
+            ownership_role=role_lower if role_lower in ("coordinator", "manager") else None,
+            ownership_user_id=ownership_user_id,
+        )
+
+    def _save(self, batch: Batch) -> Batch:
+        self.batch_repo.commit()
+        self.batch_repo.refresh(batch)
+        return batch
 
     @staticmethod
     def _as_utc(value):
@@ -62,25 +90,21 @@ class BatchService:
 
     def create(self, batch_in: BatchCreateRequest, current_user: User) -> Batch:
         # Check for unique batch_id
-        if self.db.query(Batch).filter(Batch.batch_id == batch_in.batch_id).first():
+        if self.batch_repo.exists_by_batch_id(batch_in.batch_id):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Batch ID '{batch_in.batch_id}' is already registered.")
-        
+
         # Get delivery mode config for max_hours_per_day validation
-        delivery_mode = None
-        if batch_in.delivery_mode_id:
-            delivery_mode = self.db.query(DeliveryMode).filter(DeliveryMode.id == batch_in.delivery_mode_id, DeliveryMode.is_active.is_(True)).first()
-        elif batch_in.delivery_mode:
-            delivery_mode = self.db.query(DeliveryMode).filter(DeliveryMode.name == batch_in.delivery_mode).first()
-        
-        max_hours_per_day = delivery_mode.max_hours_per_day if delivery_mode and delivery_mode.max_hours_per_day else 8
-        
+        max_hours_per_day = self.batch_repo.get_delivery_mode_max_hours(
+            batch_in.delivery_mode_id, batch_in.delivery_mode
+        ) or 8
+
         # Validate total_hours against training_days * max_hours_per_day
         if batch_in.total_hours > batch_in.training_days * max_hours_per_day:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Total hours must be between 0.5 and training_days × max_hours_per_day ({batch_in.training_days} × {max_hours_per_day} = {batch_in.training_days * max_hours_per_day})"
             )
-        
+
         batch_data = batch_in.model_dump(exclude_none=True)
         batch_data["calendar_days"] = self._calendar_days(batch_data.get("start_date"), batch_data.get("end_date"))
         batch_data["category_id"] = self._option_id(BatchCategory, batch_data.get("category_id"), batch_data.get("category", "Bootcamp"))
@@ -92,7 +116,7 @@ class BatchService:
             batch_data["accommodation_id"] = self._option_id(Accommodation, batch_data["accommodation_id"], "")
         batch_data["entity_id"] = self._option_id(Entity, batch_data.get("entity_id"), "Unext")
         batch_data["batch_request_date"] = datetime.now(timezone.utc)
-        config = self.db.query(ApprovalConfiguration).first()
+        config = self.batch_repo.get_approval_config()
         if not config or not config.approver_1_id or not config.approver_2_id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -107,16 +131,12 @@ class BatchService:
             batch_data["coordinator_id"] = current_user.id
         elif current_user.role == "Sales" and not batch_data.get("sales_spoc_id"):
             batch_data["sales_spoc_id"] = current_user.id
-        
+
         # Store faculty_members as JSON
         if "faculty_members" in batch_data:
             batch_data["faculty_members"] = json.dumps(batch_data["faculty_members"])
-        
-        batch = Batch(**batch_data)
-        self.db.add(batch)
-        self.db.commit()
-        self.db.refresh(batch)
-        return batch
+
+        return self.batch_repo.create(Batch(**batch_data))
 
     @staticmethod
     def _calendar_days(start_date, end_date) -> int:
@@ -128,39 +148,32 @@ class BatchService:
 
     def _option_id(self, model, option_id, legacy_name: str):
         if option_id:
-            option = self.db.query(model).filter(model.id == option_id, model.is_active.is_(True)).first()
+            option = self.batch_repo.get_active_option(model, option_id)
             if not option:
                 raise HTTPException(status_code=422, detail=f"Inactive or invalid {model.__tablename__} option")
             return option.id
         normalized = "Non-Residential" if legacy_name == "NR" else "Residential" if legacy_name == "R" else legacy_name
-        option = self.db.query(model).filter(model.name == normalized).first()
+        option = self.batch_repo.get_option_by_name(model, normalized)
         if not option:
-            option = model(name=normalized, is_active=True)
-            self.db.add(option)
-            self.db.flush()
+            option = self.batch_repo.create_option(model, normalized)
         return option.id
 
-    def get_approval_config(self) -> ApprovalConfiguration:
-        config = self.db.query(ApprovalConfiguration).first()
+    def get_approval_config(self):
+        config = self.batch_repo.get_approval_config()
         if not config:
-            config = ApprovalConfiguration()
-            self.db.add(config)
-            self.db.commit()
-            self.db.refresh(config)
+            config = self.batch_repo.create_approval_config()
         return config
 
-    def update_approval_config(self, config_in: ApprovalConfigurationBase) -> ApprovalConfiguration:
+    def update_approval_config(self, config_in: ApprovalConfigurationBase):
         config = self.get_approval_config()
         values = config_in.model_dump(exclude_unset=True)
         for field, value in values.items():
             if value:
-                user = self.db.query(User).filter(User.id == value, User.is_active.is_(True)).first()
+                user = self.user_repo.get_active_by_id(value)
                 if not user or user.role.lower() not in {"admin", "manager"}:
                     raise HTTPException(status_code=422, detail=f"{field} must reference an active Admin or Manager")
             setattr(config, field, value)
-        self.db.commit()
-        self.db.refresh(config)
-        return config
+        return self.batch_repo.save_approval_config(config)
 
     def submit_for_approval(self, batch_id: UUID, current_user: User) -> Batch:
         batch = self.get(batch_id, current_user)
@@ -175,9 +188,7 @@ class BatchService:
         batch.approver_1_status = "Pending"
         batch.approver_2_status = "Pending"
         batch.status = "Approval 1 Pending"
-        self.db.commit()
-        self.db.refresh(batch)
-        return batch
+        return self._save(batch)
 
     def decide(self, batch_id: UUID, level: int, decision: ApprovalDecision, current_user: User) -> Batch:
         batch = self.get(batch_id)
@@ -204,7 +215,7 @@ class BatchService:
             batch.is_schema_locked = True
             if decision.reason and not batch.approval_id and len(decision.reason.strip()) <= 100:
                 batch.approval_id = decision.reason.strip()
-            
+
             # Auto-transition based on start_date
             today = datetime.now(timezone.utc).date()
             if batch.start_date and batch.start_date.date() <= today:
@@ -212,9 +223,7 @@ class BatchService:
             else:
                 batch.status = "Upcoming"
         batch.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
-        self.db.refresh(batch)
-        return batch
+        return self._save(batch)
 
     def approve(self, batch_id: UUID, approval: BatchApprove, current_user: User) -> Batch:
         batch = self.get(batch_id, current_user)
@@ -227,87 +236,36 @@ class BatchService:
         batch.approval_id = approval.approval_id
         batch.is_schema_locked = True
         batch.updated_at = datetime.now(timezone.utc)
-        
+
         # Auto-transition based on start_date
         today = datetime.now(timezone.utc).date()
         if batch.start_date and batch.start_date.date() <= today:
             batch.status = "Ongoing"
         else:
             batch.status = "Upcoming"
-        
+
         if not batch.primary_manager_id:
             batch.primary_manager_id = current_user.id
-        self.db.commit()
-        self.db.refresh(batch)
-        return batch
-
-    def _resolve_ownership_field(self, current_user: User):
-        """Map the caller's role to the Batch column that records their ownership.
-
-        Coordinators own `coordinator_id`; Managers own `primary_manager_id`.
-        Admins own nothing, so no restriction is returned for them. A single
-        hardcoded column would silently return zero rows for one of the roles.
-        """
-        user_role_lower = (current_user.role or "").lower()
-        if user_role_lower == "coordinator":
-            return Batch.coordinator_id
-        if user_role_lower == "manager":
-            return Batch.primary_manager_id
-        return None
+        return self._save(batch)
 
     def list(self, current_user: User, status_filter: Optional[str], domain: Optional[str], category: Optional[str], client_name: Optional[str], search: Optional[str], skip: int, limit: int, ownership_filter: Optional[UUID] = None) -> List[Batch]:
         self._sync_pending_approvers()
-        query = self.db.query(Batch)
-        user_role_lower = (current_user.role or "").lower()
-        team_name_lower = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
-
-        if user_role_lower != "admin" and team_name_lower != "finance":
-            team_user_ids = get_manager_scope_user_ids(current_user, self.db)
-            query = query.filter(or_(
-                Batch.primary_manager_id == current_user.id,
-                Batch.coordinator_id.in_(team_user_ids),
-                ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
-                ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
-            ))
-
-        # Ownership narrows the RBAC scope above; it never replaces or widens it.
-        # Admin and Finance carry no per-user ownership, so `mine` is a no-op for
-        # them and they keep their existing full-scope behaviour.
-        if ownership_filter is not None:
-            ownership_field = self._resolve_ownership_field(current_user)
-            if ownership_field is not None:
-                query = query.filter(ownership_field == ownership_filter)
-
-        if status_filter:
-            query = query.filter(Batch.status == status_filter)
-        if domain:
-            query = query.filter(Batch.domain == domain)
-        if category:
-            query = query.filter(Batch.category == category)
-        if client_name:
-            query = query.filter(Batch.client_name.ilike(f"%{client_name}%"))
-        if search:
-            term = f"%{search.strip()}%"
-            query = query.filter(or_(Batch.batch_id.ilike(term), Batch.program_name.ilike(term), Batch.client_name.ilike(term), Batch.technology.ilike(term), Batch.location_city.ilike(term)))
-        batches = query.order_by(Batch.created_at.desc()).offset(skip).limit(limit).all()
+        batches = self.batch_repo.list_scoped(
+            self._scope(current_user, ownership_filter),
+            status_filter=status_filter,
+            domain=domain,
+            category=category,
+            client_name=client_name,
+            search=search,
+            skip=skip,
+            limit=limit,
+        )
         if batches:
-            from app.models.session import FacultyUtilization
-            from sqlalchemy import func
             batch_ids = [b.id for b in batches]
-            counts = dict(
-                self.db.query(FacultyUtilization.batch_id, func.count(FacultyUtilization.id))
-                .filter(FacultyUtilization.batch_id.in_(batch_ids), FacultyUtilization.status.in_(["Completed", "InProgress"]))
-                .group_by(FacultyUtilization.batch_id)
-                .all()
-            )
+            counts = self.batch_repo.get_conducted_session_counts(batch_ids)
             # Timetable rows, i.e. what `GET /batches` used to not report. Lets a
             # coordinator see at a glance which batches still need a schedule.
-            scheduled_counts = dict(
-                self.db.query(TrainingSession.batch_id, func.count(TrainingSession.id))
-                .filter(TrainingSession.batch_id.in_(batch_ids))
-                .group_by(TrainingSession.batch_id)
-                .all()
-            )
+            scheduled_counts = self.batch_repo.get_scheduled_session_counts(batch_ids)
             now = datetime.now(timezone.utc)
             for b in batches:
                 b._scheduled_session_count = scheduled_counts.get(b.id, 0)
@@ -333,7 +291,7 @@ class BatchService:
     ) -> ActiveBatchesResponse:
         """Get ongoing batches and sessions for a specific date with pagination."""
         from app.schemas.batch import ActiveBatchItem, ActiveSessionItem, ActiveBatchesResponse
-        
+
         # Parse filter_date or default to today (UTC)
         try:
             if filter_date:
@@ -342,54 +300,17 @@ class BatchService:
                 filter_date_obj = datetime.now(timezone.utc).date()
         except ValueError:
             filter_date_obj = datetime.now(timezone.utc).date()
-        
-        filter_date_str = filter_date_obj.isoformat()
-        
-        # Build base query with RBAC scoping (same as list())
-        query = self.db.query(Batch)
-        user_role_lower = (current_user.role or "").lower()
-        team_name_lower = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
 
-        if user_role_lower != "admin" and team_name_lower != "finance":
-            team_user_ids = get_manager_scope_user_ids(current_user, self.db)
-            query = query.filter(or_(
-                Batch.primary_manager_id == current_user.id,
-                Batch.coordinator_id.in_(team_user_ids),
-                ((Batch.status == "Approval 1 Pending") & (Batch.approver_1_id == current_user.id)),
-                ((Batch.status == "Approval 2 Pending") & (Batch.approver_2_id == current_user.id)),
-            ))
-        
-        # Filter batches where start_date <= filter_date <= end_date (inclusive)
-        query = query.filter(
-            Batch.start_date.isnot(None),
-            Batch.end_date.isnot(None),
-            Batch.start_date.cast(Date) <= filter_date_obj,
-            Batch.end_date.cast(Date) >= filter_date_obj,
-        )
-        
-        # Get total count before pagination
-        total_batches = query.count()
-        
-        # Apply pagination and sorting
-        batches = query.order_by(Batch.start_date.asc().nullslast()).offset(skip).limit(limit).all()
-        
-        # Get sessions from TrainingSession and FacultyUtilization for this date
-        from app.models.session import TrainingSession, FacultyUtilization
-        from sqlalchemy import func
-        
+        filter_date_str = filter_date_obj.isoformat()
+        scope = self._scope(current_user)
+
+        total_batches = self.batch_repo.count_scoped_on_date(scope, filter_date_obj)
+        batches = self.batch_repo.list_scoped_on_date(scope, filter_date_obj, skip=skip, limit=limit)
+
         batch_ids = [b.id for b in batches]
-        
         # Sessions conducted count for progress calculation (same logic as list())
-        conducted_counts = dict(
-            self.db.query(FacultyUtilization.batch_id, func.count(FacultyUtilization.id))
-            .filter(
-                FacultyUtilization.batch_id.in_(batch_ids),
-                FacultyUtilization.status.in_(["Completed", "InProgress"])
-            )
-            .group_by(FacultyUtilization.batch_id)
-            .all()
-        ) if batch_ids else {}
-        
+        conducted_counts = self.batch_repo.get_conducted_session_counts(batch_ids)
+
         # Build batch items
         batch_items = []
         now = datetime.now(timezone.utc)
@@ -397,14 +318,14 @@ class BatchService:
             conducted = conducted_counts.get(b.id, 0)
             if conducted == 0:
                 conducted = self._estimated_sessions_conducted(b, now)
-            
+
             training_days = b.training_days or 0
             progress = round(min(100.0, (conducted / training_days) * 100.0), 1) if training_days > 0 else 0.0
-            
+
             delivery_mode_name = b.delivery_mode
             if b.delivery_mode_detail:
                 delivery_mode_name = b.delivery_mode_detail.name
-            
+
             batch_items.append(ActiveBatchItem(
                 id=str(b.id),
                 batch_id=b.batch_id,
@@ -421,74 +342,60 @@ class BatchService:
                 sessions_conducted=conducted,
                 progress=progress,
             ))
-        
+
         # Get sessions for this date
         session_items = []
-        
-        # TrainingSession (scheduled curriculum)
-        if batch_ids:
-            scheduled_sessions = self.db.query(TrainingSession).filter(
-                TrainingSession.batch_id.in_(batch_ids),
-                TrainingSession.session_date == filter_date_obj,
-                TrainingSession.status.notin_(["Cancelled", "Not Conducted", "Completed"])
-            ).order_by(TrainingSession.start_time.asc().nullslast()).all()
-            
-            for ts in scheduled_sessions:
-                batch = next((b for b in batches if b.id == ts.batch_id), None)
-                session_items.append(ActiveSessionItem(
-                    id=str(ts.id),
-                    batch_id=batch.batch_id if batch else "",
-                    batch_name=batch.program_name if batch else "",
-                    session_type="scheduled",
-                    sequence_number=ts.sequence_number,
-                    module=ts.module,
-                    trainer_name=ts.trainer_name,
-                    faculty_name=None,
-                    session_date=ts.session_date.isoformat(),
-                    start_time=ts.start_time.isoformat() if ts.start_time else None,
-                    end_time=ts.end_time.isoformat() if ts.end_time else None,
-                    duration_hours=float(ts.duration_hours) if ts.duration_hours else 0.0,
-                    status=ts.status,
-                    venue=None,
-                    location_city=batch.location_city if batch else None,
-                    mode_of_delivery=batch.delivery_mode if batch else "Online",
-                ))
-            
-            # FacultyUtilization (actual delivery)
-            actual_sessions = self.db.query(FacultyUtilization).filter(
-                FacultyUtilization.batch_id.in_(batch_ids),
-                FacultyUtilization.date_of_training.cast(Date) == filter_date_obj,
-                FacultyUtilization.status.notin_(["Cancelled", "Not Conducted", "Completed"])
-            ).order_by(FacultyUtilization.start_time.asc().nullslast()).all()
-            
-            for fu in actual_sessions:
-                batch = next((b for b in batches if b.id == fu.batch_id), None)
-                session_items.append(ActiveSessionItem(
-                    id=str(fu.id),
-                    batch_id=batch.batch_id if batch else "",
-                    batch_name=batch.program_name if batch else "",
-                    session_type="actual",
-                    sequence_number=None,
-                    module=fu.topic,
-                    trainer_name=None,
-                    faculty_name=fu.faculty_name,
-                    session_date=fu.date_of_training.date().isoformat(),
-                    start_time=fu.start_time.isoformat() if fu.start_time else None,
-                    end_time=fu.end_time.isoformat() if fu.end_time else None,
-                    duration_hours=float(fu.no_of_hours) if fu.no_of_hours else 0.0,
-                    status=fu.status,
-                    venue=fu.venue,
-                    location_city=fu.location_city,
-                    mode_of_delivery=fu.mode_of_delivery,
-                ))
-        
+        batches_by_id = {b.id: b for b in batches}
+
+        for ts in self.batch_repo.list_scheduled_sessions_on_date(batch_ids, filter_date_obj):
+            batch = batches_by_id.get(ts.batch_id)
+            session_items.append(ActiveSessionItem(
+                id=str(ts.id),
+                batch_id=batch.batch_id if batch else "",
+                batch_name=batch.program_name if batch else "",
+                session_type="scheduled",
+                sequence_number=ts.sequence_number,
+                module=ts.module,
+                trainer_name=ts.trainer_name,
+                faculty_name=None,
+                session_date=ts.session_date.isoformat(),
+                start_time=ts.start_time.isoformat() if ts.start_time else None,
+                end_time=ts.end_time.isoformat() if ts.end_time else None,
+                duration_hours=float(ts.duration_hours) if ts.duration_hours else 0.0,
+                status=ts.status,
+                venue=None,
+                location_city=batch.location_city if batch else None,
+                mode_of_delivery=batch.delivery_mode if batch else "Online",
+            ))
+
+        for fu in self.batch_repo.list_actual_sessions_on_date(batch_ids, filter_date_obj):
+            batch = batches_by_id.get(fu.batch_id)
+            session_items.append(ActiveSessionItem(
+                id=str(fu.id),
+                batch_id=batch.batch_id if batch else "",
+                batch_name=batch.program_name if batch else "",
+                session_type="actual",
+                sequence_number=None,
+                module=fu.topic,
+                trainer_name=None,
+                faculty_name=fu.faculty_name,
+                session_date=fu.date_of_training.date().isoformat(),
+                start_time=fu.start_time.isoformat() if fu.start_time else None,
+                end_time=fu.end_time.isoformat() if fu.end_time else None,
+                duration_hours=float(fu.no_of_hours) if fu.no_of_hours else 0.0,
+                status=fu.status,
+                venue=fu.venue,
+                location_city=fu.location_city,
+                mode_of_delivery=fu.mode_of_delivery,
+            ))
+
         # Sort sessions by start_time ASC (NULLS LAST)
         session_items.sort(key=lambda s: (s.start_time is None, s.start_time or ""))
-        
+
         # Apply pagination to sessions
         total_sessions = len(session_items)
         session_items = session_items[skip:skip + limit]
-        
+
         return ActiveBatchesResponse(
             filter_date=filter_date_str,
             batches=batch_items,
@@ -501,14 +408,11 @@ class BatchService:
 
     def _sync_pending_approvers(self) -> None:
         """Backfill pending approval assignments after admin configuration changes/imports."""
-        config = self.db.query(ApprovalConfiguration).first()
+        config = self.batch_repo.get_approval_config()
         if not config or not config.approver_1_id or not config.approver_2_id:
             return
-        pending_batches = self.db.query(Batch).filter(
-            Batch.status.in_(["Approval 1 Pending", "Approval 2 Pending"])
-        ).all()
         changed = False
-        for batch in pending_batches:
+        for batch in self.batch_repo.list_pending_approval_batches():
             if batch.approver_1_id != config.approver_1_id:
                 batch.approver_1_id = config.approver_1_id
                 changed = True
@@ -516,21 +420,19 @@ class BatchService:
                 batch.approver_2_id = config.approver_2_id
                 changed = True
         if changed:
-            self.db.commit()
+            self.batch_repo.commit()
 
     def get(self, batch_id: UUID, current_user: Optional[User] = None) -> Batch:
-        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        batch = self.batch_repo.get_by_id(batch_id)
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
-        team_name_lower = (current_user.team_detail.name if current_user and current_user.team_detail else "").strip().lower()
-        if current_user and (current_user.role or "").lower() != "admin" and team_name_lower != "finance":
-            scope_ids = set(get_manager_scope_user_ids(current_user, self.db))
-            batch_user_ids = self._batch_scope_user_ids(batch)
+        if current_user and not self._is_unrestricted(current_user):
+            scope_ids = set(self.user_repo.get_manager_scope_user_ids(current_user))
             is_assigned_approver = (
                 (batch.status == "Approval 1 Pending" and batch.approver_1_id == current_user.id)
                 or (batch.status == "Approval 2 Pending" and batch.approver_2_id == current_user.id)
             )
-            if not scope_ids.intersection(batch_user_ids) and not is_assigned_approver:
+            if not scope_ids.intersection(self._batch_scope_user_ids(batch)) and not is_assigned_approver:
                 raise HTTPException(status_code=404, detail="Batch not found")
         return batch
 
@@ -544,11 +446,9 @@ class BatchService:
         }
 
     def _require_operational_scope(self, batch: Batch, current_user: User) -> None:
-        role = (current_user.role or "").lower()
-        team = (current_user.team_detail.name if current_user.team_detail else "").strip().lower()
-        if role == "admin" or team == "finance":
+        if self._is_unrestricted(current_user):
             return
-        scope_ids = set(get_manager_scope_user_ids(current_user, self.db))
+        scope_ids = set(self.user_repo.get_manager_scope_user_ids(current_user))
         if not scope_ids.intersection(self._batch_scope_user_ids(batch)):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -577,11 +477,11 @@ class BatchService:
             delivery_mode_id = update_data.get("delivery_mode_id")
             if delivery_mode_id or delivery_mode_val:
                 update_data["delivery_mode_id"] = self._option_id(DeliveryMode, delivery_mode_id, delivery_mode_val or "Online")
-        
+
         # Handle faculty_members JSON serialization
         if "faculty_members" in update_data:
             update_data["faculty_members"] = json.dumps(update_data["faculty_members"])
-        
+
         if batch.is_schema_locked and (current_user.role or "").lower() not in ["admin", "manager", "coordinator"]:
             restricted = {"client_name", "category", "program_name", "technology", "domain"}
             for field in restricted.intersection(update_data):
@@ -589,9 +489,7 @@ class BatchService:
         for field, value in update_data.items():
             setattr(batch, field, value)
         batch.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
-        self.db.refresh(batch)
-        return batch
+        return self._save(batch)
 
     # Valid lifecycle status transitions
     # Key: current_status -> Set of allowed next statuses
@@ -662,7 +560,7 @@ class BatchService:
                 target_status = "Approval 2 Pending"
             else:
                 target_status = "Requested"
-            
+
             # If the redirected status isn't allowed from current, that's an error
             if target_status not in allowed_next:
                 raise HTTPException(
@@ -688,37 +586,72 @@ class BatchService:
 
         # Cascade cancellation to all sessions so the conflict engine frees faculty availability
         if target_status == "Cancelled":
-            terminal_states = {"Completed", "Cancelled"}
-            faculty_sessions = self.db.query(FacultyUtilization).filter(
-                FacultyUtilization.batch_id == batch.id,
-                FacultyUtilization.status.notin_(terminal_states),
-            ).all()
-            for fs in faculty_sessions:
+            for fs in self.batch_repo.list_non_terminal_faculty_sessions(batch.id):
                 fs.status = "Cancelled"
                 fs.updated_at = datetime.now(timezone.utc)
 
-            training_sessions = self.db.query(TrainingSession).filter(
-                TrainingSession.batch_id == batch.id,
-                TrainingSession.status.notin_(terminal_states),
-            ).all()
-            for ts in training_sessions:
+            for ts in self.batch_repo.list_non_terminal_training_sessions(batch.id):
                 ts.status = "Cancelled"
                 ts.updated_at = datetime.now(timezone.utc)
 
-        self.db.commit()
-        self.db.refresh(batch)
-        return batch
+        return self._save(batch)
 
     def close_gate2(self, batch_id: UUID, closure: BatchNpsClosureCreate, user_id: UUID, current_user: Optional[User] = None) -> Batch:
         if current_user:
-            batch = self.get(batch_id, current_user)
-            self._require_operational_scope(batch, current_user)
-        return GatekeeperService.close_batch_gate2(
-            db=self.db,
+            self._require_operational_scope(self.get(batch_id, current_user), current_user)
+        return self.gatekeeper.close_batch_gate2(
             batch_id=batch_id,
             closure_data=closure,
             user_id=user_id,
         )
+
+    # --- Batch option catalogue (categories, delivery modes, entities, ...) ---
+    def export_finance_batches(
+        self,
+        current_user: User,
+        status_filter: Optional[str] = None,
+        finance_status: Optional[str] = None,
+        domain: Optional[str] = None,
+        delivery_mode: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> List[Batch]:
+        """Batches for the finance review export, scoped to the caller like `list()`."""
+        return self.batch_repo.export_finance_rows(
+            self._scope(current_user),
+            finance_status=finance_status,
+            domain=domain,
+            delivery_mode_name=delivery_mode,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    def list_options(self, option_model):
+        return self.batch_repo.list_active_options(option_model)
+
+    def create_option(self, option_model, name: str, description: Optional[str] = None):
+        clean_name = name.strip()
+        if not clean_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Option name cannot be blank")
+        if self.batch_repo.option_exists_by_name(option_model, clean_name):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An option with this name already exists")
+
+        # Delivery mode carries a per-day hour ceiling that batch creation validates against.
+        extra = {"max_hours_per_day": 8} if option_model is DeliveryMode else {}
+        return self.batch_repo.create_option_instance(option_model, clean_name, description, **extra)
+
+    def update_option(self, option_model, option_id: UUID, name: str, description: Optional[str] = None):
+        option = self.batch_repo.get_option_by_id(option_model, option_id)
+        if not option:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
+        return self.batch_repo.update_option_instance(option, name.strip(), description)
+
+    def deactivate_option(self, option_model, option_id: UUID):
+        option = self.batch_repo.get_option_by_id(option_model, option_id)
+        if not option:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
+        self.batch_repo.deactivate_option_instance(option)
+        return {"detail": "Option deactivated"}
 
     def import_feedback_workbook(
         self,
@@ -803,7 +736,7 @@ class BatchService:
         if average_feedback is not None:
             batch.batch_avg_feedback = average_feedback
         batch.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
+        self.batch_repo.commit()
         return BatchFeedbackImportResponse(
             batch_id=batch.id,
             source_filename=filename,

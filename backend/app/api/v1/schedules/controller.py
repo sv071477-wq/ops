@@ -1,19 +1,24 @@
 from typing import List, Optional, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
-from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.models.user import User
-from app.models.batch import Batch
 from app.schemas.schedule import (
     ScheduleValidationRequest, ScheduleValidationResponse,
     ScheduleIngestResponse, ConflictDetail, ScheduleApplyRequest, ScheduleApplyResponse
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
+from app.api.deps_services import (
+    get_excel_ingestion_service,
+    get_schedule_repository,
+    get_session_repository,
+    get_user_repository,
+)
+from app.api.v1.auth.repository_interfaces import IUserRepository
 from app.api.v1.schedules.conflict_engine import ConflictEngine
+from app.api.v1.schedules.repository_interfaces import IScheduleRepository
 from app.api.v1.schedules.service import ExcelIngestionService
-from app.api.deps_services import get_excel_ingestion_service
+from app.api.v1.sessions.repository_interfaces import ISessionRepository
 
 router = APIRouter()
 
@@ -42,7 +47,7 @@ async def validate_upload_file(file: UploadFile, max_size: int = MAX_UPLOAD_SIZE
 @router.post("/validate", response_model=ScheduleValidationResponse)
 def validate_schedule_slots(
     payload: ScheduleValidationRequest,
-    db: Session = Depends(get_db),
+    session_repo: ISessionRepository = Depends(get_session_repository),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Dry-run validation of schedule slots against faculty availability and capacity limits."""
@@ -58,7 +63,7 @@ def validate_schedule_slots(
         prior_hours = running_hours.get(key, Decimal("0.0"))
 
         item_conflicts = ConflictEngine.check_session_conflict(
-            db=db,
+            session_repo=session_repo,
             faculty_name=fac_name,
             date_of_training=item.date_of_training,
             requested_hours=item.no_of_hours,
@@ -106,14 +111,18 @@ async def ingest_timetable_file(
 @router.post("/apply", response_model=ScheduleApplyResponse)
 def apply_schedule(
     payload: ScheduleApplyRequest,
-    db: Session = Depends(get_db),
+    schedule_repo: IScheduleRepository = Depends(get_schedule_repository),
+    user_repo: IUserRepository = Depends(get_user_repository),
+    session_repo: ISessionRepository = Depends(get_session_repository),
     current_user: User = Depends(require_coordinator_or_above),
 ) -> ScheduleApplyResponse:
     """Validate and persist the complete extracted schedule atomically."""
     return ExcelIngestionService.apply_schedule_items(
-        db=db,
+        schedule_repo=schedule_repo,
+        user_repo=user_repo,
         target_batch_id=payload.target_batch_id,
         items=payload.items,
         source_filename=payload.source_filename,
         user_id=current_user.id,
+        conflict_repo=session_repo,
     )

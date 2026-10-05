@@ -1,24 +1,35 @@
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 from datetime import datetime, timezone
-from decimal import Decimal
+
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, TrainingSession
+from app.models.session import FacultyUtilization
 from app.schemas.feedback import SessionFeedbackCreate, BatchNpsClosureCreate
+from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+from app.api.v1.gates.repository_interfaces import IGateRepository
+
+
+_TERMINAL_SESSION_STATUSES = {"Completed", "Cancelled", "Not Conducted"}
 
 
 class GatekeeperService:
 
-    @classmethod
+    def __init__(
+        self,
+        gate_repo: IGateRepository,
+        lifecycle_service: Optional[BatchLifecycleService] = None,
+    ):
+        self.gate_repo = gate_repo
+        self.lifecycle_service = lifecycle_service
+
     def complete_session_gate1(
-        cls,
-        db: Session,
+        self,
         session_id: str,
         feedback_data: SessionFeedbackCreate,
-        user_id: UUID
+        user_id: UUID,
     ) -> dict:
         """
         Quality Checkpoint 1:
@@ -35,7 +46,7 @@ class GatekeeperService:
         session_obj = None
         try:
             parsed_uuid = UUID(str(session_id))
-            session_obj = db.query(FacultyUtilization).filter(FacultyUtilization.id == parsed_uuid).first()
+            session_obj = self.gate_repo.get_utilization_by_id(parsed_uuid)
         except (ValueError, TypeError):
             pass
 
@@ -65,20 +76,20 @@ class GatekeeperService:
 
         # If linked to a scheduled training session day, mark it Completed
         if session_obj.training_session_id:
-            sched = db.query(TrainingSession).filter(TrainingSession.id == session_obj.training_session_id).first()
+            sched = self.gate_repo.get_training_session_by_id(session_obj.training_session_id)
             if sched:
                 sched.status = "Completed"
                 sched.updated_at = datetime.now(timezone.utc)
 
-        db.commit()
+        self.gate_repo.commit()
 
         # Delegate batch-level feedback calculation to the lifecycle service.
         # It only writes batch_avg_feedback once every non-cancelled session for
         # the batch is Completed, so callers never see a partial average.
-        from app.api.v1.batches.lifecycle_service import BatchLifecycleService
-        BatchLifecycleService(db).check_and_update_batch_feedback(session_obj.batch_id)
+        if self.lifecycle_service:
+            self.lifecycle_service.check_and_update_batch_feedback(session_obj.batch_id)
 
-        db.refresh(session_obj)
+        self.gate_repo.refresh(session_obj)
 
         return {
             "session_id": str(session_obj.id),
@@ -91,20 +102,18 @@ class GatekeeperService:
             "submitted_by": str(user_id)
         }
 
-    @classmethod
     def close_batch_gate2(
-        cls,
-        db: Session,
+        self,
         batch_id: UUID,
         closure_data: BatchNpsClosureCreate,
-        user_id: UUID
+        user_id: UUID,
     ) -> Batch:
         """
         Quality Checkpoint 2:
         Closing a batch is BLOCKED unless final Batch NPS (0 - 10 score) and retrospective notes
         are submitted. Upon valid submission, the batch is closed and schema is locked.
         """
-        batch = db.query(Batch).filter(Batch.id == batch_id).first()
+        batch = self.gate_repo.get_batch_by_id(batch_id)
         if not batch:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -117,13 +126,13 @@ class GatekeeperService:
                 detail="Batch has already completed Gate 2 and is Closed."
             )
 
-        sessions = db.query(TrainingSession).filter(TrainingSession.batch_id == batch.id).all()
-        util_sessions = db.query(FacultyUtilization).filter(FacultyUtilization.batch_id == batch.id).all()
-        all_sessions = list(sessions) + list(util_sessions)
-        if all_sessions:
-            terminal_statuses = {"Completed", "Cancelled", "Not Conducted"}
-            if any(session.status not in terminal_statuses for session in all_sessions):
-                raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
+        all_sessions = [
+            session
+            for group in self.gate_repo.list_all_sessions_for_batch(batch.id)
+            for session in group
+        ]
+        if all_sessions and any(s.status not in _TERMINAL_SESSION_STATUSES for s in all_sessions):
+            raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
 
         # Update batch NPS and closure metrics
         batch.batch_nps = closure_data.nps_score
@@ -139,6 +148,6 @@ class GatekeeperService:
         batch.is_schema_locked = True
         batch.updated_at = datetime.now(timezone.utc)
 
-        db.commit()
-        db.refresh(batch)
+        self.gate_repo.commit()
+        self.gate_repo.refresh(batch)
         return batch

@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 
 const getBatch = vi.fn();
 const getBatchOptions = vi.fn();
@@ -106,5 +106,149 @@ describe("BatchDetailDrawer initialTab", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Ingest Timetable/i })).toBeTruthy();
     });
+  });
+});
+
+describe("BatchDetailDrawer shell", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getBatch.mockResolvedValue(batch);
+    getBatchOptions.mockResolvedValue([]);
+    getFacultyTypes.mockResolvedValue([]);
+    getVerticals.mockResolvedValue([]);
+    getProgramTypes.mockResolvedValue([]);
+    getSessions.mockResolvedValue([]);
+    getScheduledSessions.mockResolvedValue([]);
+  });
+
+  it("is a labelled modal dialog", async () => {
+    renderDrawer();
+
+    await waitFor(() => {
+      expect(screen.getByText("Curriculum / Program Title")).toBeTruthy();
+    });
+    // Radix supplies the modal semantics: role, a name from DialogTitle, a focus
+    // trap and `aria-hidden` on the page behind it. It deliberately does not set
+    // `aria-modal`, which would fight the nested dialogs this drawer opens.
+    const dialog = screen.getByRole("dialog", { name: /BATCH_001/i });
+    expect(dialog.getAttribute("aria-labelledby")).toBeTruthy();
+  });
+
+  it("closes on Escape", async () => {
+    const onClose = vi.fn();
+    render(
+      <ConfirmProvider>
+        <BatchDetailDrawer batch={batch} isOpen onClose={onClose} />
+      </ConfirmProvider>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Curriculum / Program Title")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  it("exposes a real tablist and moves between tabs with the arrow keys", async () => {
+    renderDrawer();
+
+    await waitFor(() => {
+      expect(screen.getByText("Curriculum / Program Title")).toBeTruthy();
+    });
+
+    const tablist = screen.getByRole("tablist", { name: /batch detail sections/i });
+    const tabs = within(tablist).getAllByRole("tab");
+    expect(tabs).toHaveLength(3);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(tabs[1].getAttribute("aria-selected")).toBe("false");
+
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Ingest Timetable/i })).toBeTruthy();
+    });
+    expect(screen.getByRole("tab", { name: /Sessions & Timetable/i }).getAttribute("aria-selected")).toBe("true");
+
+    // Wraps back around from the last tab to the first.
+    fireEvent.keyDown(screen.getByRole("tab", { name: /Sessions & Timetable/i }), { key: "ArrowLeft" });
+    await waitFor(() => {
+      expect(screen.getByText("Curriculum / Program Title")).toBeTruthy();
+    });
+  });
+
+  it("keeps the user's tab when the parent re-renders with the same batch", async () => {
+    const { rerender } = renderDrawer("sessions");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Add Session/i })).toBeTruthy();
+    });
+
+    // A new object with the same id: an in-drawer `onBatchUpdated()` callback
+    // does exactly this, and it used to reset the tab and re-fetch.
+    getSessions.mockResolvedValue([
+      {
+        id: "u-1",
+        topic: "Module 1",
+        faculty_name: "Kiran Menon",
+        date_of_training: "2027-01-04T00:00:00.000Z",
+        no_of_hours: 8,
+        status: "Completed",
+      },
+    ]);
+    rerender(
+      <ConfirmProvider>
+        <BatchDetailDrawer batch={{ ...batch }} isOpen onClose={() => {}} initialTab="sessions" />
+      </ConfirmProvider>
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: /Quality Checkpoints/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Execute NPS Closure/i })).toBeTruthy();
+    });
+
+    rerender(
+      <ConfirmProvider>
+        <BatchDetailDrawer batch={{ ...batch }} isOpen onClose={() => {}} initialTab="sessions" />
+      </ConfirmProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Execute NPS Closure/i })).toBeTruthy();
+    });
+  });
+
+  it("renders the session status as a real ledger column", async () => {
+    getSessions.mockResolvedValue([
+      {
+        id: "u-1",
+        topic: "Module 1",
+        faculty_name: "Kiran Menon",
+        vertical: "IT/ITES Internal",
+        date_of_training: "2027-01-04T00:00:00.000Z",
+        no_of_hours: 8,
+        mode_of_delivery: "Online",
+        status: "Completed",
+      },
+    ]);
+    renderDrawer("sessions");
+
+    await waitFor(() => {
+      expect(screen.getByRole("columnheader", { name: /Session Status/i })).toBeTruthy();
+    });
+    // The faculty vertical is no longer duplicated under a second heading.
+    expect(screen.queryByRole("columnheader", { name: /Faculty Vertical/i })).toBeNull();
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+  });
+
+  it("surfaces a failed sessions fetch instead of claiming nothing was scheduled", async () => {
+    getSessions.mockRejectedValue(new Error("ledger unavailable"));
+    renderDrawer("sessions");
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeTruthy();
+    });
+    expect(screen.getByText(/ledger unavailable/i)).toBeTruthy();
   });
 });

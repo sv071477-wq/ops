@@ -1,10 +1,30 @@
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ActiveBatchesView } from "./ActiveBatchesView";
-import type { ActiveBatchesResponse, ActiveSessionItem } from "@/lib/api";
+import type { ActiveBatchItem, ActiveBatchesResponse, ActiveSessionItem } from "@/lib/api";
+
+function makeBatch(overrides: Partial<ActiveBatchItem> = {}): ActiveBatchItem {
+  return {
+    id: "b-1",
+    batch_id: "BATCH_001",
+    program_name: "Full Stack Python",
+    client_name: "Acme",
+    category: "Bootcamp",
+    delivery_mode: "Online",
+    location_city: "Pune",
+    start_date: "2026-09-01",
+    end_date: "2026-09-30",
+    status: "Ongoing",
+    total_enrollments: 30,
+    training_days: 5,
+    sessions_conducted: 2,
+    progress: 40,
+    ...overrides,
+  };
+}
 
 function makeSession(overrides: Partial<ActiveSessionItem> = {}): ActiveSessionItem {
   return {
@@ -19,6 +39,21 @@ function makeSession(overrides: Partial<ActiveSessionItem> = {}): ActiveSessionI
     duration_hours: 2.5,
     status: "Scheduled",
     mode_of_delivery: "Online",
+    ...overrides,
+  };
+}
+
+function makeResponse(overrides: Partial<ActiveBatchesResponse> = {}): ActiveBatchesResponse {
+  const batches = overrides.batches ?? [makeBatch()];
+  const sessions = overrides.sessions ?? [makeSession()];
+  return {
+    filter_date: "2026-09-20",
+    batches,
+    sessions,
+    total_batches: batches.length,
+    total_sessions: sessions.length,
+    skip: 0,
+    limit: 100,
     ...overrides,
   };
 }
@@ -38,7 +73,7 @@ function renderView(props: Partial<React.ComponentProps<typeof ActiveBatchesView
       onBatchPageChange={vi.fn()}
       onBatchPageSizeChange={vi.fn()}
       sessionPage={1}
-      sessionPageSize={15}
+      sessionPageSize={10}
       onSessionPageChange={vi.fn()}
       onSessionPageSizeChange={vi.fn()}
       onRefresh={onRefresh}
@@ -49,13 +84,19 @@ function renderView(props: Partial<React.ComponentProps<typeof ActiveBatchesView
   return { onFilterDateChange, onRefresh };
 }
 
-/** SummaryCard renders label, value and hint as siblings, so the value is the
+/** StatCard renders label, value and hint as siblings, so the value is the
  *  middle child of the label's parent. The batch table heading repeats some
  *  card labels, hence the multi-match fallback to the first (card) hit. */
 function metricValue(label: string): string {
   const labelEl = screen.getAllByText(label)[0];
   return labelEl.parentElement?.children[1]?.textContent?.trim() ?? "";
 }
+
+// The column menus persist their layout, so one test's toggle would otherwise
+// decide what the next test renders.
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 describe("ActiveBatchesView summary metrics", () => {
   it("sums scheduled hours and counts distinct faculty", () => {
@@ -119,7 +160,11 @@ describe("ActiveBatchesView header controls", () => {
 
     const dateInput = screen.getByLabelText("Date") as HTMLInputElement;
     expect(dateInput.value).toBe("2026-09-20");
-    expect(screen.getByRole("button", { name: /Refresh/i })).toBeTruthy();
+    expect(screen.getByTitle("Refresh active batches")).toBeTruthy();
+    // The date group, plus one refresh / columns / export per table panel.
+    expect(screen.getAllByRole("button", { name: /Refresh/i }).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByRole("button", { name: /Columns/i })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /Export/i })).toHaveLength(2);
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
@@ -132,7 +177,112 @@ describe("ActiveBatchesView header controls", () => {
     fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-09-21" } });
     expect(onFilterDateChange).toHaveBeenLastCalledWith("2026-09-21");
 
-    await user.click(screen.getByRole("button", { name: /Refresh/i }));
+    await user.click(screen.getByTitle("Refresh active batches"));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets both tables to the first page when the date changes", () => {
+    const onBatchPageChange = vi.fn();
+    const onSessionPageChange = vi.fn();
+    const view = (filterDate: string) => (
+      <ActiveBatchesView
+        filterDate={filterDate}
+        onFilterDateChange={vi.fn()}
+        data={makeResponse()}
+        isLoading={false}
+        batchPage={1}
+        batchPageSize={10}
+        onBatchPageChange={onBatchPageChange}
+        onBatchPageSizeChange={vi.fn()}
+        sessionPage={1}
+        sessionPageSize={10}
+        onSessionPageChange={onSessionPageChange}
+        onSessionPageSizeChange={vi.fn()}
+      />
+    );
+
+    const { rerender } = render(view("2026-09-20"));
+    // Mounting already resets, so only the later date change is observed here.
+    onBatchPageChange.mockClear();
+    onSessionPageChange.mockClear();
+
+    rerender(view("2026-09-21"));
+
+    expect(onBatchPageChange).toHaveBeenCalledWith(1);
+    expect(onSessionPageChange).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("ActiveBatchesView column visibility", () => {
+  it("starts with the suggested columns hidden", () => {
+    renderView({ data: makeResponse() });
+
+    expect(screen.queryByRole("columnheader", { name: /Sessions Conducted/ })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /Delivery Mode/ })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: /Enrollments/ })).toBeTruthy();
+  });
+
+  it("hides a column the user switched off and shows it again", async () => {
+    const user = userEvent.setup();
+    renderView({ data: makeResponse() });
+
+    const [batchColumnsButton] = screen.getAllByRole("button", { name: /Columns/ });
+    await user.click(batchColumnsButton);
+    await user.click(screen.getByRole("checkbox", { name: "Enrollments" }));
+
+    expect(screen.queryByRole("columnheader", { name: /Enrollments/ })).toBeNull();
+    // The cell goes with the heading, so the row keeps its remaining columns.
+    expect(screen.getByRole("columnheader", { name: /Batch & Program/ })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /Show all columns/ }));
+    expect(screen.getByRole("columnheader", { name: /Enrollments/ })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: /Sessions Conducted/ })).toBeTruthy();
+  });
+});
+
+describe("ActiveBatchesView row click", () => {
+  it("opens the batch detail on click and from the keyboard", async () => {
+    const user = userEvent.setup();
+    const onOpenBatchDetail = vi.fn();
+    const batch = makeBatch();
+    renderView({ data: makeResponse({ batches: [batch] }), onOpenBatchDetail });
+
+    const row = screen.getByRole("row", { name: "Open details for batch BATCH_001" });
+    await user.click(row);
+    expect(onOpenBatchDetail).toHaveBeenCalledWith(batch);
+
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(onOpenBatchDetail).toHaveBeenCalledTimes(2);
+
+    await user.keyboard(" ");
+    expect(onOpenBatchDetail).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves rows inert when no detail handler is supplied", () => {
+    renderView({ data: makeResponse() });
+
+    expect(screen.queryByRole("row", { name: /Open details for batch/ })).toBeNull();
+  });
+});
+
+describe("ActiveBatchesView empty states", () => {
+  it("says nothing is running yet when the date has no batches or sessions", () => {
+    renderView({ data: makeResponse({ batches: [], sessions: [], total_batches: 0, total_sessions: 0 }) });
+
+    expect(screen.getByText("No ongoing batches for this date")).toBeTruthy();
+    expect(screen.getByText("No sessions scheduled for this date")).toBeTruthy();
+  });
+
+  it("offers a way back when the filters hid everything", async () => {
+    const user = userEvent.setup();
+    renderView({ data: makeResponse() });
+
+    const [batchSearch] = screen.getAllByRole("searchbox");
+    await user.type(batchSearch, "no-such-batch");
+
+    expect(screen.getByText("No batches match the current filters")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.queryByText("No batches match the current filters")).toBeNull();
   });
 });

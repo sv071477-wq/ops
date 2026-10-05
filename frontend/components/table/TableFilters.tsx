@@ -1,13 +1,16 @@
 "use client";
 
 import React from "react";
-import { ArrowDownAZ, ArrowUpAZ, Filter, Search, X } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Search, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { ALL_FILTER_VALUE, type SortDir } from "@/lib/tableUtils";
 import { cn } from "@/lib/utils";
 
 // Every toolbar control shares these metrics so a row of filters reads as one
 // grid: labels on a common line, controls on a common line, uniform heights.
-const CONTROL_HEIGHT = 34;
+// The height matches `Button` `size="sm"` so the table's own action buttons sit
+// on the same line as the filters.
+const CONTROL_HEIGHT = 36;
 const LABEL_HEIGHT = 14;
 
 const CELL_STYLE: React.CSSProperties = {
@@ -38,12 +41,24 @@ const CONTROL_STYLE: React.CSSProperties = {
   boxSizing: "border-box",
   padding: "0 10px",
   borderRadius: 6,
-  border: "1px solid var(--border-subtle)",
-  background: "#fff",
+  border: "1px solid var(--color-input)",
+  background: "var(--color-card)",
   fontSize: "0.8rem",
   fontWeight: 600,
   color: "var(--text-main)",
 };
+
+/** Height every toolbar control sits at, for bespoke filters built to match. */
+export const TABLE_CONTROL_HEIGHT = CONTROL_HEIGHT;
+
+/**
+ * The exact box every toolbar control uses. Exported so a bespoke filter renders
+ * the same height, border and fill instead of drifting to its own copy.
+ */
+export const TABLE_CONTROL_STYLE: React.CSSProperties = { ...CONTROL_STYLE };
+
+/** The uppercase micro-label above each toolbar control. */
+export const TABLE_LABEL_SLOT_STYLE: React.CSSProperties = { ...LABEL_SLOT_STYLE };
 
 const CONTROL_SLOT_STYLE: React.CSSProperties = {
   display: "flex",
@@ -70,6 +85,12 @@ export interface TableFilterBespokeConfig {
   key: string;
   label?: string;
   width?: number | string;
+  /**
+   * Id of the control rendered in `content`. Without it the label has nothing to
+   * point at, so clicking it does nothing and AT has no accessible name — a
+   * bespoke control must pass the id of its own input/select.
+   */
+  htmlFor?: string;
   content: React.ReactNode;
 }
 
@@ -97,6 +118,7 @@ export interface TableFiltersProps {
   activeFilterCount?: number;
   className?: string;
   style?: React.CSSProperties;
+  /** Full-width row under the filter grid, e.g. a segmented option-set switch. */
   children?: React.ReactNode;
 }
 
@@ -133,7 +155,7 @@ function Field({
 /**
  * Toolbar row shared by every table: free-text search, per-column filter
  * dropdowns and an explicit "Sort by" control that mirrors the click-to-sort
- * column headers. Controls passed as `children` are slotted onto the same grid.
+ * column headers. Controls passed as `children` get their own full-width row.
  */
 export function TableFilters({
   search,
@@ -154,7 +176,7 @@ export function TableFilters({
   return (
     <div
       className={cn("flex flex-wrap items-end", className)}
-      style={{ flex: "1 1 360px", minWidth: 0, gap: "10px 10px", ...style }}
+      style={{ flex: "1 1 auto", minWidth: 0, gap: "10px 10px", ...style }}
     >
       {search && (
         <Field
@@ -175,7 +197,7 @@ export function TableFilters({
               onChange={(event) => search.onChange(event.target.value)}
               placeholder={search.placeholder ?? "Search..."}
               className="glass-input"
-              style={{ ...CONTROL_STYLE, paddingLeft: 28 }}
+              style={{ ...CONTROL_STYLE, paddingLeft: 28, paddingRight: 26 }}
             />
           </div>
         </Field>
@@ -234,13 +256,13 @@ export function TableFilters({
               style={{
                 ...CONTROL_STYLE,
                 flexShrink: 0,
-                width: 36,
+                width: CONTROL_HEIGHT,
                 padding: 0,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: sort.sortKey ? "#fff" : "#f1f5f9",
-                color: sort.sortKey ? (sort.sortDir === "desc" ? "#0b5cab" : "#d97706") : "#94a3b8",
+                background: "var(--color-card)",
+                color: sort.sortKey ? "var(--color-primary)" : "var(--text-muted)",
                 cursor: sort.sortKey ? "pointer" : "not-allowed",
               }}
             >
@@ -255,36 +277,44 @@ export function TableFilters({
       )}
 
       {bespoke?.map((entry) => (
-        <Field key={entry.key} label={entry.label} width={entry.width}>
+        <Field
+          key={entry.key}
+          label={entry.label}
+          htmlFor={entry.htmlFor ?? `${instanceId}-bespoke-${entry.key}`}
+          width={entry.width}
+        >
           {entry.content}
         </Field>
       ))}
 
-      {children}
-
       {onClear && hasActiveFilters && (
-        <Field>
-          <button
-            type="button"
+        <Field width="auto">
+          <Button
+            variant="outline"
+            size="sm"
             onClick={onClear}
             title="Clear all search and filter selections"
-            className="btn btn-secondary"
-            style={{
-              ...CONTROL_STYLE,
-              width: "auto",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-              padding: "0 12px",
-              whiteSpace: "nowrap",
-            }}
+            aria-label="Clear all filters"
+            className="whitespace-nowrap"
           >
-            <Filter size={13} aria-hidden="true" />
             <span>Clear{activeFilterCount ? ` (${activeFilterCount})` : ""}</span>
-            <X size={13} aria-hidden="true" />
-          </button>
+            <X className="h-4 w-4" aria-hidden="true" />
+          </Button>
         </Field>
+      )}
+
+      {children && (
+        <div
+          style={{
+            flex: "1 1 100%",
+            minWidth: 0,
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 10,
+          }}
+        >
+          {children}
+        </div>
       )}
     </div>
   );

@@ -1,13 +1,10 @@
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime, time, timedelta, date
+from datetime import datetime, date
 from decimal import Decimal
-from sqlalchemy.orm import Session
 
 from app.schemas.schedule import ConflictDetail
-from app.models.session import FacultyUtilization
-from app.models.batch import Batch
-from app.models.user import User
+from app.api.v1.sessions.repository_interfaces import ISessionRepository
 
 
 class ConflictEngine:
@@ -16,21 +13,21 @@ class ConflictEngine:
     @classmethod
     def check_session_conflict(
         cls,
-        db: Session,
+        session_repo: Optional[ISessionRepository],
         faculty_name: str,
         date_of_training: datetime,
         requested_hours: Decimal,
         existing_hours: Decimal = Decimal("0.0"),
-        start_time: Optional[time] = None,
-        end_time: Optional[time] = None,
+        start_time=None,
+        end_time=None,
         faculty_id: Optional[UUID] = None,
     ) -> List[ConflictDetail]:
         """
         Validates whether assigning a faculty to a session creates double-booking or exceeds daily capacity.
-        Queries existing sessions in the database and checks interval overlaps.
+        Reads existing deliveries and checks interval overlaps.
         """
         conflicts: List[ConflictDetail] = []
-        
+
         # Normalize to date for comparison (handles timezone-aware datetimes correctly)
         if isinstance(date_of_training, datetime):
             target_date = date_of_training.date()
@@ -42,23 +39,10 @@ class ConflictEngine:
         resolved_faculty_id = faculty_id
         sessions_on_date = []
 
-        if db is not None:
+        if session_repo is not None:
             try:
-                # Use date() for comparison to avoid timezone/DST issues
-                start_of_day = datetime.combine(target_date, time.min)
-                end_of_day = start_of_day + timedelta(days=1)
-                query = db.query(FacultyUtilization).join(
-                    Batch, Batch.id == FacultyUtilization.batch_id
-                ).filter(
-                    FacultyUtilization.date_of_training >= start_of_day,
-                    FacultyUtilization.date_of_training < end_of_day,
-                    FacultyUtilization.status.notin_(["Cancelled"]),
-                    Batch.status != "Cancelled",
-                )
-                if faculty_name and faculty_name.strip():
-                    query = query.filter(FacultyUtilization.faculty_name.ilike(faculty_name.strip()))
-                sessions_on_date = query.all()
-                db_hours = sum((s.no_of_hours for s in sessions_on_date), Decimal("0"))
+                sessions_on_date = session_repo.list_conflict_window_deliveries(faculty_name, target_date)
+                db_hours = session_repo.sum_hours(sessions_on_date)
                 existing_hours = max(existing_hours, db_hours)
             except Exception:
                 pass

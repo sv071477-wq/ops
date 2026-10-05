@@ -1,18 +1,18 @@
 from typing import List, Optional
 from uuid import UUID
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 
-from app.models.user import Team, User
+from app.models.user import Team
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse
+from app.api.v1.teams.repository_interfaces import ITeamRepository
 
 
 class TeamService:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, team_repo: ITeamRepository):
+        self.team_repo = team_repo
 
     def _enrich_team(self, team: Team) -> TeamResponse:
-        count = self.db.query(User).filter(User.team_id == team.id, User.is_active == True).count()
+        count = self.team_repo.get_member_count(team.id)
         resp = TeamResponse.model_validate(team)
         resp.member_count = count
         return resp
@@ -22,16 +22,11 @@ class TeamService:
         department: Optional[str] = None,
         is_active: Optional[bool] = None
     ) -> List[TeamResponse]:
-        query = self.db.query(Team)
-        if department:
-            query = query.filter(Team.department.ilike(department.strip()))
-        if is_active is not None:
-            query = query.filter(Team.is_active == is_active)
-        teams = query.order_by(Team.department.asc(), Team.name.asc()).all()
+        teams = self.team_repo.list_teams(department=department, is_active=is_active)
         return [self._enrich_team(t) for t in teams]
 
     def get_team(self, team_id: UUID) -> TeamResponse:
-        team = self.db.query(Team).filter(Team.id == team_id).first()
+        team = self.team_repo.get_by_id(team_id)
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
         return self._enrich_team(team)
@@ -45,8 +40,7 @@ class TeamService:
         if not clean_dept:
             clean_dept = "Ops"
 
-        existing = self.db.query(Team).filter(Team.name.ilike(clean_name)).first()
-        if existing:
+        if self.team_repo.exists_by_name(clean_name):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Team with name '{clean_name}' already exists")
 
         team = Team(
@@ -55,13 +49,11 @@ class TeamService:
             description=team_in.description.strip() if team_in.description else None,
             is_active=team_in.is_active
         )
-        self.db.add(team)
-        self.db.commit()
-        self.db.refresh(team)
+        team = self.team_repo.create(team)
         return self._enrich_team(team)
 
     def update_team(self, team_id: UUID, team_in: TeamUpdate) -> TeamResponse:
-        team = self.db.query(Team).filter(Team.id == team_id).first()
+        team = self.team_repo.get_by_id(team_id)
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
@@ -69,8 +61,7 @@ class TeamService:
 
         if "name" in update_data and update_data["name"]:
             clean_name = update_data["name"].strip()
-            existing = self.db.query(Team).filter(Team.name.ilike(clean_name), Team.id != team_id).first()
-            if existing:
+            if self.team_repo.exists_by_name(clean_name, exclude_id=team_id):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Team with name '{clean_name}' already exists")
             team.name = clean_name
 
@@ -83,17 +74,21 @@ class TeamService:
         if "is_active" in update_data and update_data["is_active"] is not None:
             team.is_active = update_data["is_active"]
 
-        self.db.commit()
-        self.db.refresh(team)
+        team = self.team_repo.update(
+            team,
+            name=update_data.get("name"),
+            department=update_data.get("department"),
+            description=update_data.get("description"),
+            is_active=update_data.get("is_active")
+        )
         return self._enrich_team(team)
 
     def delete_team(self, team_id: UUID) -> dict:
-        team = self.db.query(Team).filter(Team.id == team_id).first()
+        team = self.team_repo.get_by_id(team_id)
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
-        # Unassign users from this team
-        self.db.query(User).filter(User.team_id == team_id).update({"team_id": None})
-        self.db.delete(team)
-        self.db.commit()
-        return {"detail": f"Team '{team.name}' successfully deleted"}
+        team_name = team.name
+        self.team_repo.unassign_users(team_id)
+        self.team_repo.delete(team)
+        return {"detail": f"Team '{team_name}' successfully deleted"}

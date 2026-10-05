@@ -1,16 +1,46 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
-import { RefreshCw, Layers, CalendarClock, CalendarX2, Clock } from "lucide-react";
+import { Layers, CalendarClock, CalendarX2, Clock, Search, UserPlus } from "lucide-react";
 import { Batch } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
-import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import {
+  ColumnsMenu,
+  ExportButton,
+  FullscreenTable,
+  PlainHeaderCell,
+  RefreshButton,
+  SortableHeaderCell,
+  TableCaption,
+  TableFilters,
+  TableStateRow,
+} from "@/components/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  ACTIONS_COLUMN_STYLE,
+  CountBadge,
+  EmptyState,
+  ErrorBanner,
+  LoadingState,
+  NAVBAR_HEIGHT,
+  PanelTitle,
+  StatCard,
+  TABLE_TH_STYLE,
+} from "@/components/ui/panel";
+import { StatusBadge } from "@/components/ui/statusBadge";
 import { useTableSort } from "@/hooks/useTableSort";
-import { useTableFilters } from "@/hooks/useTableFilters";
-import type { TableFilterField } from "@/hooks/useTableFilters";
-import type { SortAccessors, TableAccessor } from "@/lib/tableUtils";
-import { isBlankTableValue } from "@/lib/tableUtils";
+import { useTableFilters, type TableFilterField } from "@/hooks/useTableFilters";
+import { useColumnVisibility, type UseColumnVisibilityResult } from "@/hooks/useColumnVisibility";
+import {
+  buildFilterFields,
+  buildSearchAccessor,
+  buildSortAccessors,
+  buildSortOptions,
+  type TableColumnDef,
+} from "@/lib/tableColumns";
+import type { CsvColumn } from "@/lib/csv";
 
 interface MyBatchesViewProps {
   data: Batch[];
@@ -26,38 +56,6 @@ interface MyBatchesViewProps {
   onPageSizeChange: (pageSize: number) => void;
 }
 
-function statusBadgeColor(status: string): { background: string; color: string } {
-  const s = (status || "").toLowerCase();
-  if (s === "requested" || s.includes("pending")) return { background: "#fef3c7", color: "#b45309" };
-  if (s === "approved" || s === "upcoming" || s === "scheduled") return { background: "#e8f2fb", color: "#0b5cab" };
-  if (s === "ongoing" || s === "inprogress") return { background: "#ecfeff", color: "#0f766e" };
-  if (s === "completed") return { background: "#dcfce7", color: "#166534" };
-  if (s === "onhold") return { background: "#ffedd5", color: "#b45309" };
-  if (s === "cancelled" || s === "not conducted") return { background: "#fef2f2", color: "#b91c1c" };
-  if (s === "rescheduled") return { background: "#f5f3ff", color: "#6d28d9" };
-  return { background: "#f1f5f9", color: "#475569" };
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const { background, color } = statusBadgeColor(status);
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "3px 8px",
-        borderRadius: 6,
-        background,
-        color,
-        fontWeight: 700,
-        fontSize: "0.72rem",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {status || "—"}
-    </span>
-  );
-}
-
 /**
  * The reason this view exists: "Not scheduled" is the call to action a
  * coordinator needs before they can ingest a timetable, and it is invisible
@@ -66,255 +64,181 @@ function StatusBadge({ status }: { status: string }) {
 function ScheduleBadge({ count }: { count: number }) {
   const scheduled = count > 0;
   return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "3px 8px",
-        borderRadius: 6,
-        background: scheduled ? "#dcfce7" : "#fef2f2",
-        color: scheduled ? "#166534" : "#b91c1c",
-        fontWeight: 700,
-        fontSize: "0.72rem",
-        whiteSpace: "nowrap",
-      }}
-    >
+    <Badge variant={scheduled ? "success" : "destructive"} size="sm" className="normal-case tracking-normal">
       {scheduled ? `${count} day${count === 1 ? "" : "s"}` : "Not scheduled"}
-    </span>
+    </Badge>
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  hint,
-  icon,
-  iconBackground,
-  iconColor,
-}: {
-  label: string;
-  value: number | string;
-  hint: string;
-  icon: React.ReactNode;
-  iconBackground: string;
-  iconColor: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#ffffff",
-        border: "1px solid #e2e8f0",
-        borderRadius: 8,
-        padding: "18px 20px",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: "0.72rem",
-            color: "var(--text-dim)",
-            textTransform: "uppercase",
-            fontWeight: 700,
-            letterSpacing: "0.04em",
-          }}
-        >
-          {label}
-        </div>
-        <div
-          style={{
-            fontSize: "1.6rem",
-            fontWeight: 700,
-            color: "var(--text-main)",
-            marginTop: 4,
-            fontFamily: "var(--font-display)",
-          }}
-        >
-          {value}
-        </div>
-        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>{hint}</div>
-      </div>
-      <div
-        style={{
-          width: 36,
-          height: 36,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 8,
-          background: iconBackground,
-        }}
-      >
-        {React.cloneElement(icon as React.ReactElement, { size: 17, color: iconColor })}
-      </div>
-    </div>
-  );
-}
-
-function EmptyRow({
-  colSpan,
-  message,
-  hint,
-  action,
-}: {
-  colSpan: number;
-  message: string;
-  hint?: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <tr>
-      <td colSpan={colSpan} style={{ textAlign: "center", padding: "48px 16px" }}>
-        <div style={{ color: "var(--text-dim)", fontSize: "0.95rem", fontWeight: 600 }}>{message}</div>
-        {hint ? (
-          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 4 }}>{hint}</div>
-        ) : null}
-        {action}
-      </td>
-    </tr>
-  );
-}
-
-function LoadingRow({ colSpan, label }: { colSpan: number; label: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} style={{ textAlign: "center", padding: "40px 16px" }}>
-        <RefreshCw
-          className="animate-spin"
-          size={24}
-          color="#0b5cab"
-          style={{ margin: "0 auto 8px auto" }}
-          aria-hidden="true"
-        />
-        <div style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{label}</div>
-      </td>
-    </tr>
-  );
-}
-
-function ErrorRow({ colSpan, message }: { colSpan: number; message: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} style={{ textAlign: "center", padding: "40px 16px" }}>
-        <div style={{ color: "#b91c1c", fontSize: "0.875rem", fontWeight: 600 }}>{message}</div>
-        <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: 4 }}>
-          Use the refresh action to retry loading your batches.
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-const COLUMN_COUNT = 9;
-
-const BATCH_ACCESSORS: SortAccessors<Batch> = {
-  batchId: (batch) => batch.batch_id ?? "",
-  program: (batch) => batch.program_name ?? "",
-  client: (batch) => batch.client_name ?? "",
-  category: (batch) => batch.category ?? "",
-  deliveryMode: (batch) => batch.delivery_mode ?? "",
-  city: (batch) => batch.location_city ?? "",
-  startDate: (batch) => batch.start_date ?? "",
-  endDate: (batch) => batch.end_date ?? "",
-  status: (batch) => batch.status ?? "",
-  trainingDays: (batch) => batch.training_days ?? 0,
-  schedule: (batch) => batch.scheduled_session_count ?? 0,
+// Values that ride along in a composite cell (or are filterable without being
+// a column of their own). Declared once so sort, search and filter agree.
+const VALUE = {
+  program: (batch: Batch) => batch.program_name ?? "",
+  category: (batch: Batch) => batch.category ?? "",
+  city: (batch: Batch) => batch.location_city ?? "",
 };
 
-const DESC_FIRST_KEYS: readonly string[] = ["startDate", "endDate"];
+const BATCH_COLUMN_DEFS: readonly TableColumnDef<Batch>[] = [
+  {
+    key: "batchId",
+    label: "Batch & Program",
+    accessor: (batch) => batch.batch_id ?? "",
+    search: [VALUE.program],
+  },
+  {
+    key: "client",
+    label: "Client",
+    accessor: (batch) => batch.client_name ?? "",
+    search: [VALUE.category],
+  },
+  {
+    key: "deliveryMode",
+    label: "Mode & Location",
+    accessor: (batch) => batch.delivery_mode ?? "",
+    search: [VALUE.city],
+  },
+  { key: "startDate", label: "Start", accessor: (batch) => batch.start_date ?? "" },
+  { key: "endDate", label: "End", accessor: (batch) => batch.end_date ?? "" },
+  { key: "status", label: "Status", accessor: (batch) => batch.status ?? "", filterable: true },
+  {
+    key: "trainingDays",
+    label: "Training Days",
+    accessor: (batch) => batch.training_days ?? 0,
+    align: "center",
+  },
+  { key: "schedule", label: "Schedule", accessor: (batch) => batch.scheduled_session_count ?? 0 },
+];
+
+// "Client" and "Category" are filterable without being separate columns, and
+// "Delivery Mode" already is one.
+const EXTRA_FILTER_FIELDS: readonly TableFilterField<Batch>[] = [
+  { key: "category", accessor: VALUE.category },
+];
+
+const BATCH_ACCESSORS = buildSortAccessors(BATCH_COLUMN_DEFS);
+const BATCH_SORT_OPTIONS = buildSortOptions(BATCH_COLUMN_DEFS);
+const BATCH_FILTER_FIELDS = [...buildFilterFields(BATCH_COLUMN_DEFS), ...EXTRA_FILTER_FIELDS];
+const BATCH_SEARCH_ACCESSOR = buildSearchAccessor([
+  ...BATCH_COLUMN_DEFS,
+  { key: "category", label: "Category", accessor: VALUE.category },
+]);
+
+const COLUMN_KEYS = [
+  ...BATCH_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label })),
+  { key: "action", label: "Action" },
+] as const;
+
+type ColumnKey = (typeof COLUMN_KEYS)[number]["key"];
+
+const EXPORT_COLUMNS: readonly CsvColumn<Batch>[] = [
+  { key: "batch_id", label: "Batch ID" },
+  { key: "program_name", label: "Program" },
+  { key: "client_name", label: "Client" },
+  { key: "category", label: "Category" },
+  { key: "delivery_mode", label: "Delivery Mode" },
+  { key: "location_city", label: "Location" },
+  { key: "start_date", label: "Start Date" },
+  { key: "end_date", label: "End Date" },
+  { key: "status", label: "Status" },
+  { key: "training_days", label: "Training Days" },
+  { key: "scheduled_session_count", label: "Scheduled Days" },
+];
 
 // BatchRow's cells use 14px vertical padding, so the headings must match.
-const BATCH_TH_STYLE: React.CSSProperties = { padding: "14px 16px" };
-
-const BATCH_SEARCH_ACCESSOR: TableAccessor<Batch> = (batch) =>
-  Object.values(BATCH_ACCESSORS)
-    .map((accessor) => accessor(batch))
-    .filter((value) => !isBlankTableValue(value))
-    .join(" ");
-
-const BATCH_FILTER_FIELDS: readonly TableFilterField<Batch>[] = [
-  { key: "status", accessor: BATCH_ACCESSORS.status },
-  { key: "category", accessor: BATCH_ACCESSORS.category },
-  { key: "deliveryMode", accessor: BATCH_ACCESSORS.deliveryMode },
-  { key: "client", accessor: BATCH_ACCESSORS.client },
-];
-
-const BATCH_SORT_OPTIONS: readonly { key: string; label: string }[] = [
-  { key: "batchId", label: "Batch ID" },
-  { key: "program", label: "Program" },
-  { key: "client", label: "Client" },
-  { key: "category", label: "Category" },
-  { key: "deliveryMode", label: "Delivery Mode" },
-  { key: "city", label: "Location" },
-  { key: "startDate", label: "Start Date" },
-  { key: "endDate", label: "End Date" },
-  { key: "status", label: "Status" },
-  { key: "trainingDays", label: "Training Days" },
-  { key: "schedule", label: "Scheduled Sessions" },
-];
+const CELL_STYLE: React.CSSProperties = { padding: "14px 16px" };
+const HEAD_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "14px 16px" };
 
 function BatchRow({
   batch,
+  columns,
   onOpenBatchDetail,
 }: {
   batch: Batch;
+  columns: UseColumnVisibilityResult<ColumnKey>;
   onOpenBatchDetail: (batch: Batch) => void;
 }) {
+  const open = () => onOpenBatchDetail(batch);
+
   return (
     <tr
-      onClick={() => onOpenBatchDetail(batch)}
+      onClick={open}
+      onKeyDown={(event) => {
+        // The whole row is the hit target for the detail drawer, so it has to
+        // answer the keyboard as well as the mouse.
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      }}
+      tabIndex={0}
+      aria-label={`Open details for batch ${batch.batch_id}`}
       style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem", cursor: "pointer" }}
     >
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{batch.batch_id}</div>
-        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>
-          {batch.program_name}
-        </div>
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
-          {batch.client_name || "Enterprise Client"}
-        </div>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{batch.category || "—"}</div>
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{batch.delivery_mode || "Online"}</div>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
-          {batch.location_city || "Remote"}
-        </div>
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.start_date)}</div>
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.end_date)}</div>
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <StatusBadge status={batch.status} />
-      </td>
-      <td style={{ padding: "14px 16px", textAlign: "center", fontWeight: 600, color: "var(--text-main)" }}>
-        {batch.training_days || 0}
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <ScheduleBadge count={batch.scheduled_session_count ?? 0} />
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenBatchDetail(batch);
-          }}
-          className="btn btn-primary"
-          style={{ padding: "5px 12px", fontSize: "0.775rem" }}
-        >
-          Manage Schedule
-        </button>
-      </td>
+      {columns.isVisible("batchId") && (
+        <td style={CELL_STYLE}>
+          <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{batch.batch_id}</div>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>
+            {batch.program_name}
+          </div>
+        </td>
+      )}
+      {columns.isVisible("client") && (
+        <td style={CELL_STYLE}>
+          <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
+            {batch.client_name || "Enterprise Client"}
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
+            {batch.category || "—"}
+          </div>
+        </td>
+      )}
+      {columns.isVisible("deliveryMode") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{batch.delivery_mode || "Online"}</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>
+            {batch.location_city || "Remote"}
+          </div>
+        </td>
+      )}
+      {columns.isVisible("startDate") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.start_date)}</div>
+        </td>
+      )}
+      {columns.isVisible("endDate") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.end_date)}</div>
+        </td>
+      )}
+      {columns.isVisible("status") && (
+        <td style={CELL_STYLE}>
+          <StatusBadge status={batch.status} />
+        </td>
+      )}
+      {columns.isVisible("trainingDays") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center", fontWeight: 600, color: "var(--text-main)" }}>
+          {batch.training_days || 0}
+        </td>
+      )}
+      {columns.isVisible("schedule") && (
+        <td style={CELL_STYLE}>
+          <ScheduleBadge count={batch.scheduled_session_count ?? 0} />
+        </td>
+      )}
+      {columns.isVisible("action") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap", textAlign: "right", ...ACTIONS_COLUMN_STYLE }}>
+          <Button
+            size="sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenBatchDetail(batch);
+            }}
+            aria-label={`Manage schedule for batch ${batch.batch_id}`}
+          >
+            Manage Schedule
+          </Button>
+        </td>
+      )}
     </tr>
   );
 }
@@ -335,7 +259,7 @@ export function MyBatchesView({
   const batches = useMemo(() => data ?? [], [data]);
 
   const { sortKey, sortDir, sortedRows, toggleSort, applySort } = useTableSort(batches, BATCH_ACCESSORS, {
-    descFirstKeys: DESC_FIRST_KEYS,
+    descFirstKeys: ["startDate", "endDate"],
   });
 
   const {
@@ -350,6 +274,11 @@ export function MyBatchesView({
     filteredRows,
     filtersVersion,
   } = useTableFilters(sortedRows, BATCH_FILTER_FIELDS, BATCH_SEARCH_ACCESSOR);
+
+  const columns = useColumnVisibility<ColumnKey>({
+    columns: COLUMN_KEYS,
+    storageKey: "ops.table.my-batches.columns",
+  });
 
   useEffect(() => {
     onPageChange(1);
@@ -371,101 +300,64 @@ export function MyBatchesView({
     [batches]
   );
 
-  const panelHeaderStyle: React.CSSProperties = { padding: "20px 24px" };
+  const visibleColumnCount = COLUMN_KEYS.filter((column) => columns.isVisible(column.key)).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, flex: 1 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-            My Batches
-          </h2>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-            Batches you own, and whether each one still needs a timetable.
-          </p>
-        </div>
-
-        {onRefresh ? (
-          <div className="glass-panel" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px" }}>
-            <button
-              onClick={onRefresh}
-              className="btn btn-secondary"
-              style={{ padding: "6px 10px", fontSize: "0.8rem" }}
-              title="Refresh your batches"
-            >
-              <RefreshCw size={14} className={isLoading ? "animate-spin" : undefined} />
-              <span>Refresh</span>
-            </button>
-          </div>
-        ) : null}
-      </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
-        <SummaryCard
+        <StatCard
+          icon={<Layers className="h-5 w-5" aria-hidden="true" />}
           label="My Batches"
           value={batches.length}
           hint="Batches assigned to you"
-          icon={<Layers />}
-          iconBackground="#e8f2fb"
-          iconColor="#0b5cab"
+          tone="primary"
         />
-        <SummaryCard
+        <StatCard
+          icon={<CalendarX2 className="h-5 w-5" aria-hidden="true" />}
           label="Awaiting Schedule"
           value={unscheduledCount}
           hint="No timetable ingested yet"
-          icon={<CalendarX2 />}
-          iconBackground="#fef2f2"
-          iconColor="#b91c1c"
+          tone="warning"
         />
-        <SummaryCard
+        <StatCard
+          icon={<CalendarClock className="h-5 w-5" aria-hidden="true" />}
           label="Scheduled Days"
           value={scheduledDays}
           hint="Timetable days across your batches"
-          icon={<CalendarClock />}
-          iconBackground="#dcfce7"
-          iconColor="#16a34a"
+          tone="success"
         />
-        <SummaryCard
+        <StatCard
+          icon={<Clock className="h-5 w-5" aria-hidden="true" />}
           label="Ongoing"
           value={inFlightCount}
           hint="Currently running batches"
-          icon={<Clock />}
-          iconBackground="#ecfeff"
-          iconColor="#0f766e"
+          tone="info"
         />
       </div>
 
       <FullscreenTable
-        headerStyle={panelHeaderStyle}
+        stickyHeader
+        stickyTop={NAVBAR_HEIGHT}
         title={
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            Batches Assigned To You
-            <span
-              style={{
-                background: "#e8f2fb",
-                border: "1px solid #bae6fd",
-                color: "#0b5cab",
-                borderRadius: 999,
-                padding: "4px 10px",
-                fontSize: "0.78rem",
-                fontWeight: 700,
-              }}
-            >
-              {filteredRows.length} batch(es)
-            </span>
-          </span>
+          <PanelTitle
+            title="Batches Assigned To You"
+            description="Batches you own, and whether each one still needs a timetable."
+            meta={
+              <CountBadge
+                value={`${filteredRows.length} of ${batches.length}`}
+                label={filteredRows.length === batches.length ? "batches" : "batches match"}
+              />
+            }
+          />
         }
         toolbar={
           <TableFilters
-            search={{ value: search, onChange: setSearch, placeholder: "Search batches..." }}
+            search={{
+              value: search,
+              onChange: setSearch,
+              placeholder: "Search batches by ID, program, client...",
+              width: 280,
+            }}
             selects={[
               {
                 key: "status",
@@ -515,8 +407,27 @@ export function MyBatchesView({
             activeFilterCount={activeFilterCount}
           />
         }
+        actions={
+          <>
+            <ColumnsMenu
+              columns={COLUMN_KEYS}
+              hidden={columns.hidden}
+              onToggle={columns.toggle}
+              onShowAll={columns.showAll}
+            />
+            <ExportButton filename="my-batches" columns={EXPORT_COLUMNS} rows={filteredRows} />
+            {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
+            {canCreateBatch && onCreateBatch && (
+              <Button size="sm" onClick={onCreateBatch}>
+                <UserPlus className="h-4 w-4" aria-hidden="true" />
+                <span>Add New Batch</span>
+              </Button>
+            )}
+          </>
+        }
         footer={
           <PaginationControls
+            label="My batches pages"
             currentPage={page}
             totalItems={filteredRows.length}
             pageSize={pageSize}
@@ -526,114 +437,75 @@ export function MyBatchesView({
           />
         }
       >
-        <table className="glass-table" style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1180 }}>
+          <TableCaption>Batches assigned to you, with schedule status</TableCaption>
           <thead>
             <tr>
-              <SortableHeaderCell
-                columnKey="batchId"
-                label="Batch & Program"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="client"
-                label="Client"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="deliveryMode"
-                label="Mode & Location"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="startDate"
-                label="Start"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="endDate"
-                label="End"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="status"
-                label="Status"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="trainingDays"
-                label="Training Days"
-                style={{ ...BATCH_TH_STYLE, textAlign: "center" }}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <SortableHeaderCell
-                columnKey="schedule"
-                label="Schedule"
-                style={BATCH_TH_STYLE}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={toggleSort}
-              />
-              <PlainHeaderCell style={BATCH_TH_STYLE}>Action</PlainHeaderCell>
+              {BATCH_COLUMN_DEFS.map((column) =>
+                columns.isVisible(column.key as ColumnKey) ? (
+                  <SortableHeaderCell
+                    key={column.key}
+                    columnKey={column.key}
+                    label={column.label}
+                    style={{ ...HEAD_STYLE, textAlign: column.align ?? "left" }}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                ) : null
+              )}
+              {columns.isVisible("action") && (
+                <PlainHeaderCell style={{ ...HEAD_STYLE, textAlign: "right", ...ACTIONS_COLUMN_STYLE }}>
+                  Action
+                </PlainHeaderCell>
+              )}
             </tr>
           </thead>
           <tbody>
             {error ? (
-              <ErrorRow colSpan={COLUMN_COUNT} message={error} />
+              <TableStateRow colSpan={visibleColumnCount}>
+                <ErrorBanner message={error} className="mx-auto my-6 max-w-lg" />
+              </TableStateRow>
             ) : isLoading && filteredRows.length === 0 ? (
-              <LoadingRow colSpan={COLUMN_COUNT} label="Loading your batches..." />
-            ) : filteredRows.length === 0 ? (
-              hasActiveFilters ? (
-                <EmptyRow
-                  colSpan={COLUMN_COUNT}
-                  message="No batches match your filters"
-                  hint="Clear the search or filter selections to see all your batches."
-                />
-              ) : (
-                <EmptyRow
-                  colSpan={COLUMN_COUNT}
-                  message="No batches assigned to you yet"
-                  hint={
-                    canCreateBatch
-                      ? "Use Add New Batch to create one, then open it to build its timetable."
-                      : "Batches assigned to you will appear here."
-                  }
-                  action={
-                    canCreateBatch && onCreateBatch ? (
-                      <button
-                        type="button"
-                        onClick={onCreateBatch}
-                        className="btn btn-primary"
-                        style={{ marginTop: 14, padding: "8px 14px", fontSize: "0.8rem" }}
-                      >
-                        Add New Batch
-                      </button>
-                    ) : null
-                  }
-                />
-              )
+              <TableStateRow colSpan={visibleColumnCount}>
+                <LoadingState label="Loading your batches..." />
+              </TableStateRow>
+            ) : pagedBatches.length === 0 ? (
+              <TableStateRow colSpan={visibleColumnCount}>
+                {hasActiveFilters ? (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                    title="No batches match your filters"
+                    description="Clear the search or filter selections to see all your batches."
+                    action={
+                      <Button size="sm" variant="outline" onClick={clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<Layers className="h-5 w-5" aria-hidden="true" />}
+                    title="No batches assigned to you yet"
+                    description={
+                      canCreateBatch
+                        ? "Create one, then open it to build its timetable."
+                        : "Batches assigned to you will appear here."
+                    }
+                    action={
+                      canCreateBatch && onCreateBatch ? (
+                        <Button size="sm" onClick={onCreateBatch}>
+                          <UserPlus className="h-4 w-4" aria-hidden="true" />
+                          <span>Add New Batch</span>
+                        </Button>
+                      ) : null
+                    }
+                  />
+                )}
+              </TableStateRow>
             ) : (
               pagedBatches.map((batch) => (
-                <BatchRow key={batch.id} batch={batch} onOpenBatchDetail={onOpenBatchDetail} />
+                <BatchRow key={batch.id} batch={batch} columns={columns} onOpenBatchDetail={onOpenBatchDetail} />
               ))
             )}
           </tbody>

@@ -5,162 +5,106 @@ import { useAuth } from "@/context/AuthContext";
 import { LogOut, Shield, Layers } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-interface NavbarProps {
-  onOpenCreateModal?: () => void;
-}
+/**
+ * The brand mark's gradient, resolved from the design tokens and shared with the
+ * sign-in page so both surfaces render the identical emblem instead of two
+ * hardcoded colour pairs that drift apart.
+ */
+export const BRAND_GRADIENT =
+  "linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)";
 
-export const Navbar: React.FC<NavbarProps> = ({ onOpenCreateModal }) => {
+/**
+ * Compact 64px banner. `NAVBAR_HEIGHT` in `@/components/ui/panel` mirrors this
+ * height because every sticky table parks itself just below it.
+ */
+export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
   const pathname = usePathname();
 
   if (!user) return null;
 
   const isAdmin = user.role?.toLowerCase() === "admin";
+  const isAdminRoute = pathname.startsWith("/admin");
+  const fullName = user.full_name || "User";
+  const roleLabel = user.role_detail?.name || user.role || "User";
 
   return (
-    <header style={{
-      borderBottom: "1px solid rgba(160, 190, 223, 0.7)",
-      background: "rgba(255, 255, 255, 0.8)",
-      backdropFilter: "blur(10px)",
-      position: "sticky",
-      top: 0,
-      zIndex: 40,
-      padding: "24px",
-      boxShadow: "0 10px 30px rgba(15, 23, 42, 0.04)"
-    }}>
-      <div style={{
-        maxWidth: 1400,
-        margin: "0 auto",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 16
-      }}>
-        {/* Brand */}
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
-            <div style={{
-              width: 42,
-              height: 42,
-              borderRadius: 12,
-              background: "linear-gradient(135deg, #0b5cab 0%, #0d74c8 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: "0 10px 20px rgba(11, 92, 171, 0.2)"
-            }}>
-              <Layers size={20} color="#ffffff" />
-            </div>
-            <div>
-              <h1 style={{
-                fontSize: "1.125rem",
-                fontWeight: 700,
-                fontFamily: "var(--font-display)",
-                letterSpacing: "-0.02em",
-                color: "var(--text-main)",
-                margin: 0
-              }}>
-                Enterprise Operations Hub
+    <header
+      aria-label="Site header"
+      className="sticky top-0 z-40 border-b border-border/70 bg-card/80 shadow-sm backdrop-blur-md"
+    >
+      <div className="mx-auto flex min-h-16 max-w-[1400px] flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2 sm:px-6 sm:py-0">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <Link href="/" className="flex min-w-0 items-center gap-3">
+            <span
+              style={{ backgroundImage: BRAND_GRADIENT }}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-primary"
+            >
+              <Layers className="h-5 w-5 text-primary-foreground" aria-hidden="true" />
+            </span>
+            <span className="min-w-0">
+              <h1 className="truncate font-display text-sm font-bold tracking-tight text-foreground sm:text-base">
+                <span className="sm:hidden">Enterprise Ops</span>
+                <span className="hidden sm:inline">Enterprise Operations Hub</span>
               </h1>
-              <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", lineHeight: 1, margin: 0 }}>
-                Operations & Batch Execution Platform
+              <p className="hidden truncate text-xs leading-tight text-muted-foreground lg:block">
+                Operations &amp; Batch Execution Platform
               </p>
-            </div>
+            </span>
           </Link>
 
           {/* Governance navigation is the only admin destination. */}
           {isAdmin && (
-            <nav style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
+            <nav aria-label="Governance" className="shrink-0">
               <Link
                 href="/admin"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "7px 13px",
-                  borderRadius: 6,
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  textDecoration: "none",
-                  color: pathname.startsWith("/admin") ? "#0b5cab" : "var(--text-muted)",
-                  background: pathname.startsWith("/admin") ? "#e8f2fb" : "transparent",
-                  border: pathname.startsWith("/admin") ? "1px solid #bae6fd" : "1px solid transparent",
-                  transition: "all 0.15s"
-                }}
+                aria-current={isAdminRoute ? "page" : undefined}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  isAdminRoute
+                    ? "border-primary/30 bg-primary/10 text-primary shadow-sm"
+                    : "border-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                )}
               >
-                <Shield size={16} />
-                <span>Admin & Governance</span>
+                <Shield className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="sr-only sm:not-sr-only">Admin &amp; Governance</span>
               </Link>
             </nav>
           )}
         </div>
 
-        {/* User Profile & Actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-
-          {/* User Pill */}
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            background: "#f7f9fb",
-            border: "1px solid var(--border-subtle)",
-            padding: "6px 12px",
-            borderRadius: 6
-          }}>
-            <div style={{
-              width: 28,
-              height: 28,
-              borderRadius: 4,
-              background: "#e8f2fb",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#0b5cab",
-              fontSize: "0.8rem",
-              fontWeight: 700
-            }}>
-              {user.full_name ? user.full_name.charAt(0) : "U"}
-            </div>
-            <div>
-              <div style={{ fontSize: "0.825rem", fontWeight: 600, color: "var(--text-main)", lineHeight: 1.2 }}>
-                {user.full_name ? user.full_name.split(" ")[0] : "User"}
-              </div>
-              <div style={{ fontSize: "0.7rem", color: "#0b5cab", fontWeight: 600 }}>
-                {user.role_detail?.name || user.role}
-              </div>
-            </div>
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-muted/50 px-2.5 py-1.5">
+            <span
+              aria-hidden="true"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs font-bold uppercase text-primary"
+            >
+              {fullName.charAt(0)}
+            </span>
+            <span className="flex min-w-0 flex-col leading-tight">
+              <span className="max-w-24 truncate text-[0.8rem] font-semibold text-foreground sm:max-w-40">
+                {fullName}
+              </span>
+              <span className="max-w-24 truncate text-[0.7rem] font-semibold text-primary sm:max-w-40">
+                {roleLabel}
+              </span>
+            </span>
           </div>
 
-          {/* Logout */}
-          <button
+          <Button
+            variant="outline"
+            size="icon"
             onClick={logout}
-            title="Logout"
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border-subtle)",
-              color: "var(--text-dim)",
-              width: 36,
-              height: 36,
-              borderRadius: 6,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              transition: "all 0.2s"
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.borderColor = "#f43f5e";
-              e.currentTarget.style.color = "#f43f5e";
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.borderColor = "var(--border-subtle)";
-              e.currentTarget.style.color = "var(--text-dim)";
-            }}
+            aria-label="Log out"
+            title="Log out"
+            className="text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
           >
-            <LogOut size={16} />
-          </button>
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+          </Button>
         </div>
       </div>
     </header>

@@ -55,7 +55,7 @@ def test_create_user_with_role_and_team(client, admin_token_headers):
         json={
             "email": "ops.lead@enterprise-ops.com",
             "full_name": "Rohan Verma",
-            "password": "Password123",
+            "password": "Password123!",
             "role_id": role_id,
             "team_id": team_id
         }
@@ -99,7 +99,7 @@ def test_delete_team_unassigns_users(client, admin_token_headers):
         json={
             "email": "temp.member@ops.com",
             "full_name": "Temp Member",
-            "password": "Password123",
+            "password": "Password123!",
             "team_id": team_id
         }
     )

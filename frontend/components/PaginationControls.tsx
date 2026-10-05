@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -10,8 +11,17 @@ interface PaginationControlsProps {
   onPageChange: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
   pageSizeOptions?: number[];
+  /** Visible label for assistive tech, e.g. "Staff directory pages". */
+  label?: string;
+  /** Accent for the current-page button; defaults to the theme primary. */
   color?: string;
 }
+
+// Toolbar metrics shared with `TableFilters` so the footer sits on the same grid
+// as the header controls.
+const CONTROL_HEIGHT = 36;
+const CONTROL_CLASS =
+  "h-9 rounded-md border border-input bg-background text-[0.8rem] font-semibold text-foreground hover:bg-accent hover:text-accent-foreground";
 
 export function PaginationControls({
   currentPage,
@@ -19,83 +29,69 @@ export function PaginationControls({
   pageSize,
   onPageChange,
   onPageSizeChange,
-  pageSizeOptions = [5, 10, 25, 50],
-  color = "#0b5cab",
+  pageSizeOptions = [10, 25, 50, 100],
+  label = "Table pagination",
+  color,
 }: PaginationControlsProps) {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const validPage = Math.min(Math.max(1, currentPage), totalPages);
 
+  // Clamping happens in an effect: doing it during render schedules a state
+  // update from inside the render pass.
+  useEffect(() => {
+    if (currentPage !== validPage) onPageChange(validPage);
+  }, [currentPage, validPage, onPageChange]);
+
   if (totalItems === 0) return null;
 
-  const startItem = totalItems > 0 ? (validPage - 1) * pageSize + 1 : 0;
+  const startItem = (validPage - 1) * pageSize + 1;
   const endItem = Math.min(validPage * pageSize, totalItems);
+  const atStart = validPage <= 1;
+  const atEnd = validPage >= totalPages;
 
-  // Generate page numbers with ellipsis
-  const getPageNumbers = () => {
-    const pages: (number | string)[] = [];
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (validPage > 3) pages.push("...");
-      const start = Math.max(2, validPage - 1);
-      const end = Math.min(totalPages - 1, validPage + 1);
-      for (let i = start; i <= end; i++) pages.push(i);
-      if (validPage < totalPages - 2) pages.push("...");
-      pages.push(totalPages);
-    }
-    return pages;
-  };
-
-  // Reset to first page if current page is invalid
-  if (currentPage !== validPage) {
-    // Use a timeout to avoid state update during render
-    setTimeout(() => onPageChange(validPage), 0);
+  const pageNumbers: (number | string)[] = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pageNumbers.push(i);
+  } else {
+    pageNumbers.push(1);
+    if (validPage > 3) pageNumbers.push("...");
+    const from = Math.max(2, validPage - 1);
+    const to = Math.min(totalPages - 1, validPage + 1);
+    for (let i = from; i <= to; i++) pageNumbers.push(i);
+    if (validPage < totalPages - 2) pageNumbers.push("...");
+    pageNumbers.push(totalPages);
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        gap: 12,
-        padding: "10px 16px",
-        background: "#f8fafc",
-        borderTop: "1px solid #e2e8f0",
-        fontSize: "0.8rem",
-        color: "var(--text-dim)",
-      }}
+    <nav
+      aria-label={label}
+      className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/40 px-4 py-2.5 text-[0.8rem] text-muted-foreground"
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="flex flex-wrap items-center gap-3">
         <span>
-          Showing <strong>{startItem}</strong> to <strong>{endItem}</strong> of <strong>{totalItems}</strong> entries
+          Showing <strong className="font-semibold text-foreground">{startItem}</strong> to{" "}
+          <strong className="font-semibold text-foreground">{endItem}</strong> of{" "}
+          <strong className="font-semibold text-foreground">{totalItems}</strong> entries
         </span>
 
         {onPageSizeChange && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Rows:</span>
+          <div className="flex items-center gap-1.5">
+            <label htmlFor={`${label}-page-size`} className="text-xs">
+              Rows
+            </label>
             <select
+              id={`${label}-page-size`}
               value={pageSize}
-              onChange={(e) => {
-                onPageSizeChange(Number(e.target.value));
+              onChange={(event) => {
+                onPageSizeChange(Number(event.target.value));
                 onPageChange(1);
               }}
-              style={{
-                padding: "3px 8px",
-                borderRadius: 6,
-                border: "1px solid var(--border-subtle)",
-                background: "#fff",
-                fontSize: "0.78rem",
-                fontWeight: 600,
-                color: "var(--text-main)",
-                cursor: "pointer",
-              }}
+              style={{ height: CONTROL_HEIGHT }}
+              className="rounded-md border border-input bg-background px-2 text-[0.8rem] font-semibold text-foreground"
             >
-              {pageSizeOptions.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
+              {pageSizeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
                 </option>
               ))}
             </select>
@@ -103,85 +99,56 @@ export function PaginationControls({
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <button
+      <div className="flex items-center gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          className={CONTROL_CLASS}
           onClick={() => onPageChange(validPage - 1)}
-          disabled={validPage <= 1}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 2,
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: "1px solid var(--border-subtle)",
-            background: validPage <= 1 ? "#f1f5f9" : "#fff",
-            color: validPage <= 1 ? "#94a3b8" : "var(--text-main)",
-            cursor: validPage <= 1 ? "not-allowed" : "pointer",
-            fontSize: "0.78rem",
-            fontWeight: 600,
-            transition: "all 0.15s",
-          }}
-          title="Previous Page"
+          disabled={atStart}
+          title="Previous page"
         >
-          <ChevronLeft size={14} />
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           <span>Prev</span>
-        </button>
+        </Button>
 
-        {getPageNumbers().map((p, idx) => {
-          if (p === "...") {
+        {pageNumbers.map((entry, index) => {
+          if (entry === "...") {
             return (
-              <span key={`dots-${idx}`} style={{ padding: "0 4px", color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                ...
+              <span key={`dots-${index}`} className="px-1 text-muted-foreground">
+                &hellip;
               </span>
             );
           }
-          const isCurrent = p === validPage;
+          const isCurrent = entry === validPage;
           return (
-            <button
-              key={p}
-              onClick={() => onPageChange(Number(p))}
-              style={{
-                minWidth: 28,
-                height: 28,
-                padding: "0 6px",
-                borderRadius: 6,
-                border: isCurrent ? `1px solid ${color}` : "1px solid transparent",
-                background: isCurrent ? color : "transparent",
-                color: isCurrent ? "#fff" : "var(--text-main)",
-                cursor: isCurrent ? "default" : "pointer",
-                fontSize: "0.78rem",
-                fontWeight: isCurrent ? 800 : 600,
-                transition: "all 0.15s",
-              }}
+            <Button
+              key={entry}
+              variant={isCurrent ? "default" : "outline"}
+              size="sm"
+              className={CONTROL_CLASS}
+              onClick={() => onPageChange(Number(entry))}
+              aria-current={isCurrent ? "page" : undefined}
+              aria-label={`Page ${entry}`}
+              style={isCurrent ? { backgroundColor: color ?? "var(--color-primary)" } : undefined}
             >
-              {p}
-            </button>
+              {entry}
+            </Button>
           );
         })}
 
-        <button
+        <Button
+          variant="outline"
+          size="sm"
+          className={CONTROL_CLASS}
           onClick={() => onPageChange(validPage + 1)}
-          disabled={validPage >= totalPages}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 2,
-            padding: "4px 8px",
-            borderRadius: 6,
-            border: "1px solid var(--border-subtle)",
-            background: validPage >= totalPages ? "#f1f5f9" : "#fff",
-            color: validPage >= totalPages ? "#94a3b8" : "var(--text-main)",
-            cursor: validPage >= totalPages ? "not-allowed" : "pointer",
-            fontSize: "0.78rem",
-            fontWeight: 600,
-            transition: "all 0.15s",
-          }}
-          title="Next Page"
+          disabled={atEnd}
+          title="Next page"
         >
           <span>Next</span>
-          <ChevronRight size={14} />
-        </button>
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </Button>
       </div>
-    </div>
+    </nav>
   );
 }

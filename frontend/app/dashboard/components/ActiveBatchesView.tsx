@@ -1,17 +1,45 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
-import { RefreshCw, Calendar, Layers, Clock, Users, Timer } from "lucide-react";
+import { Calendar, Layers, Clock, Search, Timer, Users, RefreshCw } from "lucide-react";
 import { ActiveBatchItem, ActiveBatchesResponse, ActiveSessionItem } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
-import { FullscreenTable, SortableHeaderCell, TableFilters } from "@/components/table";
+import {
+  ColumnsMenu,
+  ExportButton,
+  FullscreenTable,
+  RefreshButton,
+  SortableHeaderCell,
+  TableCaption,
+  TableFilters,
+  TableStateRow,
+} from "@/components/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  CountBadge,
+  EmptyState,
+  ErrorBanner,
+  LoadingState,
+  NAVBAR_HEIGHT,
+  PanelTitle,
+  StatCard,
+  TABLE_TH_STYLE,
+} from "@/components/ui/panel";
+import { StatusBadge } from "@/components/ui/statusBadge";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useTableFilters } from "@/hooks/useTableFilters";
-import type { SortAccessors, TableAccessor } from "@/lib/tableUtils";
-
-const BATCH_COLUMN_COUNT = 9;
-const SESSION_COLUMN_COUNT = 8;
+import { useColumnVisibility, type UseColumnVisibilityResult } from "@/hooks/useColumnVisibility";
+import {
+  buildFilterFields,
+  buildSearchAccessor,
+  buildSortAccessors,
+  buildSortOptions,
+  type TableColumnDef,
+} from "@/lib/tableColumns";
+import type { CsvColumn } from "@/lib/csv";
+import { cn } from "@/lib/utils";
 
 interface ActiveBatchesViewProps {
   filterDate: string;
@@ -28,6 +56,10 @@ interface ActiveBatchesViewProps {
   onSessionPageChange: (page: number) => void;
   onSessionPageSizeChange: (pageSize: number) => void;
   onRefresh?: () => void;
+  // Rows here are the active-list projection, not a full `Batch`, so the
+  // callback is typed against what the table actually holds. The host has to
+  // resolve the full record before opening the drawer.
+  onOpenBatchDetail?: (batch: ActiveBatchItem) => void;
 }
 
 function formatTime(value?: string | null, fallback: string = "—"): string {
@@ -43,352 +75,380 @@ function formatTime(value?: string | null, fallback: string = "—"): string {
   return `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
 }
 
-function statusBadgeColor(status: string): { background: string; color: string } {
-  const s = (status || "").toLowerCase();
-  if (s === "requested" || s.includes("pending")) return { background: "#fef3c7", color: "#b45309" };
-  if (s === "approved" || s === "upcoming" || s === "scheduled") return { background: "#e8f2fb", color: "#0b5cab" };
-  if (s === "ongoing" || s === "inprogress") return { background: "#ecfeff", color: "#0f766e" };
-  if (s === "completed") return { background: "#dcfce7", color: "#166534" };
-  if (s === "onhold") return { background: "#ffedd5", color: "#b45309" };
-  if (s === "cancelled" || s === "not conducted") return { background: "#fef2f2", color: "#b91c1c" };
-  if (s === "rescheduled") return { background: "#f5f3ff", color: "#6d28d9" };
-  return { background: "#f1f5f9", color: "#475569" };
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const { background, color } = statusBadgeColor(status);
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "3px 8px",
-        borderRadius: 6,
-        background,
-        color,
-        fontWeight: 700,
-        fontSize: "0.72rem",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {status || "—"}
-    </span>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  hint,
-  icon,
-  iconBackground,
-  iconColor,
-}: {
-  label: string;
-  value: number | string;
-  hint: string;
-  icon: React.ReactNode;
-  iconBackground: string;
-  iconColor: string;
-}) {
-  return (
-    <div
-      style={{
-        background: "#ffffff",
-        border: "1px solid #e2e8f0",
-        borderRadius: 8,
-        padding: "18px 20px",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: "0.72rem",
-            color: "var(--text-dim)",
-            textTransform: "uppercase",
-            fontWeight: 700,
-            letterSpacing: "0.04em",
-          }}
-        >
-          {label}
-        </div>
-        <div
-          style={{
-            fontSize: "1.6rem",
-            fontWeight: 700,
-            color: "var(--text-main)",
-            marginTop: 4,
-            fontFamily: "var(--font-display)",
-          }}
-        >
-          {value}
-        </div>
-        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>{hint}</div>
-      </div>
-      <div
-        style={{
-          width: 36,
-          height: 36,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 8,
-          background: iconBackground,
-        }}
-      >
-        {React.cloneElement(icon as React.ReactElement, { size: 17, color: iconColor })}
-      </div>
-    </div>
-  );
-}
-
-function EmptyRow({ colSpan, message, hint }: { colSpan: number; message: string; hint?: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} style={{ textAlign: "center", padding: "48px 16px" }}>
-        <div style={{ color: "var(--text-dim)", fontSize: "0.95rem", fontWeight: 600 }}>{message}</div>
-        {hint ? (
-          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 4 }}>{hint}</div>
-        ) : null}
-      </td>
-    </tr>
-  );
-}
-
-function LoadingRow({ colSpan, label }: { colSpan: number; label: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} style={{ textAlign: "center", padding: "40px 16px" }}>
-        <RefreshCw
-          className="animate-spin"
-          size={24}
-          color="#0b5cab"
-          style={{ margin: "0 auto 8px auto" }}
-          aria-hidden="true"
-        />
-        <div style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{label}</div>
-      </td>
-    </tr>
-  );
-}
-
-function ErrorRow({ colSpan, message }: { colSpan: number; message: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} style={{ textAlign: "center", padding: "40px 16px" }}>
-        <div style={{ color: "#b91c1c", fontSize: "0.875rem", fontWeight: 600 }}>{message}</div>
-        <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: 4 }}>
-          Use the refresh action to retry loading active batches.
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function progressColor(rate: number): string {
-  if (rate >= 100) return "#10b981";
-  if (rate >= 50) return "#0b5cab";
-  if (rate > 0) return "#f59e0b";
-  return "#94a3b8";
-}
-
-const batchClient: TableAccessor<ActiveBatchItem> = (batch) => batch.client_name || "Enterprise Client";
-const batchCategory: TableAccessor<ActiveBatchItem> = (batch) => batch.category || "";
-const batchDeliveryMode: TableAccessor<ActiveBatchItem> = (batch) => batch.delivery_mode || "Online";
-const batchLocation: TableAccessor<ActiveBatchItem> = (batch) => batch.location_city || "Remote";
-
-const BATCH_ACCESSORS: SortAccessors<ActiveBatchItem> = {
-  batch: (batch) => batch.batch_id || "",
-  program: (batch) => batch.program_name || "",
-  client: batchClient,
-  category: batchCategory,
-  deliveryMode: batchDeliveryMode,
-  location: batchLocation,
-  startDate: (batch) => batch.start_date ?? null,
-  endDate: (batch) => batch.end_date ?? null,
-  status: (batch) => batch.status || "",
-  enrollments: (batch) => batch.total_enrollments ?? 0,
-  sessionsConducted: (batch) => batch.sessions_conducted ?? 0,
-  progress: (batch) => batch.progress ?? 0,
+// Values that ride along inside a composite cell (or are filterable without
+// being a column of their own). Declared once so sort, search and filter agree.
+const BATCH_VALUE = {
+  program: (batch: ActiveBatchItem) => batch.program_name ?? "",
+  category: (batch: ActiveBatchItem) => batch.category || "",
+  client: (batch: ActiveBatchItem) => batch.client_name || "Enterprise Client",
+  deliveryMode: (batch: ActiveBatchItem) => batch.delivery_mode || "Online",
+  location: (batch: ActiveBatchItem) => batch.location_city || "Remote",
 };
 
-const sessionPerson: TableAccessor<ActiveSessionItem> = (session) =>
-  (session.session_type === "actual" ? session.faculty_name : session.trainer_name) || "";
-const sessionLocation: TableAccessor<ActiveSessionItem> = (session) =>
-  session.location_city || session.venue || "Remote";
-
-const SESSION_ACCESSORS: SortAccessors<ActiveSessionItem> = {
-  batch: (session) => session.batch_id || "",
-  batchName: (session) => session.batch_name || "",
-  type: (session) => session.session_type || "",
-  module: (session) => session.module || "",
-  sequence: (session) => session.sequence_number ?? null,
-  person: sessionPerson,
-  date: (session) => session.session_date ?? null,
-  startTime: (session) => session.start_time ?? null,
-  duration: (session) => session.duration_hours ?? 0,
-  status: (session) => session.status || "",
-  mode: (session) => session.mode_of_delivery || "Online",
-  location: sessionLocation,
+const SESSION_VALUE = {
+  batchName: (session: ActiveSessionItem) => session.batch_name || "",
+  person: (session: ActiveSessionItem) =>
+    (session.session_type === "actual" ? session.faculty_name : session.trainer_name) || "",
+  location: (session: ActiveSessionItem) => session.location_city || session.venue || "Remote",
 };
 
+const BATCH_COLUMN_DEFS = [
+  {
+    key: "batch",
+    label: "Batch & Program",
+    accessor: (batch: ActiveBatchItem) => batch.batch_id || "",
+    search: [BATCH_VALUE.program],
+  },
+  {
+    key: "client",
+    label: "Client & Category",
+    accessor: BATCH_VALUE.client,
+    search: [BATCH_VALUE.category],
+    filterable: true,
+  },
+  {
+    key: "deliveryMode",
+    label: "Mode & Location",
+    accessor: BATCH_VALUE.deliveryMode,
+    search: [BATCH_VALUE.location],
+    filterable: true,
+  },
+  { key: "startDate", label: "Start Date", accessor: (batch: ActiveBatchItem) => batch.start_date ?? null },
+  { key: "endDate", label: "End Date", accessor: (batch: ActiveBatchItem) => batch.end_date ?? null },
+  { key: "status", label: "Status", accessor: (batch: ActiveBatchItem) => batch.status || "", filterable: true },
+  {
+    key: "enrollments",
+    label: "Enrollments",
+    accessor: (batch: ActiveBatchItem) => batch.total_enrollments ?? 0,
+    align: "center",
+  },
+  {
+    key: "sessionsConducted",
+    label: "Sessions Conducted",
+    accessor: (batch: ActiveBatchItem) => batch.sessions_conducted ?? 0,
+    search: [(batch: ActiveBatchItem) => batch.training_days ?? 0],
+  },
+  { key: "progress", label: "Progress", accessor: (batch: ActiveBatchItem) => batch.progress ?? 0 },
+] as const satisfies readonly TableColumnDef<ActiveBatchItem>[];
+
+type BatchColumnKey = (typeof BATCH_COLUMN_DEFS)[number]["key"];
+
+// "Program" has no column of its own but stays sortable; "Category" and
+// "Location" stay sortable and filterable on top of that.
+const EXTRA_BATCH_DEFS: readonly TableColumnDef<ActiveBatchItem>[] = [
+  { key: "program", label: "Program", accessor: BATCH_VALUE.program },
+  { key: "category", label: "Category", accessor: BATCH_VALUE.category, filterable: true },
+  { key: "location", label: "Location", accessor: BATCH_VALUE.location, filterable: true },
+];
+
+const BATCH_ALL_DEFS = [...BATCH_COLUMN_DEFS, ...EXTRA_BATCH_DEFS];
+const BATCH_ACCESSORS = buildSortAccessors(BATCH_ALL_DEFS);
+const BATCH_SORT_OPTIONS = buildSortOptions(BATCH_ALL_DEFS);
+const BATCH_FILTER_FIELDS = buildFilterFields(BATCH_ALL_DEFS);
+const BATCH_SEARCH_ACCESSOR = buildSearchAccessor(BATCH_COLUMN_DEFS);
 const BATCH_DESC_FIRST_KEYS = ["startDate", "endDate", "progress", "enrollments", "sessionsConducted"];
-const SESSION_DESC_FIRST_KEYS = ["date", "startTime", "duration", "sequence"];
 
-// Heading padding matches the `14px 16px` body cells of both tables below.
-const TABLE_TH_STYLE: React.CSSProperties = { padding: "14px 16px" };
+const BATCH_COLUMN_KEYS: readonly { key: BatchColumnKey; label: string }[] = BATCH_COLUMN_DEFS.map((column) => ({
+  key: column.key,
+  label: column.label,
+}));
 
-const BATCH_SORT_OPTIONS = [
-  { key: "batch", label: "Batch & Program" },
-  { key: "program", label: "Program" },
-  { key: "client", label: "Client" },
+const BATCH_EXPORT_COLUMNS: readonly CsvColumn<ActiveBatchItem>[] = [
+  { key: "batch_id", label: "Batch ID" },
+  { key: "program_name", label: "Program" },
+  { key: "client_name", label: "Client" },
   { key: "category", label: "Category" },
-  { key: "deliveryMode", label: "Delivery Mode" },
-  { key: "location", label: "Location" },
-  { key: "startDate", label: "Start Date" },
-  { key: "endDate", label: "End Date" },
+  { key: "delivery_mode", label: "Delivery Mode" },
+  { key: "location_city", label: "Location" },
+  { key: "start_date", label: "Start Date" },
+  { key: "end_date", label: "End Date" },
   { key: "status", label: "Status" },
-  { key: "enrollments", label: "Enrollments" },
-  { key: "sessionsConducted", label: "Sessions Conducted" },
+  { key: "total_enrollments", label: "Enrollments" },
+  { key: "training_days", label: "Training Days" },
+  { key: "sessions_conducted", label: "Sessions Conducted" },
   { key: "progress", label: "Progress" },
 ];
 
-const SESSION_SORT_OPTIONS = [
-  { key: "batch", label: "Batch" },
-  { key: "type", label: "Type" },
-  { key: "module", label: "Module" },
-  { key: "sequence", label: "Sequence" },
-  { key: "person", label: "Trainer / Faculty" },
-  { key: "date", label: "Date" },
-  { key: "startTime", label: "Start Time" },
-  { key: "duration", label: "Duration" },
-  { key: "status", label: "Status" },
-  { key: "mode", label: "Delivery Mode" },
-  { key: "location", label: "Location" },
+const SESSION_COLUMN_DEFS = [
+  {
+    key: "batch",
+    label: "Batch",
+    accessor: (session: ActiveSessionItem) => session.batch_id || "",
+    search: [SESSION_VALUE.batchName],
+    filterable: true,
+  },
+  {
+    key: "type",
+    label: "Type",
+    accessor: (session: ActiveSessionItem) => session.session_type || "",
+    filterable: true,
+  },
+  {
+    key: "module",
+    label: "Module",
+    accessor: (session: ActiveSessionItem) => session.module || "",
+    search: [(session: ActiveSessionItem) => session.sequence_number ?? null],
+  },
+  { key: "person", label: "Trainer / Faculty", accessor: SESSION_VALUE.person },
+  { key: "date", label: "Date", accessor: (session: ActiveSessionItem) => session.session_date ?? null },
+  {
+    key: "startTime",
+    label: "Time & Duration",
+    accessor: (session: ActiveSessionItem) => session.start_time ?? null,
+    search: [
+      (session: ActiveSessionItem) => session.end_time ?? null,
+      (session: ActiveSessionItem) => session.duration_hours ?? 0,
+    ],
+  },
+  { key: "status", label: "Status", accessor: (session: ActiveSessionItem) => session.status || "", filterable: true },
+  {
+    key: "delivery",
+    label: "Delivery Mode",
+    accessor: (session: ActiveSessionItem) => session.mode_of_delivery || "Online",
+    search: [SESSION_VALUE.location],
+    filterable: true,
+  },
+] as const satisfies readonly TableColumnDef<ActiveSessionItem>[];
+
+type SessionColumnKey = (typeof SESSION_COLUMN_DEFS)[number]["key"];
+
+// "Sequence", "Duration" and "Location" are all sortable, and "Location" is
+// filterable, without any of them being a column.
+const EXTRA_SESSION_DEFS: readonly TableColumnDef<ActiveSessionItem>[] = [
+  { key: "sequence", label: "Sequence", accessor: (session: ActiveSessionItem) => session.sequence_number ?? null },
+  { key: "duration", label: "Duration", accessor: (session: ActiveSessionItem) => session.duration_hours ?? 0 },
+  { key: "location", label: "Location", accessor: SESSION_VALUE.location, filterable: true },
 ];
 
-function BatchRow({ batch }: { batch: ActiveBatchItem }) {
+const SESSION_ALL_DEFS = [...SESSION_COLUMN_DEFS, ...EXTRA_SESSION_DEFS];
+const SESSION_ACCESSORS = buildSortAccessors(SESSION_ALL_DEFS);
+const SESSION_SORT_OPTIONS = buildSortOptions(SESSION_ALL_DEFS);
+const SESSION_FILTER_FIELDS = buildFilterFields(SESSION_ALL_DEFS);
+const SESSION_SEARCH_ACCESSOR = buildSearchAccessor(SESSION_COLUMN_DEFS);
+const SESSION_DESC_FIRST_KEYS = ["date", "startTime", "duration", "sequence"];
+
+const SESSION_COLUMN_KEYS: readonly { key: SessionColumnKey; label: string }[] = SESSION_COLUMN_DEFS.map(
+  (column) => ({ key: column.key, label: column.label })
+);
+
+const SESSION_EXPORT_COLUMNS: readonly CsvColumn<ActiveSessionItem>[] = [
+  { key: "batch_id", label: "Batch ID" },
+  { key: "batch_name", label: "Batch Name" },
+  { key: "session_type", label: "Type" },
+  { key: "module", label: "Module" },
+  { key: "sequence_number", label: "Sequence" },
+  { key: "faculty_name", label: "Faculty" },
+  { key: "trainer_name", label: "Trainer" },
+  { key: "session_date", label: "Date" },
+  { key: "start_time", label: "Start Time" },
+  { key: "end_time", label: "End Time" },
+  { key: "duration_hours", label: "Duration Hours" },
+  { key: "status", label: "Status" },
+  { key: "mode_of_delivery", label: "Delivery Mode" },
+  { key: "venue", label: "Venue" },
+  { key: "location_city", label: "Location" },
+];
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+// The session-type breakdown pills share one shape and differ only in tone.
+const COUNT_PILL = "whitespace-nowrap rounded-full px-2.5 py-1 text-[0.78rem] font-bold";
+
+// Body cells and headings share these metrics so the two rows line up.
+const CELL_STYLE: React.CSSProperties = { padding: "14px 16px" };
+const HEAD_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "14px 16px" };
+
+// `align` is optional, so it is only present on the members of the definition
+// union that set it.
+function columnAlign<T, K extends string>(column: TableColumnDef<T, K>): "left" | "center" | "right" {
+  return ("align" in column ? column.align : undefined) ?? "left";
+}
+
+function progressTone(rate: number): { bar: string; text: string } {
+  if (rate >= 100) return { bar: "bg-success", text: "text-success" };
+  if (rate >= 50) return { bar: "bg-primary", text: "text-primary" };
+  if (rate > 0) return { bar: "bg-warning", text: "text-warning" };
+  return { bar: "bg-muted-foreground/40", text: "text-muted-foreground" };
+}
+
+function BatchRow({
+  batch,
+  columns,
+  onOpenBatchDetail,
+}: {
+  batch: ActiveBatchItem;
+  columns: UseColumnVisibilityResult<BatchColumnKey>;
+  onOpenBatchDetail?: (batch: ActiveBatchItem) => void;
+}) {
   const rate = Math.min(100, Math.max(0, Math.round(batch.progress ?? 0)));
-  const barColor = progressColor(rate);
+  const tone = progressTone(rate);
   const totalDays = batch.training_days || 0;
+  const open = () => onOpenBatchDetail?.(batch);
 
   return (
-    <tr style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{batch.batch_id}</div>
-        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>{batch.program_name}</div>
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{batch.client_name || "Enterprise Client"}</div>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{batch.category || "—"}</div>
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{batch.delivery_mode || "Online"}</div>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{batch.location_city || "Remote"}</div>
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.start_date)}</div>
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.end_date)}</div>
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <StatusBadge status={batch.status} />
-      </td>
-      <td style={{ padding: "14px 16px", textAlign: "center", fontWeight: 600, color: "var(--text-main)" }}>
-        {batch.total_enrollments}
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-          <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-main)" }}>
-            {batch.sessions_conducted}
-          </span>
-          {totalDays > 0 ? (
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>/ {totalDays} days</span>
-          ) : (
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>days TBD</span>
-          )}
-        </div>
-      </td>
-      <td style={{ padding: "14px 16px", minWidth: 130 }}>
-        <div style={{ fontSize: "0.8rem", fontWeight: 700, color: barColor, marginBottom: 5 }}>
-          {totalDays > 0 ? `${rate}%` : "N/A"}
-        </div>
-        <div style={{ width: "100%", height: 6, background: "#e2e8f0", borderRadius: 9999, overflow: "hidden" }}>
+    <tr
+      onClick={onOpenBatchDetail ? open : undefined}
+      onKeyDown={
+        onOpenBatchDetail
+          ? (event) => {
+              // The whole row is the hit target for the detail drawer, so it has
+              // to answer the keyboard as well as the mouse.
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                open();
+              }
+            }
+          : undefined
+      }
+      tabIndex={onOpenBatchDetail ? 0 : undefined}
+      aria-label={onOpenBatchDetail ? `Open details for batch ${batch.batch_id}` : undefined}
+      style={{
+        borderBottom: "1px solid var(--border-subtle)",
+        fontSize: "0.875rem",
+        ...(onOpenBatchDetail ? { cursor: "pointer" } : null),
+      }}
+    >
+      {columns.isVisible("batch") && (
+        <td style={CELL_STYLE}>
+          <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{batch.batch_id}</div>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>{batch.program_name}</div>
+        </td>
+      )}
+      {columns.isVisible("client") && (
+        <td style={CELL_STYLE}>
+          <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{batch.client_name || "Enterprise Client"}</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{batch.category || "—"}</div>
+        </td>
+      )}
+      {columns.isVisible("deliveryMode") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{batch.delivery_mode || "Online"}</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{batch.location_city || "Remote"}</div>
+        </td>
+      )}
+      {columns.isVisible("startDate") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.start_date)}</div>
+        </td>
+      )}
+      {columns.isVisible("endDate") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{formatDate(batch.end_date)}</div>
+        </td>
+      )}
+      {columns.isVisible("status") && (
+        <td style={CELL_STYLE}>
+          <StatusBadge status={batch.status} />
+        </td>
+      )}
+      {columns.isVisible("enrollments") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center", fontWeight: 600, color: "var(--text-main)" }}>
+          {batch.total_enrollments}
+        </td>
+      )}
+      {columns.isVisible("sessionsConducted") && (
+        <td style={CELL_STYLE}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+            <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-main)" }}>
+              {batch.sessions_conducted}
+            </span>
+            {totalDays > 0 ? (
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>/ {totalDays} days</span>
+            ) : (
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>days TBD</span>
+            )}
+          </div>
+        </td>
+      )}
+      {columns.isVisible("progress") && (
+        <td style={{ ...CELL_STYLE, minWidth: 130 }}>
+          <div className={cn("mb-[5px] text-[0.8rem] font-bold", tone.text)}>
+            {totalDays > 0 ? `${rate}%` : "N/A"}
+          </div>
           <div
-            style={{
-              width: `${rate}%`,
-              height: "100%",
-              background: barColor,
-              borderRadius: 9999,
-              transition: "width 0.3s ease",
-            }}
-          />
-        </div>
-      </td>
+            role="progressbar"
+            aria-label={`Progress for batch ${batch.batch_id}`}
+            aria-valuenow={rate}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          >
+            <div
+              className={cn("h-full rounded-full transition-[width] duration-300", tone.bar)}
+              style={{ width: `${rate}%` }}
+            />
+          </div>
+        </td>
+      )}
     </tr>
   );
 }
 
-function SessionRow({ session }: { session: ActiveSessionItem }) {
+function SessionRow({
+  session,
+  columns,
+}: {
+  session: ActiveSessionItem;
+  columns: UseColumnVisibilityResult<SessionColumnKey>;
+}) {
   const isActual = session.session_type === "actual";
   const person = isActual ? session.faculty_name : session.trainer_name;
   const location = session.location_city || session.venue;
 
   return (
     <tr style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.875rem" }}>
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{session.batch_id || "—"}</div>
-        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>{session.batch_name || "—"}</div>
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <span
-          style={{
-            display: "inline-block",
-            padding: "3px 8px",
-            borderRadius: 6,
-            background: isActual ? "#ecfeff" : "#e8f2fb",
-            color: isActual ? "#0f766e" : "#0b5cab",
-            fontWeight: 700,
-            fontSize: "0.72rem",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {isActual ? "Actual" : "Scheduled"}
-        </span>
-      </td>
-      <td style={{ padding: "14px 16px", maxWidth: 260 }}>
-        <div style={{ whiteSpace: "normal", color: "var(--text-main)" }}>{session.module || "—"}</div>
-        {session.sequence_number ? (
-          <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
-            Session #{session.sequence_number}
+      {columns.isVisible("batch") && (
+        <td style={CELL_STYLE}>
+          <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{session.batch_id || "—"}</div>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>{session.batch_name || "—"}</div>
+        </td>
+      )}
+      {columns.isVisible("type") && (
+        <td style={CELL_STYLE}>
+          <Badge variant={isActual ? "info" : "default"} size="sm" className="normal-case tracking-normal">
+            {isActual ? "Actual" : "Scheduled"}
+          </Badge>
+        </td>
+      )}
+      {columns.isVisible("module") && (
+        <td style={{ ...CELL_STYLE, maxWidth: 260 }}>
+          <div style={{ whiteSpace: "normal", color: "var(--text-main)" }}>{session.module || "—"}</div>
+          {session.sequence_number ? (
+            <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
+              Session #{session.sequence_number}
+            </div>
+          ) : null}
+        </td>
+      )}
+      {columns.isVisible("person") && (
+        <td style={{ ...CELL_STYLE, color: "var(--text-main)" }}>{person || "—"}</td>
+      )}
+      {columns.isVisible("date") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap", color: "var(--text-main)", fontWeight: 600 }}>
+          {formatDate(session.session_date)}
+        </td>
+      )}
+      {columns.isVisible("startTime") && (
+        <td style={{ ...CELL_STYLE, whiteSpace: "nowrap" }}>
+          <div style={{ color: "var(--text-main)", fontWeight: 600 }}>
+            {formatTime(session.start_time)} – {formatTime(session.end_time)}
           </div>
-        ) : null}
-      </td>
-      <td style={{ padding: "14px 16px", color: "var(--text-main)" }}>{person || "—"}</td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap", color: "var(--text-main)", fontWeight: 600 }}>
-        {formatDate(session.session_date)}
-      </td>
-      <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
-        <div style={{ color: "var(--text-main)", fontWeight: 600 }}>
-          {formatTime(session.start_time)} – {formatTime(session.end_time)}
-        </div>
-        <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
-          {session.duration_hours ? `${Number(session.duration_hours).toFixed(2)} hrs` : "—"}
-        </div>
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <StatusBadge status={session.status} />
-      </td>
-      <td style={{ padding: "14px 16px" }}>
-        <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{session.mode_of_delivery || "Online"}</div>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{location || "Remote"}</div>
-      </td>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", marginTop: 2 }}>
+            {session.duration_hours ? `${Number(session.duration_hours).toFixed(2)} hrs` : "—"}
+          </div>
+        </td>
+      )}
+      {columns.isVisible("status") && (
+        <td style={CELL_STYLE}>
+          <StatusBadge status={session.status} />
+        </td>
+      )}
+      {columns.isVisible("delivery") && (
+        <td style={CELL_STYLE}>
+          <div style={{ color: "var(--text-main)", fontWeight: 600 }}>{session.mode_of_delivery || "Online"}</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{location || "Remote"}</div>
+        </td>
+      )}
     </tr>
   );
 }
@@ -408,6 +468,7 @@ export function ActiveBatchesView({
   onSessionPageChange,
   onSessionPageSizeChange,
   onRefresh,
+  onOpenBatchDetail,
 }: ActiveBatchesViewProps) {
   const batches = useMemo(() => data?.batches ?? [], [data]);
   const sessions = useMemo(() => data?.sessions ?? [], [data]);
@@ -415,57 +476,51 @@ export function ActiveBatchesView({
   const batchSort = useTableSort(batches, BATCH_ACCESSORS, { descFirstKeys: BATCH_DESC_FIRST_KEYS });
   const sessionSort = useTableSort(sessions, SESSION_ACCESSORS, { descFirstKeys: SESSION_DESC_FIRST_KEYS });
 
-  const batchFilterFields = useMemo(
-    () => [
-      { key: "status", accessor: BATCH_ACCESSORS.status },
-      { key: "deliveryMode", accessor: batchDeliveryMode },
-      { key: "client", accessor: batchClient },
-      { key: "category", accessor: batchCategory },
-      { key: "location", accessor: batchLocation },
-    ],
-    [],
-  );
-  const batchesFilters = useTableFilters(batchSort.sortedRows, batchFilterFields);
+  const batchesFilters = useTableFilters(batchSort.sortedRows, BATCH_FILTER_FIELDS, BATCH_SEARCH_ACCESSOR);
+  const sessionsFilters = useTableFilters(sessionSort.sortedRows, SESSION_FILTER_FIELDS, SESSION_SEARCH_ACCESSOR);
 
-  const sessionFilterFields = useMemo(
-    () => [
-      { key: "status", accessor: SESSION_ACCESSORS.status },
-      { key: "type", accessor: SESSION_ACCESSORS.type },
-      { key: "mode", accessor: SESSION_ACCESSORS.mode },
-      { key: "location", accessor: sessionLocation },
-      { key: "batch", accessor: SESSION_ACCESSORS.batch },
-    ],
-    [],
-  );
-  const sessionsFilters = useTableFilters(sessionSort.sortedRows, sessionFilterFields);
+  const batchColumns = useColumnVisibility<BatchColumnKey>({
+    columns: BATCH_COLUMN_KEYS,
+    defaultHidden: ["sessionsConducted"],
+    storageKey: "ops.table.active-batches.columns",
+  });
+  const sessionColumns = useColumnVisibility<SessionColumnKey>({
+    columns: SESSION_COLUMN_KEYS,
+    defaultHidden: ["delivery"],
+    storageKey: "ops.table.active-sessions.columns",
+  });
 
+  // A new date is a new result set, so the current page offset is meaningless.
   useEffect(() => {
     onBatchPageChange(1);
-  }, [batchesFilters.filtersVersion]);
+  }, [batchesFilters.filtersVersion, filterDate]);
 
   useEffect(() => {
     onSessionPageChange(1);
-  }, [sessionsFilters.filtersVersion]);
+  }, [sessionsFilters.filtersVersion, filterDate]);
+
+  const filteredBatches = batchesFilters.filteredRows;
+  const filteredSessions = sessionsFilters.filteredRows;
 
   const batchStart = (batchPage - 1) * batchPageSize;
   const pagedBatches = useMemo(
-    () => batchesFilters.filteredRows.slice(batchStart, batchStart + batchPageSize),
-    [batchesFilters.filteredRows, batchStart, batchPageSize],
+    () => filteredBatches.slice(batchStart, batchStart + batchPageSize),
+    [filteredBatches, batchStart, batchPageSize]
   );
 
   const sessionStart = (sessionPage - 1) * sessionPageSize;
   const pagedSessions = useMemo(
-    () => sessionsFilters.filteredRows.slice(sessionStart, sessionStart + sessionPageSize),
-    [sessionsFilters.filteredRows, sessionStart, sessionPageSize],
+    () => filteredSessions.slice(sessionStart, sessionStart + sessionPageSize),
+    [filteredSessions, sessionStart, sessionPageSize]
   );
 
   const scheduledCount = useMemo(
-    () => sessions.filter((s) => s.session_type === "scheduled").length,
-    [sessions],
+    () => filteredSessions.filter((session) => session.session_type === "scheduled").length,
+    [filteredSessions]
   );
   const actualCount = useMemo(
-    () => sessions.filter((s) => s.session_type === "actual").length,
-    [sessions],
+    () => filteredSessions.filter((session) => session.session_type === "actual").length,
+    [filteredSessions]
   );
 
   const totalBatches = data?.total_batches ?? 0;
@@ -474,21 +529,26 @@ export function ActiveBatchesView({
   // Only planned sessions contribute: the API already drops cancelled,
   // not-conducted and completed rows from this list.
   const hoursScheduled = useMemo(
-    () => sessions.reduce((sum, s) => sum + (s.session_type === "scheduled" ? Number(s.duration_hours) || 0 : 0), 0),
-    [sessions],
+    () =>
+      sessions.reduce(
+        (sum, session) => sum + (session.session_type === "scheduled" ? Number(session.duration_hours) || 0 : 0),
+        0
+      ),
+    [sessions]
   );
   const facultyDeployed = useMemo(() => {
     const names = new Set<string>();
-    sessions.forEach((s) => {
-      const person = (s.session_type === "actual" ? s.faculty_name : s.trainer_name)?.trim();
+    sessions.forEach((session) => {
+      const person = (session.session_type === "actual" ? session.faculty_name : session.trainer_name)?.trim();
       if (person) names.add(person);
     });
     return names.size;
   }, [sessions]);
 
-  // Padding only: `FullscreenTable` owns the header's layout, so anything that
-  // changes display/alignment here would undo its two-row header.
-  const headerStyle: React.CSSProperties = { padding: "20px 24px" };
+  // Colspan has to count only the columns that survived the show/hide menu, or
+  // the state rows span fewer cells than the table has.
+  const batchVisibleColumns = BATCH_COLUMN_KEYS.filter((column) => batchColumns.isVisible(column.key)).length;
+  const sessionVisibleColumns = SESSION_COLUMN_KEYS.filter((column) => sessionColumns.isVisible(column.key)).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24, flex: 1 }}>
@@ -504,7 +564,7 @@ export function ActiveBatchesView({
             id="active-batches-date"
             type="date"
             value={filterDate}
-            onChange={(e) => onFilterDateChange(e.target.value)}
+            onChange={(event) => onFilterDateChange(event.target.value)}
             className="glass-input"
             style={{ padding: "6px 10px", fontSize: "0.85rem" }}
           />
@@ -515,7 +575,7 @@ export function ActiveBatchesView({
               style={{ padding: "6px 10px", fontSize: "0.8rem" }}
               title="Refresh active batches"
             >
-              <RefreshCw size={14} className={isLoading ? "animate-spin" : undefined} />
+              <RefreshCw size={14} className={isLoading ? "animate-spin" : undefined} aria-hidden="true" />
               <span>Refresh</span>
             </button>
           ) : null}
@@ -532,49 +592,57 @@ export function ActiveBatchesView({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
-        <SummaryCard
+        <StatCard
+          icon={<Layers className="h-5 w-5" aria-hidden="true" />}
           label="Ongoing Batches"
           value={totalBatches}
           hint="Active on the selected date"
-          icon={<Layers />}
-          iconBackground="#e8f2fb"
-          iconColor="#0b5cab"
+          tone="primary"
         />
-        <SummaryCard
+        <StatCard
+          icon={<Clock className="h-5 w-5" aria-hidden="true" />}
           label="Sessions Today"
           value={totalSessions}
           hint="Planned and delivered combined"
-          icon={<Clock />}
-          iconBackground="#ecfeff"
-          iconColor="#0f766e"
+          tone="info"
         />
-        <SummaryCard
+        <StatCard
+          icon={<Timer className="h-5 w-5" aria-hidden="true" />}
           label="Hours Scheduled"
           value={`${hoursScheduled.toFixed(1)} hrs`}
           hint="Planned delivery hours for the date"
-          icon={<Timer />}
-          iconBackground="#fef3c7"
-          iconColor="#b45309"
+          tone="warning"
         />
-        <SummaryCard
+        <StatCard
+          icon={<Users className="h-5 w-5" aria-hidden="true" />}
           label="Faculty Deployed"
           value={facultyDeployed}
           hint="Distinct trainers and faculty on the day"
-          icon={<Users />}
-          iconBackground="#dcfce7"
-          iconColor="#16a34a"
+          tone="success"
         />
       </div>
 
       <FullscreenTable
-        headerStyle={headerStyle}
-        title="Ongoing Batches"
+        stickyHeader
+        stickyTop={NAVBAR_HEIGHT}
+        title={
+          <PanelTitle
+            title="Ongoing Batches"
+            description="Batches running on the selected date, with delivery progress."
+            meta={
+              <CountBadge
+                value={`${filteredBatches.length} of ${batches.length}`}
+                label={filteredBatches.length === batches.length ? "batches" : "batches match"}
+              />
+            }
+          />
+        }
         toolbar={
           <TableFilters
             search={{
               value: batchesFilters.search,
               onChange: batchesFilters.setSearch,
-              placeholder: "Search batches...",
+              placeholder: "Search batches by ID, program, client...",
             }}
             selects={[
               {
@@ -620,7 +688,7 @@ export function ActiveBatchesView({
               options: BATCH_SORT_OPTIONS,
               sortKey: batchSort.sortKey,
               sortDir: batchSort.sortDir,
-              onChange: (key, dir) => batchSort.applySort(key, dir),
+              onChange: batchSort.applySort,
             }}
             onClear={batchesFilters.clearFilters}
             hasActiveFilters={batchesFilters.hasActiveFilters}
@@ -628,144 +696,113 @@ export function ActiveBatchesView({
           />
         }
         actions={
-          <span
-            style={{
-              background: "#e8f2fb",
-              border: "1px solid #bae6fd",
-              color: "#0b5cab",
-              borderRadius: 999,
-              padding: "4px 10px",
-              fontSize: "0.78rem",
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {totalBatches} batch(es)
-          </span>
+          <>
+            <ColumnsMenu
+              columns={BATCH_COLUMN_KEYS}
+              hidden={batchColumns.hidden}
+              onToggle={batchColumns.toggle}
+              onShowAll={batchColumns.showAll}
+            />
+            <ExportButton filename="active-batches" columns={BATCH_EXPORT_COLUMNS} rows={filteredBatches} />
+            {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
+          </>
         }
         footer={
           <PaginationControls
+            label="Ongoing batches pages"
             currentPage={batchPage}
-            totalItems={batchesFilters.filteredRows.length}
+            totalItems={filteredBatches.length}
             pageSize={batchPageSize}
-            pageSizeOptions={[10, 25, 50, 100]}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
             onPageChange={onBatchPageChange}
             onPageSizeChange={onBatchPageSizeChange}
           />
         }
       >
-        <table className="glass-table" style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1180 }}>
+          <TableCaption>Ongoing batches for the selected date, with delivery progress</TableCaption>
           <thead>
             <tr>
-              <SortableHeaderCell
-                columnKey="batch"
-                label="Batch &amp; Program"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="client"
-                label="Client &amp; Category"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="deliveryMode"
-                label="Mode &amp; Location"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="startDate"
-                label="Start Date"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="endDate"
-                label="End Date"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="status"
-                label="Status"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="enrollments"
-                label="Enrollments"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={{ ...TABLE_TH_STYLE, textAlign: "center" }}
-              />
-              <SortableHeaderCell
-                columnKey="sessionsConducted"
-                label="Sessions Conducted"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="progress"
-                label="Progress"
-                sortKey={batchSort.sortKey}
-                sortDir={batchSort.sortDir}
-                onSort={batchSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
+              {BATCH_COLUMN_DEFS.map((column) =>
+                batchColumns.isVisible(column.key) ? (
+                  <SortableHeaderCell
+                    key={column.key}
+                    columnKey={column.key}
+                    label={column.label}
+                    style={{ ...HEAD_STYLE, textAlign: columnAlign(column) }}
+                    sortKey={batchSort.sortKey}
+                    sortDir={batchSort.sortDir}
+                    onSort={batchSort.toggleSort}
+                  />
+                ) : null
+              )}
             </tr>
           </thead>
           <tbody>
             {error ? (
-              <ErrorRow colSpan={BATCH_COLUMN_COUNT} message={error} />
+              <TableStateRow colSpan={batchVisibleColumns}>
+                <ErrorBanner message={error} className="mx-auto my-6 max-w-lg" />
+              </TableStateRow>
             ) : isLoading && batches.length === 0 ? (
-              <LoadingRow colSpan={BATCH_COLUMN_COUNT} label="Loading ongoing batches..." />
-            ) : batchesFilters.filteredRows.length === 0 ? (
-              batches.length === 0 ? (
-                <EmptyRow
-                  colSpan={BATCH_COLUMN_COUNT}
-                  message="No ongoing batches for this date"
-                  hint="Select a different date to view batches running that day."
-                />
-              ) : (
-                <EmptyRow
-                  colSpan={BATCH_COLUMN_COUNT}
-                  message="No batches match the current filters"
-                  hint="Clear the search or filters to see all ongoing batches."
-                />
-              )
+              <TableStateRow colSpan={batchVisibleColumns}>
+                <LoadingState label="Loading ongoing batches..." />
+              </TableStateRow>
+            ) : filteredBatches.length === 0 ? (
+              <TableStateRow colSpan={batchVisibleColumns}>
+                {batches.length === 0 ? (
+                  <EmptyState
+                    icon={<Calendar className="h-5 w-5" aria-hidden="true" />}
+                    title="No ongoing batches for this date"
+                    description="Select a different date to view batches running that day."
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                    title="No batches match the current filters"
+                    description="Clear the search or filters to see all ongoing batches."
+                    action={
+                      <Button size="sm" variant="outline" onClick={batchesFilters.clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                )}
+              </TableStateRow>
             ) : (
-              pagedBatches.map((batch) => <BatchRow key={batch.id} batch={batch} />)
+              pagedBatches.map((batch) => (
+                <BatchRow
+                  key={batch.id}
+                  batch={batch}
+                  columns={batchColumns}
+                  onOpenBatchDetail={onOpenBatchDetail}
+                />
+              ))
             )}
           </tbody>
         </table>
       </FullscreenTable>
 
       <FullscreenTable
-        headerStyle={headerStyle}
-        title="Ongoing Sessions"
+        stickyHeader
+        stickyTop={NAVBAR_HEIGHT}
+        title={
+          <PanelTitle
+            title="Ongoing Sessions"
+            description="Planned and delivered sessions for the selected date."
+            meta={
+              <CountBadge
+                value={`${filteredSessions.length} of ${sessions.length}`}
+                label={filteredSessions.length === sessions.length ? "sessions" : "sessions match"}
+              />
+            }
+          />
+        }
         toolbar={
           <TableFilters
             search={{
               value: sessionsFilters.search,
               onChange: sessionsFilters.setSearch,
-              placeholder: "Search sessions...",
+              placeholder: "Search sessions by batch, module, trainer...",
             }}
             selects={[
               {
@@ -784,11 +821,11 @@ export function ActiveBatchesView({
                 width: 140,
               },
               {
-                key: "mode",
+                key: "delivery",
                 label: "Delivery Mode",
-                value: sessionsFilters.getFilter("mode"),
-                onChange: (value) => sessionsFilters.setFilter("mode", value),
-                options: sessionsFilters.optionsFor("mode"),
+                value: sessionsFilters.getFilter("delivery"),
+                onChange: (value) => sessionsFilters.setFilter("delivery", value),
+                options: sessionsFilters.optionsFor("delivery"),
                 width: 160,
               },
               {
@@ -812,7 +849,7 @@ export function ActiveBatchesView({
               options: SESSION_SORT_OPTIONS,
               sortKey: sessionSort.sortKey,
               sortDir: sessionSort.sortDir,
-              onChange: (key, dir) => sessionSort.applySort(key, dir),
+              onChange: sessionSort.applySort,
             }}
             onClear={sessionsFilters.clearFilters}
             hasActiveFilters={sessionsFilters.hasActiveFilters}
@@ -820,137 +857,87 @@ export function ActiveBatchesView({
           />
         }
         actions={
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span
-              style={{
-                background: "#e8f2fb",
-                border: "1px solid #bae6fd",
-                color: "#0b5cab",
-                borderRadius: 999,
-                padding: "4px 10px",
-                fontSize: "0.78rem",
-                fontWeight: 700,
-              }}
-            >
+          <>
+            <span className={cn(COUNT_PILL, "border border-primary/20 bg-primary/10 text-primary")}>
               {scheduledCount} scheduled
             </span>
-            <span
-              style={{
-                background: "#ecfeff",
-                border: "1px solid #a5f3fc",
-                color: "#0f766e",
-                borderRadius: 999,
-                padding: "4px 10px",
-                fontSize: "0.78rem",
-                fontWeight: 700,
-              }}
-            >
+            <span className={cn(COUNT_PILL, "border border-info/20 bg-info/10 text-info")}>
               {actualCount} actual
             </span>
-          </div>
+            <ColumnsMenu
+              columns={SESSION_COLUMN_KEYS}
+              hidden={sessionColumns.hidden}
+              onToggle={sessionColumns.toggle}
+              onShowAll={sessionColumns.showAll}
+            />
+            <ExportButton filename="active-sessions" columns={SESSION_EXPORT_COLUMNS} rows={filteredSessions} />
+            {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
+          </>
         }
         footer={
           <PaginationControls
+            label="Ongoing sessions pages"
             currentPage={sessionPage}
-            totalItems={sessionsFilters.filteredRows.length}
+            totalItems={filteredSessions.length}
             pageSize={sessionPageSize}
-            pageSizeOptions={[15, 25, 50, 100]}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
             onPageChange={onSessionPageChange}
             onPageSizeChange={onSessionPageSizeChange}
           />
         }
       >
-        <table className="glass-table" style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1180 }}>
+          <TableCaption>Ongoing sessions for the selected date, with delivery details</TableCaption>
           <thead>
             <tr>
-              <SortableHeaderCell
-                columnKey="batch"
-                label="Batch"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="type"
-                label="Type"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="module"
-                label="Module"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="person"
-                label="Trainer / Faculty"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="date"
-                label="Date"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="startTime"
-                label="Time &amp; Duration"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="status"
-                label="Status"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
-              <SortableHeaderCell
-                columnKey="mode"
-                label="Delivery"
-                sortKey={sessionSort.sortKey}
-                sortDir={sessionSort.sortDir}
-                onSort={sessionSort.toggleSort}
-                style={TABLE_TH_STYLE}
-              />
+              {SESSION_COLUMN_DEFS.map((column) =>
+                sessionColumns.isVisible(column.key) ? (
+                  <SortableHeaderCell
+                    key={column.key}
+                    columnKey={column.key}
+                    label={column.label}
+                    style={{ ...HEAD_STYLE, textAlign: columnAlign(column) }}
+                    sortKey={sessionSort.sortKey}
+                    sortDir={sessionSort.sortDir}
+                    onSort={sessionSort.toggleSort}
+                  />
+                ) : null
+              )}
             </tr>
           </thead>
           <tbody>
             {error ? (
-              <ErrorRow colSpan={SESSION_COLUMN_COUNT} message={error} />
+              <TableStateRow colSpan={sessionVisibleColumns}>
+                <ErrorBanner message={error} className="mx-auto my-6 max-w-lg" />
+              </TableStateRow>
             ) : isLoading && sessions.length === 0 ? (
-              <LoadingRow colSpan={SESSION_COLUMN_COUNT} label="Loading ongoing sessions..." />
-            ) : sessionsFilters.filteredRows.length === 0 ? (
-              sessions.length === 0 ? (
-                <EmptyRow
-                  colSpan={SESSION_COLUMN_COUNT}
-                  message="No sessions scheduled for this date"
-                  hint="Sessions marked cancelled, not conducted, or completed are excluded."
-                />
-              ) : (
-                <EmptyRow
-                  colSpan={SESSION_COLUMN_COUNT}
-                  message="No sessions match the current filters"
-                  hint="Clear the search or filters to see all sessions."
-                />
-              )
+              <TableStateRow colSpan={sessionVisibleColumns}>
+                <LoadingState label="Loading ongoing sessions..." />
+              </TableStateRow>
+            ) : filteredSessions.length === 0 ? (
+              <TableStateRow colSpan={sessionVisibleColumns}>
+                {sessions.length === 0 ? (
+                  <EmptyState
+                    icon={<Calendar className="h-5 w-5" aria-hidden="true" />}
+                    title="No sessions scheduled for this date"
+                    description="Sessions marked cancelled, not conducted, or completed are excluded."
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                    title="No sessions match the current filters"
+                    description="Clear the search or filters to see all sessions."
+                    action={
+                      <Button size="sm" variant="outline" onClick={sessionsFilters.clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                )}
+              </TableStateRow>
             ) : (
               pagedSessions.map((session) => (
-                <SessionRow key={`${session.session_type}-${session.id}`} session={session} />
+                <SessionRow key={`${session.session_type}-${session.id}`} session={session} columns={sessionColumns} />
               ))
             )}
           </tbody>

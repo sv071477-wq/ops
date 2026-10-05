@@ -3,7 +3,12 @@ from decimal import Decimal
 
 from app.models.batch import Batch
 from app.models.session import TrainingSession, FacultyUtilization
+from app.api.v1.batches.lifecycle_repository import BatchLifecycleRepository
 from app.api.v1.batches.lifecycle_service import BatchLifecycleService
+
+
+def _lifecycle_service(db_session):
+    return BatchLifecycleService(BatchLifecycleRepository(db_session))
 
 
 def _seed_batch_with_sessions(db_session, batch, count=2):
@@ -55,7 +60,7 @@ def test_feedback_not_calculated_when_not_all_sessions_completed(db_session):
     ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
     _seed_utilization(db_session, batch, ts1, rating="4.0")
 
-    service = BatchLifecycleService(db_session)
+    service = _lifecycle_service(db_session)
     result = service.calculate_batch_avg_feedback(batch.id)
 
     assert result is None
@@ -76,7 +81,7 @@ def test_feedback_calculated_when_all_sessions_completed(db_session):
     ts2.status = "Completed"
     db_session.commit()
 
-    service = BatchLifecycleService(db_session)
+    service = _lifecycle_service(db_session)
     result = service.calculate_batch_avg_feedback(batch.id)
 
     assert result == 4.5
@@ -97,7 +102,7 @@ def test_feedback_excludes_cancelled_sessions(db_session):
     ts2.status = "Cancelled"
     db_session.commit()
 
-    service = BatchLifecycleService(db_session)
+    service = _lifecycle_service(db_session)
     result = service.calculate_batch_avg_feedback(batch.id)
 
     assert result == 3.0

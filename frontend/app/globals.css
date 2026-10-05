@@ -44,15 +44,6 @@
   --radius-lg: calc(var(--radius) + 2px);
   --radius-xl: calc(var(--radius) + 8px);
 
-  --spacing-unit: 4px;
-
-  --space-xs: 4px;
-  --space-sm: 8px;
-  --space-md: 16px;
-  --space-lg: 24px;
-  --space-xl: 32px;
-  --space-2xl: 48px;
-
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
@@ -60,27 +51,22 @@
   --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   --shadow-primary: 0 10px 20px hsl(214 88% 27% / 0.18);
 
-  --transition-fast: 150ms ease;
-  --transition-base: 200ms ease;
-  --transition-slow: 300ms ease;
-
   --animate-fade-in: fadeIn 0.2s ease-out;
   --animate-scale-up: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-slide-in-top: slideInFromTop 0.3s ease-out;
   --animate-slide-in-bottom: slideInFromBottom 0.3s ease-out;
   --animate-spin: spin 0.9s linear infinite;
-  --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 :root {
   --text-main: var(--color-foreground);
   --text-muted: var(--color-muted-foreground);
-  --text-dim: color-mix(in srgb, var(--color-muted-foreground) 78%, transparent);
+  /* 88%, not 78%: this is the colour of every 0.62rem toolbar label and every
+     uppercase column heading, and 78% of the muted foreground failed AA at that
+     size. */
+  --text-dim: color-mix(in srgb, var(--color-muted-foreground) 88%, transparent);
   --border-subtle: var(--color-border);
   --primary: var(--color-primary);
-  --primary-strong: color-mix(in srgb, var(--color-primary) 80%, black);
-  --emerald: hsl(142 76% 36%);
-  --amber: hsl(38 92% 45%);
   --accent-primary: var(--color-primary);
 }
 
@@ -106,38 +92,8 @@
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
   }
 
-  .glass-panel-sm {
-    @apply bg-white/90 border border-border/80 rounded-xl shadow-sm transition-all duration-200 p-4;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
-  }
-
-  .glass-panel-lg {
-    @apply bg-white/90 border border-border/80 rounded-2xl shadow-sm transition-all duration-200 p-8;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
-  }
-
   .glass-panel:hover {
     @apply border-primary/40 shadow-md -translate-y-0.5;
-  }
-
-  .panel-padding {
-    @apply p-6;
-  }
-
-  .panel-padding-sm {
-    @apply p-4;
-  }
-
-  .panel-padding-lg {
-    @apply p-8;
-  }
-
-  .section-gap {
-    @apply gap-6;
-  }
-
-  .card-gap {
-    @apply gap-4;
   }
 
   .glass-input {
@@ -157,7 +113,8 @@
   }
 
   .btn-primary {
-    @apply bg-primary text-primary-foreground shadow-[0_10px_20px_rgba(11,92,171,0.18)] hover:bg-primary/90 active:bg-primary/80;
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80;
+    box-shadow: var(--shadow-primary);
   }
 
   .btn-secondary {
@@ -166,14 +123,6 @@
 
   .btn-destructive {
     @apply bg-destructive text-destructive-foreground hover:bg-destructive/90;
-  }
-
-  .btn-outline {
-    @apply border border-input bg-transparent hover:bg-accent hover:text-accent-foreground;
-  }
-
-  .btn-ghost {
-    @apply bg-transparent hover:bg-accent hover:text-accent-foreground;
   }
 
   .badge {
@@ -365,43 +314,6 @@
     @apply flex items-center justify-center gap-2;
   }
 
-  .btn-icon-right {
-    @apply flex items-center justify-center gap-2;
-  }
-
-  .btn-icon-only {
-    @apply flex items-center justify-center p-2;
-  }
-
-  /* Form field improvements */
-  .form-field {
-    @apply w-full;
-  }
-
-  .form-field-label {
-    @apply block text-sm font-medium text-foreground mb-1.5;
-  }
-
-  .form-field-input {
-    @apply w-full bg-white/94 border border-input rounded-lg px-3 py-2 text-sm transition-all duration-150 outline-none;
-  }
-
-  .form-field-input:focus {
-    @apply border-primary ring-2 ring-primary/20;
-  }
-
-  .form-field-input::placeholder {
-    @apply text-muted-foreground;
-  }
-
-  .form-field-error {
-    @apply text-sm text-destructive mt-1;
-  }
-
-  .form-field-helper {
-    @apply text-sm text-muted-foreground mt-1;
-  }
-
   /* Consistent spacing utilities */
   .space-y-form {
     @apply space-y-4;
@@ -419,56 +331,9 @@
     @apply grid gap-4 md:grid-cols-3;
   }
 
-  .grid-form-4 {
-    @apply grid gap-4 md:grid-cols-4;
-  }
-
   /* Card/panel consistent styling */
   .panel {
     @apply bg-card border border-border rounded-xl shadow-sm;
-  }
-
-  .panel-sm {
-    @apply p-4;
-  }
-
-  .panel-md {
-    @apply p-6;
-  }
-
-  .panel-lg {
-    @apply p-8;
-  }
-
-  /* Icon sizing consistency */
-  .icon-sm {
-    @apply h-4 w-4;
-  }
-
-  .icon-md {
-    @apply h-5 w-5;
-  }
-
-  .icon-lg {
-    @apply h-6 w-6;
-  }
-
-  .icon-xl {
-    @apply h-8 w-8;
-  }
-
-  /* Focus ring consistency */
-  .focus-ring {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
-  }
-
-  /* Animation utilities */
-  .transition-smooth {
-    @apply transition-all duration-200 ease-out;
-  }
-
-  .transition-fast-smooth {
-    @apply transition-all duration-150 ease-out;
   }
 
   /* Responsive container */
@@ -494,127 +359,11 @@
     @apply text-muted-foreground mt-1 text-sm sm:text-base;
   }
 
-  /* Label styling */
-  .label {
-    @apply block text-sm font-medium text-foreground mb-1.5;
-  }
-
+  /* Required-field marker. `--color-destructive` is an HSL function, so it must
+     not be wrapped in another `hsl()`. */
   .label-required::after {
     content: " *";
-    color: hsl(var(--destructive));
-  }
-
-  /* Input disabled state */
-  .input-disabled {
-    @apply bg-muted cursor-not-allowed;
-  }
-
-  /* Button group */
-  .btn-group {
-    @apply inline-flex items-center gap-2;
-  }
-
-  /* Spinner size */
-  .spinner-sm {
-    @apply h-3 w-3 animate-spin;
-  }
-
-  .spinner-md {
-    @apply h-4 w-4 animate-spin;
-  }
-
-  .spinner-lg {
-    @apply h-6 w-6 animate-spin;
-  }
-
-  /* Decision buttons */
-  .decision-btn {
-    @apply flex items-center justify-center gap-2 p-3 rounded-lg font-semibold text-sm transition-all;
-  }
-
-  .decision-btn-active {
-    @apply border-2 bg-background;
-  }
-
-  /* Info card */
-  .info-card {
-    @apply p-4 bg-muted/50 rounded-lg border;
-  }
-
-  /* Details grid */
-  .details-grid {
-    @apply grid grid-cols-2 gap-3 p-4 border border-border rounded-lg bg-background;
-  }
-
-  /* Status badge with icon */
-  .status-badge {
-    @apply inline-flex items-center gap-1.5 rounded-full text-xs font-semibold uppercase tracking-wider px-2.5 py-0.5;
-  }
-
-  /* User avatar */
-  .user-avatar {
-    @apply flex items-center justify-center font-semibold text-xs bg-gradient-to-br from-pink-200 to-pink-400 text-pink-900 rounded-lg flex-shrink-0;
-  }
-
-  /* Workspace emblem */
-  .workspace-emblem {
-    @apply flex items-center justify-center text-white bg-gradient-to-br from-primary to-primary-hover rounded-xl shadow-md flex-shrink-0 transition-all;
-  }
-
-  /* Search wrapper */
-  .search-wrapper {
-    @apply relative;
-  }
-
-  .search-wrapper-icon {
-    @apply absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground;
-  }
-
-  .search-wrapper-clear {
-    @apply absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground;
-  }
-
-  /* Nav button */
-  .nav-btn {
-    @apply w-full flex items-center gap-3 rounded-lg font-medium text-sm transition-all;
-  }
-
-  .nav-btn-active {
-    @apply bg-primary/10 text-primary border border-primary/20;
-  }
-
-  .nav-btn-inactive {
-    @apply text-muted-foreground hover:text-foreground hover:bg-accent;
-  }
-
-  /* User menu button */
-  .user-menu-btn {
-    @apply w-full flex items-center gap-3 rounded-lg font-medium text-sm transition-all;
-  }
-
-  /* Dropdown popovers */
-  .dropdown-popover {
-    @apply absolute bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-fade-in;
-  }
-
-  .dropdown-popover-bottom {
-    @apply absolute bottom-full left-0 right-0 mb-2 bg-popover border border-border rounded-xl shadow-lg z-50 p-2 animate-slide-in-bottom;
-  }
-
-  .dropdown-popover-section-title {
-    @apply px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider;
-  }
-
-  .dropdown-popover-item {
-    @apply flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors;
-  }
-
-  .dropdown-popover-item:hover {
-    @apply bg-accent text-accent-foreground;
-  }
-
-  .dropdown-popover-item-icon {
-    @apply text-primary;
+    color: var(--color-destructive);
   }
 
   /* Dashboard shell */
@@ -622,8 +371,12 @@
     @apply bg-background;
   }
 
+  /* `SortableHeaderCell` / `PlainHeaderCell` own the heading's typography; this
+     rule only supplies the surface, the rule and the pinned fill. Overriding
+     `text-transform` here fought the component and produced headings that were
+     half-styled depending on load order. */
   .glass-table thead th {
-    @apply bg-muted/50 border-b border-border font-semibold uppercase tracking-wider text-xs;
+    @apply bg-muted/50 border-b border-border;
   }
 
   .glass-table tbody tr {
@@ -634,33 +387,42 @@
     @apply bg-muted/30;
   }
 
+  /* Pinned `<thead>`: parks at the top of the panel's scroll container. Needs an
+     opaque fill because the sticky cell sits on top of scrolling rows. */
+  .table-pin-thead table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background-color: var(--color-card);
+  }
+
+  /* Pinned identity column, so a horizontally scrolled table still names its
+     rows. The corner cell outranks both the head and the column. */
+  .table-pin-first-col th:first-child,
+  .table-pin-first-col td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background-color: var(--color-card);
+  }
+
+  .table-pin-first-col th:first-child {
+    z-index: 3;
+    box-shadow: 1px 0 0 var(--border-subtle);
+  }
+
+  .table-pin-first-col td:first-child {
+    box-shadow: 1px 0 0 var(--border-subtle);
+  }
+
+  /* Row hover must not turn the pinned cell translucent. */
+  .table-pin-first-col tbody tr:hover td:first-child {
+    background-color: color-mix(in srgb, var(--color-muted) 30%, var(--color-card));
+  }
+
   /* Section divider */
   .section-divider {
     @apply border-t border-border pt-6;
-  }
-}
-
-@media (max-width: 1024px) {
-  .sidebar-collapsed {
-    width: 72px;
-  }
-  .sidebar-collapsed .sidebar-label {
-    display: none;
-  }
-}
-
-@media (max-width: 768px) {
-  .sidebar-drawer {
-    @apply fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300;
-  }
-  .sidebar-drawer.open {
-    @apply translate-x-0;
-  }
-  .sidebar-drawer.closed {
-    @apply -translate-x-full;
-  }
-  .sidebar-overlay {
-    @apply fixed inset-0 bg-black/40 backdrop-blur-sm z-40;
   }
 }
 
@@ -671,11 +433,11 @@
 }
 
 @media (max-width: 640px) {
-  header {
-    padding: 1rem !important;
-  }
-  main {
-    padding: 1rem !important;
+  /* `!important` on padding here overrode whatever the header and main chose,
+     so the components' own responsive padding could never take effect. Only
+     the page shell's horizontal padding is relaxed. */
+  .dashboard-shell > main {
+    padding-inline: 1rem;
   }
 }
 

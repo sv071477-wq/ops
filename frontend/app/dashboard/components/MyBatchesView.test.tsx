@@ -116,7 +116,9 @@ describe("MyBatchesView empty state", () => {
     renderView({ data: [], canCreateBatch: true, onCreateBatch });
 
     expect(screen.getByText("No batches assigned to you yet")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Add New Batch/i })).toBeTruthy();
+    // Once in the panel toolbar and once inside the empty state, matching the
+    // admin tables.
+    expect(screen.getAllByRole("button", { name: /Add New Batch/i }).length).toBeGreaterThan(0);
   });
 
   it("omits the create pointer when the user cannot create batches", () => {
@@ -124,5 +126,27 @@ describe("MyBatchesView empty state", () => {
 
     expect(screen.getByText("No batches assigned to you yet")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Add New Batch/i })).toBeNull();
+  });
+});
+
+describe("MyBatchesView column visibility", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("hides a column the user switched off and shows it again", async () => {
+    const user = userEvent.setup();
+    renderView({ data: [makeBatch()] });
+
+    expect(screen.getByRole("columnheader", { name: /Training Days/ })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Training Days" }));
+
+    expect(screen.queryByRole("columnheader", { name: /Training Days/ })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: /Batch & Program/ })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /Show all columns/ }));
+    expect(screen.getByRole("columnheader", { name: /Training Days/ })).toBeTruthy();
   });
 });

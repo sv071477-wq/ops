@@ -18,16 +18,43 @@ import { ManagerBoard } from "@/components/ManagerBoard";
 import { Sidebar, DashboardView } from "@/components/Sidebar";
 import { EnterpriseDashboard } from "@/components/EnterpriseDashboard";
 import { PaginationControls } from "@/components/PaginationControls";
-import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import {
+  ColumnsMenu,
+  ExportButton,
+  FullscreenTable,
+  PlainHeaderCell,
+  SortableHeaderCell,
+  TableCaption,
+  TableFilters,
+  TableStateRow,
+} from "@/components/table";
+import { Button } from "@/components/ui/button";
+import {
+  CountBadge,
+  EmptyState,
+  ErrorBanner,
+  LoadingState,
+  NAVBAR_HEIGHT,
+  PanelTitle,
+  StatCard,
+  TABLE_TH_STYLE,
+} from "@/components/ui/panel";
+import { StatusBadge } from "@/components/ui/statusBadge";
+import { useColumnVisibility } from "@/hooks/useColumnVisibility";
 import { useTableFilters } from "@/hooks/useTableFilters";
 import { useTableSort } from "@/hooks/useTableSort";
-import { buildSearchHaystack, SortAccessors, TableAccessor } from "@/lib/tableUtils";
+import { reviveNumber, usePersistentState } from "@/hooks/usePersistentState";
 import {
-  Layers, Search, Filter, Plus, CheckCircle2, Clock, PlayCircle,
-  Archive, Eye, Lock, Building2, MapPin, Sparkles, RefreshCw,
-  AlertTriangle, BarChart3, Download, Users, Briefcase, TrendingUp, Check,
-  PlusCircle, Calendar, ShieldCheck, FileSpreadsheet,
-  Kanban
+  buildFilterFields,
+  buildSearchAccessor,
+  buildSortAccessors,
+  buildSortOptions,
+  isSortable,
+  type TableColumnDef,
+} from "@/lib/tableColumns";
+import { downloadCsv, type CsvColumn } from "@/lib/csv";
+import {
+  Check, CheckCircle2, ClipboardCheck, Clock, FileSpreadsheet, PencilLine, RefreshCw, Search
 } from "lucide-react";
 
 function toTodayIso(): string {
@@ -35,100 +62,235 @@ function toTodayIso(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-// Shared column metadata for the two hand-rolled tables on this page. The
-// accessors are module-level constants so `useTableSort` / `useTableFilters`
-// keep a stable `accessors` identity and their memos do not churn per render.
+// Shared column metadata for the two hand-rolled tables on this page. Sort
+// accessors, "Sort by" options, filter dropdowns and the search haystack are all
+// derived from these definitions, so an option can never exist for a column that
+// is not on screen.
+
 const FINANCE_ACTIVE_STATUSES = new Set(["Approved", "Upcoming", "Ongoing", "Completed"]);
 
-const APPROVAL_SORT_ACCESSORS: SortAccessors<Batch> = {
-  batchId: (b) => b.batch_id,
-  program: (b) => b.program_name,
-  client: (b) => b.client_name,
-  domain: (b) => b.domain,
-  mode: (b) => b.delivery_mode,
-  city: (b) => b.location_city,
-  submittedOn: (b) => b.batch_request_date,
-  status: (b) => b.status,
-};
+type ApprovalColumnKey =
+  | "batchId"
+  | "program"
+  | "client"
+  | "domain"
+  | "mode"
+  | "city"
+  | "submittedOn"
+  | "status"
+  | "action";
 
-const APPROVAL_SORT_OPTIONS = [
-  { key: "batchId", label: "Batch" },
-  { key: "program", label: "Program" },
-  { key: "client", label: "Client" },
-  { key: "domain", label: "Domain" },
-  { key: "mode", label: "Mode" },
-  { key: "city", label: "City" },
-  { key: "submittedOn", label: "Submitted On" },
-  { key: "status", label: "Status" },
+// `program`, `domain` and `city` used to be sub-labels inside the Batch/Client/
+// Mode cells, so "Sort by" and the domain filter offered fields with no header.
+// They are real columns now: an approver triages by domain and city, and hiding
+// one is a column-menu choice rather than an unreachable control.
+const APPROVAL_COLUMN_DEFS: readonly TableColumnDef<Batch, ApprovalColumnKey>[] = [
+  { key: "batchId", label: "Batch", accessor: (b) => b.batch_id ?? "" },
+  { key: "program", label: "Program", accessor: (b) => b.program_name ?? "" },
+  { key: "client", label: "Client", accessor: (b) => b.client_name ?? "" },
+  { key: "domain", label: "Domain", accessor: (b) => b.domain ?? "", filterable: true },
+  { key: "mode", label: "Mode", accessor: (b) => b.delivery_mode ?? "" },
+  { key: "city", label: "City", accessor: (b) => b.location_city ?? "" },
+  { key: "submittedOn", label: "Submitted On", accessor: (b) => b.batch_request_date ?? "" },
+  { key: "status", label: "Status", accessor: (b) => b.status ?? "", filterable: true },
 ];
 
+const APPROVAL_ACCESSORS = buildSortAccessors(APPROVAL_COLUMN_DEFS);
+const APPROVAL_SORT_OPTIONS = buildSortOptions(APPROVAL_COLUMN_DEFS);
+const APPROVAL_FILTER_FIELDS = buildFilterFields(APPROVAL_COLUMN_DEFS);
+const APPROVAL_SEARCH_ACCESSOR = buildSearchAccessor(APPROVAL_COLUMN_DEFS);
 const APPROVAL_DESC_FIRST_KEYS = ["submittedOn"];
 
-const APPROVAL_FILTER_FIELDS = [
-  { key: "status", accessor: APPROVAL_SORT_ACCESSORS.status },
-  { key: "domain", accessor: APPROVAL_SORT_ACCESSORS.domain },
+const APPROVAL_COLUMN_KEYS = [
+  ...APPROVAL_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label })),
+  { key: "action" as const, label: "Action" },
 ];
 
-const APPROVAL_SEARCH_ACCESSOR: TableAccessor<Batch> = (b) => buildSearchHaystack(b, [
-  APPROVAL_SORT_ACCESSORS.batchId,
-  APPROVAL_SORT_ACCESSORS.program,
-  APPROVAL_SORT_ACCESSORS.client,
-  APPROVAL_SORT_ACCESSORS.domain,
-]);
+const APPROVAL_EXPORT_COLUMNS: readonly CsvColumn<Batch>[] = [
+  { key: "batch_id", label: "Batch ID" },
+  { key: "program_name", label: "Program" },
+  { key: "client_name", label: "Client" },
+  { key: "domain", label: "Domain" },
+  { key: "delivery_mode", label: "Mode" },
+  { key: "location_city", label: "City" },
+  { key: "created_at", label: "Submitted On" },
+  { key: "status", label: "Status" },
+];
 
 const FINANCE_STATUS_OPTIONS = ["Pending", "Cleared"];
 
-const FINANCE_SEARCH_ACCESSOR: TableAccessor<Batch> = (b) => buildSearchHaystack(b, [
-  (batch) => batch.batch_id,
-  (batch) => batch.client_name,
-  (batch) => batch.program_name,
-  (batch) => batch.domain,
-  (batch) => batch.delivery_mode,
-  (batch) => batch.location_city,
-  (batch) => batch.approval_id,
-  (batch) => batch.sow_number,
-]);
+interface FinanceDraft {
+  approval_id: string;
+  finance_status: string;
+  finance_status_check_date: string;
+  finance_check: number | null;
+}
 
-const FINANCE_SORT_OPTIONS = [
-  { key: "batchId", label: "Batch ID" },
-  { key: "client", label: "Client" },
-  { key: "program", label: "Program" },
+type FinanceDrafts = Record<string, FinanceDraft>;
+
+type FinanceColumnKey =
+  | "batchId"
+  | "client"
+  | "program"
+  | "category"
+  | "technology"
+  | "domain"
+  | "mode"
+  | "location"
+  | "startDate"
+  | "endDate"
+  | "enrollments"
+  | "trainingDays"
+  | "totalHours"
+  | "sowNumber"
+  | "approvalId"
+  | "faculty"
+  | "financeStatus"
+  | "checkDate"
+  | "remarks"
+  | "status"
+  | "action";
+
+// 21 columns at 2200px is unreadable at 100% zoom. Only the identity, the
+// operational facts and the finance review fields the sheet exists for stay on
+// by default; the rest is one Columns click away.
+const FINANCE_DEFAULT_HIDDEN: readonly FinanceColumnKey[] = [
+  "category",
+  "technology",
+  "domain",
+  "mode",
+  "location",
+  "sowNumber",
+  "approvalId",
+  "checkDate",
+  "remarks",
+  "trainingDays",
+];
+
+// Draft-aware columns must sort and filter on what the cell actually shows, so
+// the definitions are rebuilt whenever the drafts change.
+function buildFinanceColumns(drafts: FinanceDrafts): readonly TableColumnDef<Batch, FinanceColumnKey>[] {
+  return [
+    { key: "batchId", label: "Batch ID", accessor: (b) => b.batch_id ?? "" },
+    { key: "client", label: "Client", accessor: (b) => b.client_name ?? "" },
+    { key: "program", label: "Program", accessor: (b) => b.program_name ?? "" },
+    { key: "category", label: "Category", accessor: (b) => b.category ?? "" },
+    { key: "technology", label: "Technology", accessor: (b) => b.technology ?? "" },
+    { key: "domain", label: "Domain", accessor: (b) => b.domain ?? "", filterable: true },
+    {
+      key: "mode",
+      label: "Mode",
+      accessor: (b) => b.delivery_mode || "Online",
+      filterable: true,
+    },
+    { key: "location", label: "Location", accessor: (b) => b.location_city ?? "" },
+    { key: "startDate", label: "Start Date", accessor: (b) => b.start_date ?? "" },
+    { key: "endDate", label: "End Date", accessor: (b) => b.end_date ?? "" },
+    { key: "enrollments", label: "Enrollments", accessor: (b) => b.total_enrollments, align: "center" },
+    { key: "trainingDays", label: "Training Days", accessor: (b) => b.training_days ?? 0, align: "center" },
+    { key: "totalHours", label: "Total Hours", accessor: (b) => b.total_hours ?? 0, align: "center" },
+    { key: "sowNumber", label: "SOW Number", accessor: (b) => b.sow_number ?? "" },
+    { key: "approvalId", label: "Approval ID", accessor: (b) => drafts[b.id]?.approval_id ?? null },
+    { key: "faculty", label: "Faculty", accessor: (b) => b.faculty_assigned_text ?? "" },
+    {
+      key: "financeStatus",
+      label: "Finance Status",
+      accessor: (b) => drafts[b.id]?.finance_status || b.finance_status || "Pending",
+      filterable: true,
+    },
+    {
+      key: "checkDate",
+      label: "Check Date",
+      accessor: (b) => drafts[b.id]?.finance_status_check_date ?? null,
+    },
+    { key: "remarks", label: "Remarks", accessor: (b) => b.remarks ?? "", sortable: false },
+    { key: "status", label: "Status", accessor: (b) => b.status ?? "", filterable: true },
+  ];
+}
+
+const FINANCE_EXPORT_COLUMNS: readonly CsvColumn<Batch>[] = [
+  { key: "batch_id", label: "Batch ID" },
+  { key: "sow_number", label: "SOW Number" },
+  { key: "approval_id", label: "Approval ID" },
+  { key: "client_name", label: "Client" },
+  { key: "program_name", label: "Program" },
   { key: "category", label: "Category" },
   { key: "technology", label: "Technology" },
   { key: "domain", label: "Domain" },
-  { key: "mode", label: "Mode" },
-  { key: "location", label: "Location" },
-  { key: "startDate", label: "Start Date" },
-  { key: "endDate", label: "End Date" },
-  { key: "enrollments", label: "Enrollments" },
-  { key: "trainingDays", label: "Training Days" },
-  { key: "totalHours", label: "Total Hours" },
-  { key: "sowNumber", label: "SOW Number" },
-  { key: "approvalId", label: "Approval ID" },
-  { key: "faculty", label: "Faculty" },
-  { key: "financeStatus", label: "Finance Status" },
-  { key: "checkDate", label: "Check Date" },
+  { key: "delivery_mode", label: "Delivery Mode" },
+  { key: "location_city", label: "Location" },
+  { key: "start_date", label: "Start Date" },
+  { key: "end_date", label: "End Date" },
+  { key: "total_enrollments", label: "Total Enrollments" },
+  { key: "training_days", label: "Training Days" },
+  { key: "total_hours", label: "Total Hours" },
+  { key: "finance_status", label: "Finance Status" },
+  { key: "finance_status_check_date", label: "Finance Check Date" },
+  { key: "finance_check", label: "Finance Check" },
+  { key: "batch_avg_feedback", label: "Batch Avg Feedback" },
+  { key: "batch_nps", label: "Batch NPS" },
   { key: "status", label: "Status" },
 ];
 
-const FINANCE_TH_STYLE: React.CSSProperties = { padding: "12px 14px" };
-
 // The approval queue's body cells use 14px vertical padding, so its headings must too.
-const APPROVAL_TH_STYLE: React.CSSProperties = { padding: "14px 16px" };
+const APPROVAL_HEAD_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "14px 16px" };
+const APPROVAL_CELL_STYLE: React.CSSProperties = { padding: "14px 16px" };
 
-// Bespoke toolbar controls must match the shared controls' box exactly, or the
-// toolbar grid breaks alignment.
-const FINANCE_FILTER_STYLE: React.CSSProperties = {
+const FINANCE_HEAD_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "12px 14px" };
+const FINANCE_CELL_STYLE: React.CSSProperties = { padding: "12px 14px", userSelect: "text", cursor: "text" };
+
+const FINANCE_EDITABLE_STYLE: React.CSSProperties = {
   width: "100%",
-  height: 34,
+  padding: "7px 8px",
+  borderRadius: 6,
+  border: "1px solid #dbe7f3",
+  background: "#fff",
+  fontSize: "0.82rem",
+  fontWeight: 600,
+  color: "var(--text-main)",
+  outline: "none",
+};
+
+// Bespoke toolbar controls must match `TableFilters`' own control box exactly, or
+// the toolbar grid breaks alignment. It is not exported, so it is mirrored here
+// against the same tokens rather than keeping a drifting hardcoded copy.
+const FILTER_CONTROL_STYLE: React.CSSProperties = {
+  width: "100%",
+  height: 36,
   boxSizing: "border-box",
   padding: "0 10px",
   borderRadius: 6,
-  border: "1px solid var(--border-subtle)",
-  background: "#fff",
+  border: "1px solid var(--color-input)",
+  background: "var(--color-card)",
   fontSize: "0.8rem",
   fontWeight: 600,
   color: "var(--text-main)",
+};
+
+const FINANCE_WORKFLOW_FILTER_ID = "finance-filter-workflow";
+const FINANCE_START_FILTER_ID = "finance-filter-start-date";
+const FINANCE_END_FILTER_ID = "finance-filter-end-date";
+
+// Heading floors for the three finance fields that hold a control, so the input
+// never renders narrower than its heading.
+const FINANCE_COLUMN_MIN_WIDTH: Partial<Record<FinanceColumnKey, number>> = {
+  approvalId: 160,
+  financeStatus: 130,
+  checkDate: 150,
+};
+
+// Each row repeats the same three editables, so their labels have to be hidden
+// rather than absent — a placeholder is not an accessible name.
+const VISUALLY_HIDDEN_LABEL: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  border: 0,
 };
 
 export default function DashboardPage() {
@@ -164,12 +326,8 @@ export default function DashboardPage() {
 
   // Batches state
   const [batches, setBatches] = useState<Batch[]>([]);
-  const [financeDrafts, setFinanceDrafts] = useState<Record<string, {
-    approval_id: string;
-    finance_status: string;
-    finance_status_check_date: string;
-    finance_check: number | null;
-  }>>({});
+  const [batchesError, setBatchesError] = useState<string | null>(null);
+  const [financeDrafts, setFinanceDrafts] = useState<FinanceDrafts>({});
   const [savingFinanceBatchId, setSavingFinanceBatchId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -196,10 +354,18 @@ export default function DashboardPage() {
 
   // Pagination states for all platform lists/tables
   const [approvalPage, setApprovalPage] = useState(1);
-  const [approvalPageSize, setApprovalPageSize] = useState(10);
+  const [approvalPageSize, setApprovalPageSize] = usePersistentState(
+    "ops.table.approvals.pageSize",
+    10,
+    reviveNumber
+  );
 
   const [financePage, setFinancePage] = useState(1);
-  const [financePageSize, setFinancePageSize] = useState(10);
+  const [financePageSize, setFinancePageSize] = usePersistentState(
+    "ops.table.finance.pageSize",
+    10,
+    reviveNumber
+  );
 
   // Modal States
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -226,6 +392,7 @@ export default function DashboardPage() {
   // Fetch batches
   const fetchBatches = async (forApprovals = false) => {
     setIsLoading(true);
+    setBatchesError(null);
     try {
       const data = await api.getBatches({
         status: forApprovals ? undefined : statusFilter !== "ALL" ? statusFilter : undefined,
@@ -235,6 +402,7 @@ export default function DashboardPage() {
       setBatches(data);
     } catch (err) {
       console.error("Failed to load batches:", err);
+      setBatchesError(err instanceof Error ? err.message : "Failed to load batches");
     } finally {
       setIsLoading(false);
     }
@@ -272,7 +440,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setFinanceDrafts((prev) => {
-      const next: Record<string, { approval_id: string; finance_status: string; finance_status_check_date: string; finance_check: number | null }> = {};
+      const next: FinanceDrafts = {};
       batches.forEach((batch) => {
         const previous = prev[batch.id];
         next[batch.id] = {
@@ -528,19 +696,34 @@ export default function DashboardPage() {
     sortedRows: sortedApprovalQueue,
     toggleSort: toggleApprovalSort,
     applySort: applyApprovalSort,
-  } = useTableSort<Batch>(filteredApprovalQueue, APPROVAL_SORT_ACCESSORS, {
+  } = useTableSort<Batch>(filteredApprovalQueue, APPROVAL_ACCESSORS, {
     descFirstKeys: APPROVAL_DESC_FIRST_KEYS,
   });
 
-  const financeFilterFields = useMemo(
+  const approvalColumns = useColumnVisibility<ApprovalColumnKey>({
+    columns: APPROVAL_COLUMN_KEYS,
+    storageKey: "ops.table.approvals.columns",
+  });
+  const visibleApprovalColumnCount = APPROVAL_COLUMN_KEYS.filter((column) =>
+    approvalColumns.isVisible(column.key)
+  ).length;
+
+  const financeColumns = useMemo(() => buildFinanceColumns(financeDrafts), [financeDrafts]);
+
+  const financeColumnKeys = useMemo(
     () => [
-      { key: "financeStatus", accessor: (b: Batch) => financeDrafts[b.id]?.finance_status || b.finance_status || "Pending" },
-      { key: "domain", accessor: (b: Batch) => b.domain ?? null },
-      { key: "mode", accessor: (b: Batch) => b.delivery_mode || "Online" },
-      { key: "status", accessor: (b: Batch) => b.status },
+      ...financeColumns.map((column) => ({ key: column.key, label: column.label })),
+      { key: "action" as const, label: "Action" },
     ],
-    [financeDrafts]
+    [financeColumns]
   );
+
+  const financeSortOptions = useMemo(() => buildSortOptions(financeColumns), [financeColumns]);
+  const financeFilterFields = useMemo(
+    () => buildFilterFields(financeColumns),
+    [financeColumns]
+  );
+  const financeSearchAccessor = useMemo(() => buildSearchAccessor(financeColumns), [financeColumns]);
 
   const {
     search: financeSearch,
@@ -553,7 +736,7 @@ export default function DashboardPage() {
     activeFilterCount: financeTableFilterCount,
     filteredRows: financeControlFilteredBatches,
     filtersVersion: financeFiltersVersion,
-  } = useTableFilters<Batch>(batches, financeFilterFields, FINANCE_SEARCH_ACCESSOR);
+  } = useTableFilters<Batch>(batches, financeFilterFields, financeSearchAccessor);
 
   // "ACTIVE" is a synthetic filter (the finance-relevant workflow statuses) and
   // the start-date range cannot be expressed as a plain column value match, so
@@ -574,28 +757,7 @@ export default function DashboardPage() {
     });
   }, [financeControlFilteredBatches, financeStatusFilter, financeStartDate, financeEndDate]);
 
-  const financeSortAccessors = useMemo<SortAccessors<Batch>>(() => ({
-    batchId: (b) => b.batch_id,
-    client: (b) => b.client_name,
-    program: (b) => b.program_name,
-    category: (b) => b.category,
-    technology: (b) => b.technology,
-    domain: (b) => b.domain,
-    mode: (b) => b.delivery_mode,
-    location: (b) => b.location_city,
-    startDate: (b) => b.start_date,
-    endDate: (b) => b.end_date,
-    enrollments: (b) => b.total_enrollments,
-    trainingDays: (b) => b.training_days,
-    totalHours: (b) => b.total_hours,
-    sowNumber: (b) => b.sow_number,
-    // Draft-aware columns: sorting must follow what the cell actually shows.
-    approvalId: (b) => financeDrafts[b.id]?.approval_id ?? null,
-    faculty: (b) => b.faculty_assigned_text,
-    financeStatus: (b) => financeDrafts[b.id]?.finance_status ?? null,
-    checkDate: (b) => financeDrafts[b.id]?.finance_status_check_date ?? null,
-    status: (b) => b.status,
-  }), [financeDrafts]);
+  const financeSortAccessors = useMemo(() => buildSortAccessors(financeColumns), [financeColumns]);
 
   const {
     sortKey: financeSortKey,
@@ -604,6 +766,15 @@ export default function DashboardPage() {
     toggleSort: toggleFinanceSort,
     applySort: applyFinanceSort,
   } = useTableSort<Batch>(filteredFinanceBatches, financeSortAccessors);
+
+  const financeColumnVisibility = useColumnVisibility<FinanceColumnKey>({
+    columns: financeColumnKeys,
+    defaultHidden: FINANCE_DEFAULT_HIDDEN,
+    storageKey: "ops.table.finance.columns",
+  });
+  const visibleFinanceColumnCount = financeColumnKeys.filter((column) =>
+    financeColumnVisibility.isVisible(column.key)
+  ).length;
 
   const hasFinanceFilters = hasFinanceTableFilters
     || financeStatusFilter !== "ACTIVE"
@@ -660,19 +831,28 @@ export default function DashboardPage() {
 
   const dirtyFinanceCount = dirtyFinanceIds.size;
 
-  const exportFinanceSheet = async () => {
-    try {
-      await api.exportFinance({
-        status_filter: financeStatusFilter === "ACTIVE" ? undefined : financeStatusFilter,
-        finance_status: getFinanceFilter("financeStatus") || undefined,
-        domain: getFinanceFilter("domain") || undefined,
-        delivery_mode: getFinanceFilter("mode") || undefined,
-        start_date: financeStartDate || undefined,
-        end_date: financeEndDate || undefined,
-      });
-    } catch (err: any) {
-      notifyError("Failed to export finance data", err);
+  // The KPI cards sit above the table, so they have to count the rows the user
+  // can actually see — otherwise "Pending Review" can exceed the row count.
+  const financeKpis = useMemo(() => {
+    let pending = 0;
+    let cleared = 0;
+    for (const batch of filteredFinanceBatches) {
+      const status = financeDrafts[batch.id]?.finance_status || batch.finance_status || "Pending";
+      if (status === "Pending") pending += 1;
+      else if (status === "Cleared") cleared += 1;
     }
+    return { pending, cleared };
+  }, [filteredFinanceBatches, financeDrafts]);
+
+  // `/batches/finance/export` takes filters only, so it cannot carry the active
+  // sort and the file order used to differ from the screen. The rows are already
+  // sorted here, so the payload is built in the order the user is looking at.
+  const exportFinanceSheet = () => {
+    downloadCsv(
+      `finance-review-${new Date().toISOString().split("T")[0]}`,
+      FINANCE_EXPORT_COLUMNS,
+      sortedFinanceBatches
+    );
   };
 
   const isApprover = user?.is_configured_approver === true;
@@ -698,40 +878,6 @@ export default function DashboardPage() {
     );
   }
 
-  const handleSubmitBatch = async (batch: Batch) => {
-    try {
-      await api.submitBatch(batch.id);
-      await fetchBatches();
-    } catch (err: any) {
-      notifyError("Failed to submit batch for approval", err);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const s = (status || "").toLowerCase();
-    if (s === "requested") return <span className="badge badge-requested">Requested</span>;
-    if (s === "approval 1 pending") return <span className="badge badge-requested">Approval 1 Pending</span>;
-    if (s === "approval 2 pending") return <span className="badge badge-requested">Approval 2 Pending</span>;
-    if (s === "approved") return <span className="badge badge-approved">Approved</span>;
-    if (s === "upcoming") return <span className="badge badge-approved">Upcoming</span>;
-    if (s === "ongoing") return <span className="badge badge-ongoing">Ongoing</span>;
-    if (s === "completed") return <span className="badge badge-completed">Completed</span>;
-    if (s === "onhold") return <span className="badge badge-onhold">On Hold</span>;
-    if (s === "cancelled") return <span className="badge badge-cancelled">Cancelled</span>;
-    return <span className="badge badge-cancelled">{status}</span>;
-  };
-
-  const getStatusBadgeColor = (status: string) => {
-    const s = (status || "").toLowerCase();
-    if (s === "requested" || s.includes("pending")) return "#d97706";
-    if (s === "approved" || s === "upcoming") return "#0b5cab";
-    if (s === "ongoing") return "#06b6d4";
-    if (s === "completed") return "#16a34a";
-    if (s === "onhold") return "#b45309";
-    if (s === "cancelled") return "#e11d48";
-    return "#94a3b8";
-  };
-
   return (
     <div className="dashboard-shell" style={{
       minHeight: "100vh",
@@ -740,7 +886,6 @@ export default function DashboardPage() {
       gap: 24,
       alignItems: "stretch",
       justifyContent: "flex-start",
-      background: "#f8fafc",
       boxSizing: "border-box",
     }}>
       {/* Modern Card Sidebar Matching Reference Design */}
@@ -824,32 +969,21 @@ export default function DashboardPage() {
         {/* VIEW 2: APPROVAL QUEUE */}
         {activeView === "approvals" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 24, flex: 1 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-                  Batch Approval Queue
-                </h2>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Review and approve batches waiting for governance clearance.
-                </p>
-              </div>
-              <div style={{
-                background: "#e8f2fb",
-                border: "1px solid #bae6fd",
-                color: "#0b5cab",
-                borderRadius: 999,
-                padding: "6px 12px",
-                fontSize: "0.8rem",
-                fontWeight: 700
-              }}>
-                {approvalQueue.length} pending item(s)
-              </div>
-            </div>
-
             <FullscreenTable
-              style={{ flex: 1 }}
-              title="Pending Approvals"
-              contentStyle={{ flex: 1, display: "flex", flexDirection: "column" }}
+              stickyHeader
+              stickyTop={NAVBAR_HEIGHT}
+              title={
+                <PanelTitle
+                  title="Batch Approval Queue"
+                  description="Review and approve batches waiting for governance clearance."
+                  meta={
+                    <CountBadge
+                      value={`${filteredApprovalQueue.length} of ${approvalQueue.length}`}
+                      label={filteredApprovalQueue.length === approvalQueue.length ? "pending" : "pending match"}
+                    />
+                  }
+                />
+              }
               toolbar={
                 <TableFilters
                   search={{
@@ -890,8 +1024,24 @@ export default function DashboardPage() {
                   activeFilterCount={approvalFilterCount}
                 />
               }
+              actions={
+                <>
+                  <ColumnsMenu
+                    columns={APPROVAL_COLUMN_KEYS}
+                    hidden={approvalColumns.hidden}
+                    onToggle={approvalColumns.toggle}
+                    onShowAll={approvalColumns.showAll}
+                  />
+                  <ExportButton
+                    filename="pending-approvals"
+                    columns={APPROVAL_EXPORT_COLUMNS}
+                    rows={sortedApprovalQueue}
+                  />
+                </>
+              }
               footer={
                 <PaginationControls
+                  label="Approval queue pages"
                   currentPage={approvalPage}
                   totalItems={sortedApprovalQueue.length}
                   pageSize={approvalPageSize}
@@ -903,24 +1053,60 @@ export default function DashboardPage() {
                 />
               }
             >
-              <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+              <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 1180 }}>
+                <TableCaption>Batches waiting for your approval, oldest submissions first</TableCaption>
                 <thead>
                   <tr>
-                    <SortableHeaderCell columnKey="batchId" label="Batch" style={APPROVAL_TH_STYLE} sortKey={approvalSortKey} sortDir={approvalSortDir} onSort={toggleApprovalSort} />
-                    <SortableHeaderCell columnKey="client" label="Client" style={APPROVAL_TH_STYLE} sortKey={approvalSortKey} sortDir={approvalSortDir} onSort={toggleApprovalSort} />
-                    <SortableHeaderCell columnKey="mode" label="Mode" style={APPROVAL_TH_STYLE} sortKey={approvalSortKey} sortDir={approvalSortDir} onSort={toggleApprovalSort} />
-                    <SortableHeaderCell columnKey="submittedOn" label="Submitted On" style={APPROVAL_TH_STYLE} sortKey={approvalSortKey} sortDir={approvalSortDir} onSort={toggleApprovalSort} />
-                    <SortableHeaderCell columnKey="status" label="Status" style={APPROVAL_TH_STYLE} sortKey={approvalSortKey} sortDir={approvalSortDir} onSort={toggleApprovalSort} />
-                    <PlainHeaderCell style={{ ...APPROVAL_TH_STYLE, textAlign: "right" }}>Action</PlainHeaderCell>
+                    {APPROVAL_COLUMN_DEFS.map((column) =>
+                      approvalColumns.isVisible(column.key) ? (
+                        <SortableHeaderCell
+                          key={column.key}
+                          columnKey={column.key}
+                          label={column.label}
+                          style={{ ...APPROVAL_HEAD_STYLE, textAlign: column.align ?? "left" }}
+                          sortKey={approvalSortKey}
+                          sortDir={approvalSortDir}
+                          onSort={toggleApprovalSort}
+                        />
+                      ) : null
+                    )}
+                    {approvalColumns.isVisible("action") && (
+                      <PlainHeaderCell style={{ ...APPROVAL_HEAD_STYLE, textAlign: "right" }}>
+                        Action
+                      </PlainHeaderCell>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedApprovalQueue.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
-                        No batches are currently waiting for approval.
-                      </td>
-                    </tr>
+                  {batchesError ? (
+                    <TableStateRow colSpan={visibleApprovalColumnCount}>
+                      <ErrorBanner message={batchesError} className="mx-auto my-6 max-w-lg" />
+                    </TableStateRow>
+                  ) : isLoading && sortedApprovalQueue.length === 0 ? (
+                    <TableStateRow colSpan={visibleApprovalColumnCount}>
+                      <LoadingState label="Loading your approval queue..." />
+                    </TableStateRow>
+                  ) : sortedApprovalQueue.length === 0 ? (
+                    <TableStateRow colSpan={visibleApprovalColumnCount}>
+                      {hasApprovalFilters ? (
+                        <EmptyState
+                          icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                          title="No batches match your filters"
+                          description="Clear the search or filter selections to see the whole approval queue."
+                          action={
+                            <Button size="sm" variant="outline" onClick={clearApprovalFilters}>
+                              Clear filters
+                            </Button>
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          icon={<ClipboardCheck className="h-5 w-5" aria-hidden="true" />}
+                          title="No batches are waiting for approval"
+                          description="Everything routed to you has been actioned. New submissions will appear here."
+                        />
+                      )}
+                    </TableStateRow>
                   ) : (
                     paginatedApprovals.map((b) => {
                       const submittedDays = b.batch_request_date
@@ -933,45 +1119,69 @@ export default function DashboardPage() {
                           fontSize: "0.875rem",
                           background: isUrgent ? "rgba(251, 191, 36, 0.08)" : undefined,
                         }}>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 700, color: "var(--text-main)", display: "flex", alignItems: "center", gap: 6 }}>
-                              {b.batch_id}
-                              {isUrgent && (
-                                <span style={{ fontSize: "0.65rem", background: "#fef3c7", color: "#d97706", border: "1px solid #fcd34d", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>OVERDUE</span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>{b.program_name}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div style={{ fontWeight: 600, color: "var(--text-main)" }}>{b.client_name || "Enterprise Client"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "#7c3aed", fontWeight: 600, marginTop: 2 }}>{b.domain || "IT/ITES"}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <div>{b.delivery_mode || "Online"}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{b.location_city || "Remote"}</div>
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            {b.batch_request_date ? (
-                              <>
-                                <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
-                                  {formatDate(b.batch_request_date)}
-                                </div>
-                                <div style={{ fontSize: "0.72rem", color: submittedDays !== null && submittedDays >= 3 ? "#d97706" : "var(--text-muted)", marginTop: 2 }}>
-                                  {submittedDays === 0 ? "Today" : `${submittedDays}d ago`}
-                                </div>
-                              </>
-                            ) : <span style={{ color: "var(--text-dim)" }}>—</span>}
-                          </td>
-                          <td style={{ padding: "14px 16px" }}>{getStatusBadge(b.status)}</td>
-                          <td style={{ padding: "14px 16px", textAlign: "right" }}>
-                            <button
-                              onClick={() => setSelectedBatchForApproval(b)}
-                              className="btn btn-primary"
-                              style={{ padding: "5px 10px", fontSize: "0.775rem" }}
-                            >
-                              View Full Batch Details
-                            </button>
-                          </td>
+                          {approvalColumns.isVisible("batchId") && (
+                            <td style={APPROVAL_CELL_STYLE}>
+                              <div style={{ fontWeight: 700, color: "var(--text-main)", display: "flex", alignItems: "center", gap: 6 }}>
+                                {b.batch_id}
+                                {isUrgent && (
+                                  <span style={{ fontSize: "0.65rem", background: "#fef3c7", color: "#d97706", border: "1px solid #fcd34d", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>OVERDUE</span>
+                                )}
+                              </div>
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("program") && (
+                            <td style={APPROVAL_CELL_STYLE}>{b.program_name || "—"}</td>
+                          )}
+                          {approvalColumns.isVisible("client") && (
+                            <td style={APPROVAL_CELL_STYLE}>
+                              <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
+                                {b.client_name || "Enterprise Client"}
+                              </span>
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("domain") && (
+                            <td style={{ ...APPROVAL_CELL_STYLE, color: "#7c3aed", fontWeight: 600 }}>
+                              {b.domain || "IT/ITES"}
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("mode") && (
+                            <td style={{ ...APPROVAL_CELL_STYLE, whiteSpace: "nowrap" }}>{b.delivery_mode || "Online"}</td>
+                          )}
+                          {approvalColumns.isVisible("city") && (
+                            <td style={{ ...APPROVAL_CELL_STYLE, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
+                              {b.location_city || "Remote"}
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("submittedOn") && (
+                            <td style={APPROVAL_CELL_STYLE}>
+                              {b.batch_request_date ? (
+                                <>
+                                  <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
+                                    {formatDate(b.batch_request_date)}
+                                  </div>
+                                  <div style={{ fontSize: "0.72rem", color: isUrgent ? "#d97706" : "var(--text-muted)", marginTop: 2 }}>
+                                    {submittedDays === 0 ? "Today" : `${submittedDays}d ago`}
+                                  </div>
+                                </>
+                              ) : <span style={{ color: "var(--text-dim)" }}>—</span>}
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("status") && (
+                            <td style={APPROVAL_CELL_STYLE}>
+                              <StatusBadge status={b.status} />
+                            </td>
+                          )}
+                          {approvalColumns.isVisible("action") && (
+                            <td style={{ ...APPROVAL_CELL_STYLE, textAlign: "right" }}>
+                              <Button
+                                size="sm"
+                                onClick={() => setSelectedBatchForApproval(b)}
+                                aria-label={`Open approval details for batch ${b.batch_id}`}
+                              >
+                                View Full Batch Details
+                              </Button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })
@@ -990,64 +1200,48 @@ export default function DashboardPage() {
             gap: 18,
             flex: 1
           }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h2 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
-                  Finance Review Sheet
-                </h2>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-                  Excel-style batch review for finance tracking, approval status, and operational checks.
-                </p>
-              </div>
-              <div style={{ background: "#ecfeff", border: "1px solid #a5f3fc", color: "#0f766e", borderRadius: 999, padding: "6px 12px", fontSize: "0.8rem", fontWeight: 700 }}>
-                {filteredFinanceBatches.length} of {batches.length} batch rows
-              </div>
+            {/* Finance Summary Stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+              <StatCard
+                icon={<Clock className="h-5 w-5" aria-hidden="true" />}
+                label="Pending Review"
+                value={financeKpis.pending}
+                hint="Rows in view still marked Pending"
+                tone="warning"
+              />
+              <StatCard
+                icon={<CheckCircle2 className="h-5 w-5" aria-hidden="true" />}
+                label="Cleared"
+                value={financeKpis.cleared}
+                hint="Rows in view marked Cleared"
+                tone="success"
+              />
+              {dirtyFinanceCount > 0 && (
+                <StatCard
+                  icon={<PencilLine className="h-5 w-5" aria-hidden="true" />}
+                  label="Unsaved Rows"
+                  value={dirtyFinanceCount}
+                  hint="Edited rows across all batches, not just this filter"
+                  tone="violet"
+                />
+              )}
             </div>
 
-            {/* Finance Summary Stats */}
-            {(() => {
-              const pendingCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status || "Pending") === "Pending").length;
-              const clearedCount = batches.filter(b => (financeDrafts[b.id]?.finance_status || b.finance_status) === "Cleared").length;
-              return (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
-                  <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                    <div>
-                      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#d97706", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pending Review</div>
-                      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2, fontFamily: "var(--font-display)" }}>{pendingCount}</div>
-                    </div>
-                    <div style={{ width: 34, height: 34, borderRadius: 6, background: "#fef3c7", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Clock size={17} color="#d97706" />
-                    </div>
-                  </div>
-
-                  <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                    <div>
-                      <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.05em" }}>Cleared</div>
-                      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2, fontFamily: "var(--font-display)" }}>{clearedCount}</div>
-                    </div>
-                    <div style={{ width: 34, height: 34, borderRadius: 6, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <CheckCircle2 size={17} color="#16a34a" />
-                    </div>
-                  </div>
-
-                  {dirtyFinanceCount > 0 && (
-                    <div style={{ background: "#ffffff", border: "1px solid #fed7aa", borderRadius: 8, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                      <div>
-                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#ea580c", textTransform: "uppercase", letterSpacing: "0.05em" }}>Unsaved Rows</div>
-                        <div style={{ fontSize: "1.6rem", fontWeight: 700, color: "#ea580c", marginTop: 2, fontFamily: "var(--font-display)" }}>{dirtyFinanceCount}</div>
-                      </div>
-                      <div style={{ width: 34, height: 34, borderRadius: 6, background: "#ffedd5", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: "0.95rem" }}>✏️</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
             <FullscreenTable
-              style={{ flex: 1 }}
-              contentStyle={{ flex: 1, display: "flex", flexDirection: "column" }}
+              stickyHeader
+              stickyTop={NAVBAR_HEIGHT}
+              title={
+                <PanelTitle
+                  title="Finance Review Sheet"
+                  description="Excel-style batch review for finance tracking, approval status, and operational checks."
+                  meta={
+                    <CountBadge
+                      value={`${filteredFinanceBatches.length} of ${batches.length}`}
+                      label={filteredFinanceBatches.length === batches.length ? "batch rows" : "batch rows match"}
+                    />
+                  }
+                />
+              }
               toolbar={
                 <TableFilters
                   search={{
@@ -1095,7 +1289,7 @@ export default function DashboardPage() {
                     },
                   ]}
                   sort={{
-                    options: FINANCE_SORT_OPTIONS,
+                    options: financeSortOptions,
                     sortKey: financeSortKey,
                     sortDir: financeSortDir,
                     onChange: applyFinanceSort,
@@ -1105,13 +1299,15 @@ export default function DashboardPage() {
                     {
                       key: "workflow",
                       label: "Workflow",
+                      htmlFor: FINANCE_WORKFLOW_FILTER_ID,
                       width: 160,
                       content: (
                         <select
+                          id={FINANCE_WORKFLOW_FILTER_ID}
                           value={financeStatusFilter}
                           onChange={(e) => setFinanceStatusFilter(e.target.value)}
                           className="glass-input"
-                          style={FINANCE_FILTER_STYLE}
+                          style={FILTER_CONTROL_STYLE}
                         >
                           <option value="ACTIVE">Active batches</option>
                           <option value="ALL">All workflow status</option>
@@ -1128,32 +1324,36 @@ export default function DashboardPage() {
                     {
                       key: "startDate",
                       label: "Start Date",
+                      htmlFor: FINANCE_START_FILTER_ID,
                       width: 150,
                       content: (
                         <input
+                          id={FINANCE_START_FILTER_ID}
                           type="date"
                           value={financeStartDate}
                           onChange={(e) => setFinanceStartDate(e.target.value)}
                           className="glass-input"
                           title="Start date from"
                           aria-label="Start date from"
-                          style={FINANCE_FILTER_STYLE}
+                          style={FILTER_CONTROL_STYLE}
                         />
                       ),
                     },
                     {
                       key: "endDate",
                       label: "End Date",
+                      htmlFor: FINANCE_END_FILTER_ID,
                       width: 150,
                       content: (
                         <input
+                          id={FINANCE_END_FILTER_ID}
                           type="date"
                           value={financeEndDate}
                           onChange={(e) => setFinanceEndDate(e.target.value)}
                           className="glass-input"
                           title="Start date to"
                           aria-label="Start date to"
-                          style={FINANCE_FILTER_STYLE}
+                          style={FILTER_CONTROL_STYLE}
                         />
                       ),
                     },
@@ -1165,22 +1365,39 @@ export default function DashboardPage() {
               }
               actions={
                 <>
+                  <ColumnsMenu
+                    columns={financeColumnKeys}
+                    hidden={financeColumnVisibility.hidden}
+                    onToggle={financeColumnVisibility.toggle}
+                    onShowAll={financeColumnVisibility.showAll}
+                  />
                   {dirtyFinanceCount > 0 && (
-                    <button
+                    <Button
+                      size="sm"
+                      className="h-9 shrink-0"
                       onClick={saveAllDirtyFinanceBatches}
-                      disabled={isSavingAllFinance}
-                      className="btn btn-primary"
-                      style={{ padding: "8px 11px", fontSize: "0.8rem", background: "linear-gradient(135deg, #ea580c 0%, #f97316 100%)", border: "1px solid #ea580c", opacity: isSavingAllFinance ? 0.7 : 1 }}
-                      title={`Save all ${dirtyFinanceCount} unsaved row(s)`}
+                      loading={isSavingAllFinance}
+                      title={`Save the approval ID, finance status and check date of ${dirtyFinanceCount} edited row${dirtyFinanceCount === 1 ? "" : "s"}`}
                     >
-                      <Check size={15} />
+                      <Check className="h-4 w-4" aria-hidden="true" />
                       <span>{isSavingAllFinance ? "Saving..." : `Save All (${dirtyFinanceCount})`}</span>
-                    </button>
+                    </Button>
                   )}
-                  <button onClick={exportFinanceSheet} className="btn btn-secondary" style={{ padding: "8px 11px", fontSize: "0.8rem" }} title="Export filtered finance rows to Excel">
-                    <FileSpreadsheet size={16} />
-                    <span>Export Excel</span>
-                  </button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 shrink-0"
+                    onClick={exportFinanceSheet}
+                    disabled={sortedFinanceBatches.length === 0}
+                    title={
+                      sortedFinanceBatches.length === 0
+                        ? "Nothing to export with the current filters"
+                        : `Export the ${sortedFinanceBatches.length} finance row${sortedFinanceBatches.length === 1 ? "" : "s"} on screen, in the current sort order`
+                    }
+                  >
+                    <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+                    <span>Export CSV</span>
+                  </Button>
                 </>
               }
               footer={
@@ -1196,100 +1413,162 @@ export default function DashboardPage() {
                 />
               }
             >
-              <table className="glass-table" style={{ width: "100%", minWidth: "2200px", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <SortableHeaderCell columnKey="batchId" label="Batch ID" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="client" label="Client" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="program" label="Program" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="category" label="Category" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="technology" label="Technology" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="domain" label="Domain" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="mode" label="Mode" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="location" label="Location" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="startDate" label="Start Date" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="endDate" label="End Date" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="enrollments" label="Enrollments" style={{ ...FINANCE_TH_STYLE, textAlign: "center" }} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="trainingDays" label="Training Days" style={{ ...FINANCE_TH_STYLE, textAlign: "center" }} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="totalHours" label="Total Hours" style={{ ...FINANCE_TH_STYLE, textAlign: "center" }} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="sowNumber" label="SOW Number" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="approvalId" label="Approval ID" style={{ ...FINANCE_TH_STYLE, minWidth: 160 }} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="faculty" label="Faculty" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="financeStatus" label="Finance Status" style={{ ...FINANCE_TH_STYLE, minWidth: 130 }} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <SortableHeaderCell columnKey="checkDate" label="Check Date" style={{ ...FINANCE_TH_STYLE, minWidth: 150 }} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <PlainHeaderCell style={FINANCE_TH_STYLE}>Remarks</PlainHeaderCell>
-                      <SortableHeaderCell columnKey="status" label="Status" style={FINANCE_TH_STYLE} sortKey={financeSortKey} sortDir={financeSortDir} onSort={toggleFinanceSort} />
-                      <PlainHeaderCell style={{ ...FINANCE_TH_STYLE, textAlign: "center" }}>Action</PlainHeaderCell>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredFinanceBatches.length === 0 ? (
-                      <tr>
-                        <td colSpan={21} style={{ textAlign: "center", padding: "40px 0", color: "var(--text-muted)" }}>
-                          No batch data available for finance review.
-                        </td>
-                      </tr>
-                    ) : (
-                      paginatedFinanceBatches.map((b) => {
-                        const draft = financeDrafts[b.id] || {
-                          approval_id: b.approval_id || "",
-                          finance_status: b.finance_status || "Pending",
-                          finance_status_check_date: b.finance_status_check_date || "",
-                          finance_check: b.finance_check ?? null,
-                        };
+              <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: "2200px" }}>
+                <TableCaption>Finance review sheet: batch identity, delivery facts and the finance fields to check</TableCaption>
+                <thead>
+                  <tr>
+                    {financeColumns.map((column) => {
+                      if (!financeColumnVisibility.isVisible(column.key)) return null;
+                      const headStyle = {
+                        ...FINANCE_HEAD_STYLE,
+                        textAlign: column.align ?? "left",
+                        minWidth: FINANCE_COLUMN_MIN_WIDTH[column.key],
+                      };
+                      return isSortable(column) ? (
+                        <SortableHeaderCell
+                          key={column.key}
+                          columnKey={column.key}
+                          label={column.label}
+                          style={headStyle}
+                          sortKey={financeSortKey}
+                          sortDir={financeSortDir}
+                          onSort={toggleFinanceSort}
+                        />
+                      ) : (
+                        <PlainHeaderCell key={column.key} style={headStyle}>
+                          {column.label}
+                        </PlainHeaderCell>
+                      );
+                    })}
+                    {financeColumnVisibility.isVisible("action") && (
+                      <PlainHeaderCell style={{ ...FINANCE_HEAD_STYLE, textAlign: "center" }}>
+                        Action
+                      </PlainHeaderCell>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchesError ? (
+                    <TableStateRow colSpan={visibleFinanceColumnCount}>
+                      <ErrorBanner message={batchesError} className="mx-auto my-6 max-w-lg" />
+                    </TableStateRow>
+                  ) : isLoading && filteredFinanceBatches.length === 0 ? (
+                    <TableStateRow colSpan={visibleFinanceColumnCount}>
+                      <LoadingState label="Loading the finance review sheet..." />
+                    </TableStateRow>
+                  ) : filteredFinanceBatches.length === 0 ? (
+                    <TableStateRow colSpan={visibleFinanceColumnCount}>
+                      {hasFinanceFilters ? (
+                        <EmptyState
+                          icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                          title="No batches match your filters"
+                          description="Clear the search or filter selections to see every batch available for finance review."
+                          action={
+                            <Button size="sm" variant="outline" onClick={clearFinanceFilters}>
+                              Clear filters
+                            </Button>
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          icon={<FileSpreadsheet className="h-5 w-5" aria-hidden="true" />}
+                          title="No batch data available for finance review"
+                          description="Batches will appear here once they have been created."
+                        />
+                      )}
+                    </TableStateRow>
+                  ) : (
+                    paginatedFinanceBatches.map((b) => {
+                      const draft = financeDrafts[b.id] || {
+                        approval_id: b.approval_id || "",
+                        finance_status: b.finance_status || "Pending",
+                        finance_status_check_date: b.finance_status_check_date || "",
+                        finance_check: b.finance_check ?? null,
+                      };
+                      const visible = financeColumnVisibility.isVisible;
+                      const approvalIdFieldId = `finance-approval-id-${b.id}`;
+                      const financeStatusFieldId = `finance-status-${b.id}`;
+                      const checkDateFieldId = `finance-check-date-${b.id}`;
 
-                        return (
-                          <tr key={b.id} style={{
-                            borderBottom: "1px solid var(--border-subtle)",
-                            fontSize: "0.82rem",
-                            background: dirtyFinanceIds.has(b.id) ? "rgba(251, 191, 36, 0.07)" : undefined,
-                          }}>
-                            <td style={{ padding: "12px 14px", fontWeight: 700, color: "var(--accent-primary)", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.batch_id}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", minWidth: 180 }}>{b.program_name}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.category || "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.technology || "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.delivery_mode || "Online"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.location_city || "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.start_date ? formatDate(b.start_date) : "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.end_date ? formatDate(b.end_date) : "—"}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.total_enrollments}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.training_days || 0}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", textAlign: "center" }}>{b.total_hours || 0}</td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", whiteSpace: "nowrap" }}>{b.sow_number || "—"}</td>
+                      return (
+                        <tr key={b.id} style={{
+                          borderBottom: "1px solid var(--border-subtle)",
+                          fontSize: "0.82rem",
+                          background: dirtyFinanceIds.has(b.id) ? "rgba(251, 191, 36, 0.07)" : undefined,
+                        }}>
+                          {visible("batchId") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, fontWeight: 700, color: "var(--accent-primary)", whiteSpace: "nowrap" }}>{b.batch_id}</td>
+                          )}
+                          {visible("client") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
+                          )}
+                          {visible("program") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, minWidth: 180 }}>{b.program_name}</td>
+                          )}
+                          {visible("category") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.category || "—"}</td>
+                          )}
+                          {visible("technology") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.technology || "—"}</td>
+                          )}
+                          {visible("domain") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
+                          )}
+                          {visible("mode") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.delivery_mode || "Online"}</td>
+                          )}
+                          {visible("location") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.location_city || "—"}</td>
+                          )}
+                          {visible("startDate") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.start_date ? formatDate(b.start_date) : "—"}</td>
+                          )}
+                          {visible("endDate") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.end_date ? formatDate(b.end_date) : "—"}</td>
+                          )}
+                          {visible("enrollments") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, textAlign: "center" }}>{b.total_enrollments}</td>
+                          )}
+                          {visible("trainingDays") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, textAlign: "center" }}>{b.training_days || 0}</td>
+                          )}
+                          {visible("totalHours") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, textAlign: "center" }}>{b.total_hours || 0}</td>
+                          )}
+                          {visible("sowNumber") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, whiteSpace: "nowrap" }}>{b.sow_number || "—"}</td>
+                          )}
+                          {visible("approvalId") && (
                             <td style={{ padding: "12px 14px", minWidth: 160 }}>
+                              <label htmlFor={approvalIdFieldId} style={VISUALLY_HIDDEN_LABEL}>
+                                Approval ID for batch {b.batch_id}
+                              </label>
                               <input
+                                id={approvalIdFieldId}
                                 type="text"
                                 value={draft.approval_id}
                                 onChange={(e) => updateFinanceDraft(b.id, "approval_id", e.target.value)}
                                 placeholder="Approval ID..."
-                                style={{
-                                  width: "100%",
-                                  padding: "7px 10px",
-                                  borderRadius: 6,
-                                  border: "1px solid #dbe7f3",
-                                  background: "#fff",
-                                  fontSize: "0.82rem",
-                                  fontWeight: 600,
-                                  color: "var(--text-main)",
-                                  outline: "none",
-                                }}
+                                aria-label={`Approval ID for batch ${b.batch_id}`}
+                                style={FINANCE_EDITABLE_STYLE}
                               />
                             </td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.faculty_assigned_text || ""}>{b.faculty_assigned_text || "—"}</td>
+                          )}
+                          {visible("faculty") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.faculty_assigned_text || ""}>{b.faculty_assigned_text || "—"}</td>
+                          )}
+                          {visible("financeStatus") && (
                             <td style={{ padding: "12px 14px", minWidth: 130 }}>
+                              <label htmlFor={financeStatusFieldId} style={VISUALLY_HIDDEN_LABEL}>
+                                Finance status for batch {b.batch_id}
+                              </label>
                               <select
+                                id={financeStatusFieldId}
                                 value={draft.finance_status}
                                 onChange={(e) => updateFinanceDraft(b.id, "finance_status", e.target.value)}
+                                aria-label={`Finance status for batch ${b.batch_id}`}
                                 style={{
-                                  width: "100%",
-                                  padding: "7px 8px",
-                                  borderRadius: 6,
-                                  border: "1px solid #dbe7f3",
-                                  background: "#fff",
-                                  fontSize: "0.82rem",
-                                  fontWeight: 600,
+                                  ...FINANCE_EDITABLE_STYLE,
                                   color: draft.finance_status === "Cleared" ? "#16a34a" : "#d97706",
                                 }}
                               >
@@ -1297,35 +1576,44 @@ export default function DashboardPage() {
                                 <option value="Cleared">Cleared</option>
                               </select>
                             </td>
+                          )}
+                          {visible("checkDate") && (
                             <td style={{ padding: "12px 14px", minWidth: 150 }}>
+                              <label htmlFor={checkDateFieldId} style={VISUALLY_HIDDEN_LABEL}>
+                                Finance check date for batch {b.batch_id}
+                              </label>
                               <input
+                                id={checkDateFieldId}
                                 type="date"
                                 value={draft.finance_status_check_date}
                                 onChange={(e) => updateFinanceDraft(b.id, "finance_status_check_date", e.target.value)}
-                                style={{
-                                  width: "100%",
-                                  padding: "7px 8px",
-                                  borderRadius: 6,
-                                  border: "1px solid #dbe7f3",
-                                  background: "#fff",
-                                  fontSize: "0.82rem",
-                                }}
+                                aria-label={`Finance check date for batch ${b.batch_id}`}
+                                style={FINANCE_EDITABLE_STYLE}
                               />
                             </td>
-                            <td style={{ padding: "12px 14px", userSelect: "text", cursor: "text", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.remarks || ""}>{b.remarks || "—"}</td>
-                            <td style={{ padding: "12px 14px" }}>{getStatusBadge(b.status)}</td>
-                            <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                              <button
-                                onClick={() => saveFinanceBatch(b)}
-                                disabled={savingFinanceBatchId === b.id}
-                                className="btn btn-primary"
-                                style={{ padding: "5px 12px", fontSize: "0.75rem", opacity: savingFinanceBatchId === b.id ? 0.7 : 1 }}
-                              >
-                                {savingFinanceBatchId === b.id ? "Saving..." : "Save"}
-                              </button>
+                          )}
+                          {visible("remarks") && (
+                            <td style={{ ...FINANCE_CELL_STYLE, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.remarks || ""}>{b.remarks || "—"}</td>
+                          )}
+                          {visible("status") && (
+                            <td style={FINANCE_CELL_STYLE}>
+                              <StatusBadge status={b.status} />
                             </td>
-                          </tr>
-                        );
+                          )}
+                          {visible("action") && (
+                            <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                              <Button
+                                size="sm"
+                                onClick={() => saveFinanceBatch(b)}
+                                loading={savingFinanceBatchId === b.id}
+                                aria-label={`Save finance details for batch ${b.batch_id}`}
+                              >
+                                Save
+                              </Button>
+                            </td>
+                          )}
+                        </tr>
+                      );
                       })
                     )}
                   </tbody>

@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.models.user import User, UserManagerMapping
+from app.models.user import User
+from app.api.v1.auth.repository import UserRepository
 
 security_scheme = HTTPBearer(auto_error=True)
 
@@ -43,7 +44,7 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(User).filter(User.id == user_uuid, User.is_active == True).first()
+    user = UserRepository(db).get_active_by_id(user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -73,83 +74,24 @@ require_coordinator_or_above = require_roles(["Admin", "Manager", "Coordinator"]
 
 def get_all_subordinate_ids(manager_id: UUID, db: Session) -> List[UUID]:
     """Return all direct and indirect subordinate UUIDs under a manager.
+
     Combines both the self-referential User.manager_id hierarchy and the legacy UserManagerMapping table.
     """
-    subordinates: Set[UUID] = set()
-    queue = [manager_id]
-    visited = {manager_id}
-
-    while queue:
-        current_id = queue.pop(0)
-
-        # 1. Direct reports via manager_id
-        direct_reports = db.query(User.id).filter(
-            User.manager_id == current_id,
-            User.is_active == True
-        ).all()
-
-        # 2. Legacy coordinator mappings
-        mapped_reports = db.query(UserManagerMapping.coordinator_id).filter(
-            UserManagerMapping.manager_id == current_id
-        ).all()
-
-        for (sub_id,) in direct_reports + mapped_reports:
-            if sub_id and sub_id not in visited:
-                visited.add(sub_id)
-                subordinates.add(sub_id)
-                queue.append(sub_id)
-
-    return list(subordinates)
+    return UserRepository(db).get_all_subordinate_ids(manager_id)
 
 
 def get_managed_coordinator_ids(manager_id: UUID, db: Session) -> List[UUID]:
     """Return only coordinators under a manager, excluding other managers and unrelated roles."""
-    subordinate_ids = get_all_subordinate_ids(manager_id, db)
-    if not subordinate_ids:
-        return []
-
-    rows = db.query(User.id).filter(
-        User.id.in_(subordinate_ids),
-        User.role == "Coordinator",
-        User.is_active == True,
-    ).all()
-    return [UUID(str(row[0])) for row in rows]
+    return UserRepository(db).get_managed_coordinator_ids(manager_id)
 
 
 def get_manager_scope_user_ids(user: User, db: Session) -> List[UUID]:
     """Return the operational ownership scope for a user."""
-    role = (user.role or "").lower()
-    if role == "manager":
-        scope_ids: Set[UUID] = {user.id}
-        scope_ids.update(get_managed_coordinator_ids(user.id, db))
-        return list(scope_ids)
-
-    if role != "coordinator":
-        return [user.id]
-
-    manager_ids: Set[UUID] = set()
-    if user.manager_id:
-        manager_ids.add(user.manager_id)
-    manager_ids.update(
-        manager_id
-        for manager_id, in db.query(UserManagerMapping.manager_id)
-        .filter(UserManagerMapping.coordinator_id == user.id)
-        .all()
-    )
-    if not manager_ids:
-        return [user.id]
-
-    # Coordinators under the same manager share operational batch visibility.
-    scope_ids = {user.id}
-    for manager_id in manager_ids:
-        scope_ids.add(manager_id)
-        scope_ids.update(get_managed_coordinator_ids(manager_id, db))
-    return list(scope_ids)
+    return UserRepository(db).get_manager_scope_user_ids(user)
 
 
 def is_manager_or_lead(user: User, db: Session) -> bool:
     """Returns True if user is automatically identified as a Manager (has direct reports) or has Manager/Admin role."""
     if (user.role or "").lower() in ["admin", "manager"]:
         return True
-    has_reports = db.query(User.id).filter(User.manager_id == user.id, User.is_active == True).first() is not None
-    return has_reports
+    return UserRepository(db).has_direct_reports(user.id)

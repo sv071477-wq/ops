@@ -1,19 +1,15 @@
 from typing import List, Optional, Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 import csv
 from io import StringIO
 from datetime import datetime
 
 from app.models.user import User
-from app.models.session import FacultyUtilization
-from app.models.batch import FacultyType
 from app.schemas.faculty import FacultyResponse, FacultyUtilizationOverview
 from app.api.deps import get_current_user, require_manager_or_admin, require_coordinator_or_above
 from app.api.deps_services import get_faculty_service
 from app.api.v1.faculty.service import FacultyService
-from app.core.database import get_db
 
 router = APIRouter()
 
@@ -44,25 +40,14 @@ def export_faculty_utilization_csv(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     service: FacultyService = Depends(get_faculty_service),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user)
 ) -> StreamingResponse:
     """Export faculty utilization ledger as CSV."""
-    query = db.query(FacultyUtilization)
-
-    # There is no `domain` column on the ledger, so that filter is unsupported and
-    # accepting the parameter only produced an AttributeError. Faculty type now
-    # lives behind faculty_type_id, so it needs the join to compare by name.
-    if faculty_type:
-        query = query.join(FacultyType, FacultyUtilization.faculty_type_id == FacultyType.id).filter(
-            FacultyType.name == faculty_type
-        )
-    if start_date:
-        query = query.filter(FacultyUtilization.date_of_training >= start_date)
-    if end_date:
-        query = query.filter(FacultyUtilization.date_of_training <= end_date)
-    
-    records = query.order_by(FacultyUtilization.date_of_training.desc()).all()
+    records = service.utilization_export_rows(
+        faculty_type=faculty_type,
+        start_date=start_date,
+        end_date=end_date,
+    )
     
     output = StringIO()
     writer = csv.writer(output)

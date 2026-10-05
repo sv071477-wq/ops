@@ -238,21 +238,22 @@ describe('FullscreenTable', () => {
     expect(screen.getByText('toolbar')).toBeInTheDocument();
   });
 
-  it('keeps its stacked header layout even when headerStyle sets display and alignment', () => {
+  it('keeps its header rows intact when headerStyle tries to own the layout', () => {
     const { container } = render(
       <FullscreenTable
         title="Ledger"
         // A caller can theme the padding/border, but must not be able to
-        // collapse the two-row header into one row.
+        // collapse the header rows or reorder the toolbar and actions.
         headerStyle={{
           padding: '20px 24px',
           borderBottom: '1px solid red',
-          display: 'flex',
+          display: 'grid',
           alignItems: 'center',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
         }}
         toolbar={<span>toolbar</span>}
+        actions={<button type="button">Do the thing</button>}
       >
         <table>
           <tbody />
@@ -263,10 +264,20 @@ describe('FullscreenTable', () => {
     const header = container.querySelector<HTMLElement>('[style*="border-bottom"]') as HTMLElement;
     expect(header).not.toBeNull();
     expect(header.style.flexDirection).toBe('column');
-    expect(header.style.alignItems).toBe('flex-start');
+    expect(header.style.alignItems).toBe('stretch');
     expect(header.style.display).toBe('flex');
     // The caller's theme still applies.
     expect(header.style.padding).toBe('20px 24px');
     expect(header.style.borderBottom).toBe('1px solid red');
+
+    // Title sits on its own line; the toolbar and the actions share the row
+    // underneath it so a table's primary button lines up with its filters.
+    const title = screen.getByText('Ledger');
+    const toolbarControl = screen.getByText('toolbar');
+    const toolbarRow = header.lastElementChild as HTMLElement;
+    expect(title.parentElement).toBe(header);
+    expect(header.children).toHaveLength(2);
+    expect(toolbarRow.contains(toolbarControl)).toBe(true);
+    expect(toolbarRow.contains(screen.getByRole('button', { name: 'Do the thing' }))).toBe(true);
   });
 });

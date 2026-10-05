@@ -28,7 +28,7 @@ def test_admin_can_create_and_list_roles(client, admin_token_headers):
         json={
             "email": "trainer.lead@ops.com",
             "full_name": "Arjun Mehta",
-            "password": "Password123",
+            "password": "Password123!",
             "role_id": role_id
         }
     )
@@ -60,7 +60,7 @@ def test_organization_reporting_hierarchy(client, admin_token_headers):
         json={
             "email": "director@ops.com",
             "full_name": "Delivery Director",
-            "password": "Password123",
+            "password": "Password123!",
             "role": "Manager"
         }
     )
@@ -74,7 +74,7 @@ def test_organization_reporting_hierarchy(client, admin_token_headers):
         json={
             "email": "lead.coord@ops.com",
             "full_name": "Lead Coordinator",
-            "password": "Password123",
+            "password": "Password123!",
             "role": "Coordinator",
             "manager_id": director_id
         }
@@ -89,7 +89,7 @@ def test_organization_reporting_hierarchy(client, admin_token_headers):
         json={
             "email": "sub.coord@ops.com",
             "full_name": "Junior Coordinator",
-            "password": "Password123",
+            "password": "Password123!",
             "role": "Coordinator",
             "manager_id": lead_id
         }

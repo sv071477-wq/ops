@@ -2,21 +2,46 @@
 
 import React, { useState, useMemo } from "react";
 import {
-  TrendingUp, TrendingDown, Users, Briefcase, Clock, CheckCircle2,
+  TrendingDown, Users, Briefcase, Clock, CheckCircle2,
   AlertTriangle, BarChart3, Calendar, Target, Award, Activity,
-  RefreshCw, ChevronDown, Zap, Shield, PieChart, MapPin,
-  ArrowUpRight, ArrowDownRight, Minus, Layers, Filter, Check,
+  RefreshCw, Shield, PieChart, MapPin, Search, Layers,
   BarChart2, LineChart
 } from "lucide-react";
 import { Batch, User, ManagerDashboardSummary } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "./PaginationControls";
-import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from "@/components/table";
+import {
+  ColumnsMenu,
+  ExportButton,
+  FullscreenTable,
+  PlainHeaderCell,
+  SortableHeaderCell,
+  TableCaption,
+  TableFilters,
+  TableStateRow,
+} from "@/components/table";
+import { Button } from "@/components/ui/button";
+import {
+  CountBadge,
+  EmptyState,
+  NAVBAR_HEIGHT,
+  PanelTitle,
+  TABLE_TH_STYLE,
+} from "@/components/ui/panel";
+import { StatusBadge } from "@/components/ui/statusBadge";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useTableFilters } from "@/hooks/useTableFilters";
-import type { TableFilterField } from "@/hooks/useTableFilters";
-import { isBlankTableValue } from "@/lib/tableUtils";
-import type { SortAccessors, TableAccessor } from "@/lib/tableUtils";
+import { useColumnVisibility, type UseColumnVisibilityResult } from "@/hooks/useColumnVisibility";
+import { reviveNumber, usePersistentState } from "@/hooks/usePersistentState";
+import {
+  buildFilterFields,
+  buildSearchAccessor,
+  buildSortAccessors,
+  buildSortOptions,
+  isSortable,
+  type TableColumnDef,
+} from "@/lib/tableColumns";
+import type { CsvColumn } from "@/lib/csv";
 
 interface EnterpriseDashboardProps {
   batches: Batch[];
@@ -42,7 +67,7 @@ function parseBatchDate(dateStr: string | null | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function getPeriodRange(period: TimePeriod): { from: Date; to: Date } {
+function computePeriodRange(period: TimePeriod): { from: Date; to: Date } {
   const now = new Date();
   let from = new Date(now);
   let to = new Date(now);
@@ -75,6 +100,20 @@ function getPeriodRange(period: TimePeriod): { from: Date; to: Date } {
   return { from, to };
 }
 
+// `isBatchInPeriod` runs five times per batch per render, and a horizon window
+// only moves at a day boundary, so each window is built once and rebuilt as soon
+// as the cached one stops covering today.
+const PERIOD_RANGE_CACHE = new Map<TimePeriod, { from: Date; to: Date }>();
+
+function getPeriodRange(period: TimePeriod): { from: Date; to: Date } {
+  const cached = PERIOD_RANGE_CACHE.get(period);
+  const now = Date.now();
+  if (cached && cached.from.getTime() <= now && now <= cached.to.getTime()) return cached;
+  const range = computePeriodRange(period);
+  PERIOD_RANGE_CACHE.set(period, range);
+  return range;
+}
+
 function isBatchInPeriod(batch: Batch, period: TimePeriod): boolean {
   if (period === "all") return true;
   const { from, to } = getPeriodRange(period);
@@ -97,31 +136,9 @@ function isBatchInPeriod(batch: Batch, period: TimePeriod): boolean {
 }
 
 
-function Trend({ value, suffix = "" }: { value: number; suffix?: string }) {
-  if (value === 0)
-    return (
-      <span style={{ color: "#94a3b8", fontSize: "0.75rem", display: "flex", alignItems: "center", gap: 2 }}>
-        <Minus size={11} /> Baseline
-      </span>
-    );
-  const positive = value > 0;
-  return (
-    <span
-      style={{
-        color: positive ? "#16a34a" : "#dc2626",
-        fontSize: "0.75rem",
-        display: "flex",
-        alignItems: "center",
-        gap: 2,
-        fontWeight: 600,
-      }}
-    >
-      {positive ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-      {positive ? "+" : ""}
-      {value}
-      {suffix}
-    </span>
-  );
+/** Alpha tint of any CSS colour, so a palette entry can also be a theme token. */
+function tint(color: string, alpha: number): string {
+  return `color-mix(in srgb, ${color} ${Math.round(alpha * 100)}%, transparent)`;
 }
 
 function KpiCard({
@@ -130,14 +147,12 @@ function KpiCard({
   sub,
   color,
   icon: Icon,
-  trend,
 }: {
   label: string;
   value: string | number;
   sub?: string;
   color: string;
   icon: React.ElementType;
-  trend?: number;
 }) {
   return (
     <div
@@ -153,22 +168,84 @@ function KpiCard({
         boxShadow: "0 2px 10px rgba(0,0,0,0.03)",
       }}
     >
-      <div style={{ position: "absolute", right: 14, top: 14, opacity: 0.08 }}>
-        <Icon size={52} color={color} />
-      </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ fontSize: "0.72rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
           {label}
         </div>
-        <div style={{ background: `${color}18`, borderRadius: 8, padding: "5px 6px", display: "flex" }}>
-          <Icon size={14} color={color} />
+        <div style={{ background: tint(color, 0.09), color, borderRadius: 8, padding: "5px 6px", display: "flex" }}>
+          <Icon size={14} aria-hidden="true" />
         </div>
       </div>
       <div style={{ fontSize: "2rem", fontWeight: 800, color, lineHeight: 1.1 }}>{value}</div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 }}>
-        {sub && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{sub}</div>}
-        {trend !== undefined && <Trend value={trend} />}
-      </div>
+      {sub && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{sub}</div>}
+    </div>
+  );
+}
+
+/**
+ * Single implementation of the three hand-rolled option strips on this view
+ * (horizon, team-analytics tab, workload tab). They previously differed in
+ * padding, radius and accent, and exposed no pressed state at all.
+ */
+function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string; count?: number }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      style={{ display: "flex", gap: 4, background: "var(--color-muted)", borderRadius: 8, padding: 4, flexWrap: "wrap" }}
+    >
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(option.value)}
+            style={{
+              padding: "6px 13px",
+              borderRadius: 6,
+              border: "none",
+              cursor: "pointer",
+              fontSize: "0.78rem",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: selected ? "var(--color-primary)" : "transparent",
+              color: selected ? "var(--color-primary-foreground)" : "var(--text-dim)",
+              transition: "background 0.2s, color 0.2s",
+            }}
+          >
+            <span>{option.label}</span>
+            {option.count !== undefined && (
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  fontWeight: 800,
+                  padding: "1px 6px",
+                  borderRadius: 10,
+                  background: selected ? "var(--color-primary-hover)" : "var(--color-border)",
+                  color: selected ? "var(--color-primary-foreground)" : "var(--text-dim)",
+                }}
+              >
+                {option.count}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -178,8 +255,15 @@ function RingProgress({ percent, color, size = 64 }: { percent: number; color: s
   const circ = 2 * Math.PI * r;
   const dash = (percent / 100) * circ;
   return (
-    <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={6} />
+    <svg
+      width={size}
+      height={size}
+      style={{ transform: "rotate(-90deg)" }}
+      role="img"
+      aria-label={`${percent}% complete`}
+    >
+      <title>{`${percent}% complete`}</title>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-border)" strokeWidth={6} />
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -198,37 +282,33 @@ function RingProgress({ percent, color, size = 64 }: { percent: number; color: s
 function SectionHeader({ title, sub, icon: Icon, badge }: { title: string; sub?: string; icon?: React.ElementType; badge?: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         {Icon && (
-          <div style={{ background: "linear-gradient(135deg,#e8f2fb,#dbeafe)", borderRadius: 8, padding: "6px 7px", display: "flex" }}>
-            <Icon size={16} color="#0b5cab" />
+          <div
+            style={{
+              background: "linear-gradient(135deg,var(--color-primary-light),var(--color-muted))",
+              borderRadius: 8,
+              padding: "6px 7px",
+              display: "flex",
+              color: "var(--color-primary)",
+            }}
+          >
+            <Icon size={16} aria-hidden="true" />
           </div>
         )}
-        <div>
+        <div style={{ minWidth: 0 }}>
           <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--text-main)", margin: 0 }}>{title}</h3>
           {sub && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "2px 0 0 0" }}>{sub}</p>}
         </div>
       </div>
       {badge && (
-        <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "#f1f5f9", color: "var(--text-dim)", padding: "3px 9px", borderRadius: 12 }}>
+        <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "var(--color-muted)", color: "var(--text-dim)", padding: "3px 9px", borderRadius: 12, flexShrink: 0 }}>
           {badge}
         </span>
       )}
     </div>
   );
 }
-
-const STATUS_COLORS: Record<string, string> = {
-  Requested: "#94a3b8",
-  "Approval 1 Pending": "#f59e0b",
-  "Approval 2 Pending": "#f97316",
-  Approved: "#3b82f6",
-  Upcoming: "#8b5cf6",
-  Ongoing: "#06b6d4",
-  Completed: "#16a34a",
-  Cancelled: "#ef4444",
-  OnHold: "#d97706",
-};
 
 /**
  * Interactive SVG Donut Chart with center metrics & dynamic legend
@@ -246,34 +326,52 @@ function SvgDonutChart({
 }) {
   const r = 70;
   const circ = 2 * Math.PI * r;
-  let accumulatedDash = 0;
+
+  // Cumulative dash offsets are derived up front; accumulating them inside the
+  // render pass mutated a value that lived as long as the component did.
+  const segments = useMemo(() => {
+    const source = total > 0 ? data.filter((segment) => segment.count > 0) : [];
+    return source
+      .reduce<{ entries: { color: string; dash: number; offset: number }[]; accumulated: number }>(
+        (acc, segment) => {
+          const dash = (segment.count / total) * circ;
+          acc.entries.push({ color: segment.color, dash, offset: -acc.accumulated });
+          acc.accumulated += dash;
+          return acc;
+        },
+        { entries: [], accumulated: 0 }
+      )
+      .entries;
+  }, [data, total, circ]);
+
+  const summary = data.map((segment) => `${segment.label} ${segment.count}`).join(", ");
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", justifyContent: "center" }}>
       <div style={{ position: "relative", width: 180, height: 180, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <svg width="180" height="180" style={{ transform: "rotate(-90deg)" }}>
-          <circle cx="90" cy="90" r={r} fill="none" stroke="#f1f5f9" strokeWidth="22" />
-          {total > 0 &&
-            data.map((seg, idx) => {
-              if (seg.count <= 0) return null;
-              const segDash = (seg.count / total) * circ;
-              const currentOffset = accumulatedDash;
-              accumulatedDash += segDash;
-              return (
-                <circle
-                  key={idx}
-                  cx="90"
-                  cy="90"
-                  r={r}
-                  fill="none"
-                  stroke={seg.color}
-                  strokeWidth="22"
-                  strokeDasharray={`${segDash} ${circ}`}
-                  strokeDashoffset={-currentOffset}
-                  style={{ transition: "stroke-dashoffset 0.6s ease, stroke-dasharray 0.6s ease" }}
-                />
-              );
-            })}
+        <svg
+          width="180"
+          height="180"
+          style={{ transform: "rotate(-90deg)" }}
+          role="img"
+          aria-label={`${centerTitle} ${centerSubtitle}. ${summary}`}
+        >
+          <title>{`${centerTitle} ${centerSubtitle}`}</title>
+          <circle cx="90" cy="90" r={r} fill="none" stroke="var(--color-muted)" strokeWidth="22" />
+          {segments.map((segment, idx) => (
+            <circle
+              key={idx}
+              cx="90"
+              cy="90"
+              r={r}
+              fill="none"
+              stroke={segment.color}
+              strokeWidth="22"
+              strokeDasharray={`${segment.dash} ${circ}`}
+              strokeDashoffset={segment.offset}
+              style={{ transition: "stroke-dashoffset 0.6s ease, stroke-dasharray 0.6s ease" }}
+            />
+          ))}
         </svg>
         <div style={{ position: "absolute", textAlign: "center", pointerEvents: "none" }}>
           <div style={{ fontSize: "1.45rem", fontWeight: 800, color: "var(--text-main)", lineHeight: 1.1 }}>{centerTitle}</div>
@@ -304,6 +402,8 @@ function SvgDonutChart({
   );
 }
 
+const TIMELINE_MONTH_LIMIT = 12;
+
 /**
  * Interactive SVG Area / Velocity Curve Chart
  */
@@ -312,9 +412,14 @@ function SvgDeliveryTimeline({
 }: {
   batches: Batch[];
 }) {
-  const points = useMemo(() => {
+  // `useId` yields a value containing colons, which are not valid in a CSS
+  // selector and are unreliable inside an SVG `url(#...)` paint reference.
+  const gradientId = `velocity-${React.useId().replace(/[^a-zA-Z0-9]/g, "")}`;
+
+
+  const months = useMemo(() => {
     if (!batches || batches.length === 0) return [];
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const monthCounts: Record<string, { label: string; count: number; hours: number; sortKey: string }> = {};
 
     batches.forEach((b) => {
@@ -325,7 +430,7 @@ function SvgDeliveryTimeline({
       const sortKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       if (!monthCounts[sortKey]) {
         monthCounts[sortKey] = {
-          label: `${months[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`,
+          label: `${monthNames[d.getMonth()]} '${String(d.getFullYear()).slice(2)}`,
           count: 0,
           hours: 0,
           sortKey,
@@ -335,9 +440,11 @@ function SvgDeliveryTimeline({
       monthCounts[sortKey].hours += Number(b.total_hours) || 0;
     });
 
-    const sorted = Object.values(monthCounts).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-    return sorted.slice(-12);
+    return Object.values(monthCounts).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   }, [batches]);
+
+  const points = months.slice(-TIMELINE_MONTH_LIMIT);
+  const hiddenMonthCount = months.length - points.length;
 
   const maxVal = Math.max(...points.map((p) => p.count), 1);
   const width = 540;
@@ -362,11 +469,23 @@ function SvgDeliveryTimeline({
     ? `${pathD} L ${chartPoints[chartPoints.length - 1].x} ${height - paddingY} L ${chartPoints[0].x} ${height - paddingY} Z`
     : "";
 
+  // The counts exist only inside `<text>` nodes, so without this label the chart
+  // announced nothing at all.
+  const ariaLabel = points.length === 0
+    ? "No dated batches to plot"
+    : `Batches started per month: ${points.map((point) => `${point.label} ${point.count}`).join(", ")}`;
+
   return (
     <div style={{ width: "100%", overflowX: "auto" }}>
-      <svg viewBox={`0 0 ${width} ${height + 25}`} style={{ width: "100%", minWidth: 380, height: 165 }}>
+      <svg
+        viewBox={`0 0 ${width} ${height + 25}`}
+        style={{ width: "100%", minWidth: 380, height: 165 }}
+        role="img"
+        aria-label={ariaLabel}
+      >
+        <title>{ariaLabel}</title>
         <defs>
-          <linearGradient id="velocityGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
             <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.45" />
             <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.0" />
           </linearGradient>
@@ -382,7 +501,7 @@ function SvgDeliveryTimeline({
               y1={y}
               x2={width - paddingX}
               y2={y}
-              stroke="#e2e8f0"
+              stroke="var(--color-border)"
               strokeDasharray="3 3"
               strokeWidth="1"
             />
@@ -390,22 +509,29 @@ function SvgDeliveryTimeline({
         })}
 
         {/* Area fill & smooth bezier curve */}
-        {fillD && <path d={fillD} fill="url(#velocityGrad)" />}
+        {fillD && <path d={fillD} fill={`url(#${gradientId})`} />}
         {pathD && <path d={pathD} fill="none" stroke="#8b5cf6" strokeWidth="3" strokeLinecap="round" />}
 
         {/* Interactive nodes and axis labels */}
         {chartPoints.map((pt, i) => (
           <g key={i}>
+            <title>{`${pt.label}: ${pt.count} batch(es), ${Math.round(pt.hours)}h`}</title>
             <circle cx={pt.x} cy={pt.y} r="5" fill="#fff" stroke="#8b5cf6" strokeWidth="3" />
             <text x={pt.x} y={pt.y - 10} textAnchor="middle" fontSize="10" fontWeight="700" fill="#6b21a8">
               {pt.count}
             </text>
-            <text x={pt.x} y={height + 14} textAnchor="middle" fontSize="10" fontWeight="600" fill="#94a3b8">
+            <text x={pt.x} y={height + 14} textAnchor="middle" fontSize="10" fontWeight="600" fill="var(--color-muted-foreground)">
               {pt.label}
             </text>
           </g>
         ))}
       </svg>
+      {hiddenMonthCount > 0 && (
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: "6px 0 0" }}>
+          Showing the most recent {TIMELINE_MONTH_LIMIT} months — {hiddenMonthCount} earlier month
+          {hiddenMonthCount === 1 ? "" : "s"} of {months.length} not plotted.
+        </p>
+      )}
     </div>
   );
 }
@@ -433,17 +559,32 @@ function SvgGroupedBar({
   const totalW = paddingL + groups.length * groupW + 20;
   const chartH = height - paddingB;
 
+  // The per-bar values exist only inside `<text>` nodes, so without this label
+  // the chart announced nothing at all.
+  const ariaLabel =
+    groups.length === 0
+      ? "No groups to compare"
+      : `${series.map((entry) => entry.label).join(", ")} by group: ${groups
+          .map((group) => `${group.label} ${group.values.join(", ")}`)
+          .join("; ")}`;
+
   return (
     <div style={{ width: "100%", overflowX: "auto" }}>
-      <svg viewBox={`0 0 ${totalW} ${height}`} style={{ width: "100%", minWidth: Math.min(totalW, 340), height }}>
+      <svg
+        viewBox={`0 0 ${totalW} ${height}`}
+        style={{ width: "100%", minWidth: Math.min(totalW, 340), height }}
+        role="img"
+        aria-label={ariaLabel}
+      >
+        <title>{ariaLabel}</title>
         {/* Y gridlines */}
         {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
           const y = 8 + (1 - pct) * (chartH - 8);
           const val = Math.round(pct * maxVal);
           return (
             <g key={i}>
-              <line x1={paddingL} y1={y} x2={totalW - 10} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" strokeWidth={1} />
-              <text x={paddingL - 4} y={y + 4} textAnchor="end" fontSize={8} fill="#94a3b8">{val}</text>
+              <line x1={paddingL} y1={y} x2={totalW - 10} y2={y} stroke="var(--color-border)" strokeDasharray="3 3" strokeWidth={1} />
+              <text x={paddingL - 4} y={y + 4} textAnchor="end" fontSize={8} fill="var(--color-muted-foreground)">{val}</text>
             </g>
           );
         })}
@@ -459,6 +600,7 @@ function SvgGroupedBar({
                 const y = chartH - barH;
                 return (
                   <g key={si}>
+                    <title>{`${group.label} — ${s.label}: ${val}`}</title>
                     <rect x={x} y={y} width={barW} height={Math.max(barH, 1)} fill={s.color} rx={3} opacity={0.88} />
                     {val > 0 && (
                       <text x={x + barW / 2} y={y - 3} textAnchor="middle" fontSize={8} fontWeight={700} fill={s.color}>{val}</text>
@@ -466,16 +608,20 @@ function SvgGroupedBar({
                   </g>
                 );
               })}
-              <text
-                x={gX + (seriesCount * (barW + gap) - gap) / 2}
-                y={chartH + 12}
-                textAnchor="middle"
-                fontSize={9}
-                fontWeight={600}
-                fill="#64748b"
-              >
-                {group.label.length > 10 ? group.label.slice(0, 9) + "…" : group.label}
-              </text>
+              {/* The axis label is elided to fit; the full name lives in the tooltip. */}
+              <g>
+                <title>{group.label}</title>
+                <text
+                  x={gX + (seriesCount * (barW + gap) - gap) / 2}
+                  y={chartH + 12}
+                  textAnchor="middle"
+                  fontSize={9}
+                  fontWeight={600}
+                  fill="var(--text-muted)"
+                >
+                  {group.label.length > 10 ? group.label.slice(0, 9) + "…" : group.label}
+                </text>
+              </g>
             </g>
           );
         })}
@@ -506,29 +652,44 @@ function TeamRoleDonut({ counts, size = 56 }: { counts: Record<string, number>; 
   };
   const r = size / 2 - 5;
   const circ = 2 * Math.PI * r;
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  let acc = 0;
-  const segments = Object.entries(counts).map(([role, count]) => {
-    const frac = total > 0 ? count / total : 0;
-    const dash = frac * circ;
-    const offset = -acc;
-    acc += dash;
-    return { role, count, color: roleColors[role] || "#94a3b8", dash, offset };
-  });
+  const entries = Object.entries(counts);
+  const total = entries.reduce((a, b) => a + b[1], 0);
+  const segments = entries.reduce<{ color: string; count: number; dash: number; offset: number }[]>(
+    (acc, [role, count]) => {
+      const dash = (total > 0 ? count / total : 0) * circ;
+      const offset = -acc.reduce((sum, seg) => sum + (seg.dash ?? 0), 0);
+      acc.push({ color: roleColors[role] || "var(--color-muted-foreground)", count, dash, offset });
+      return acc;
+    },
+    []
+  );
+  const ariaLabel =
+    total === 0
+      ? "No role composition data"
+      : `Role mix: ${entries.map(([role, count]) => `${role} ${count}`).join(", ")}`;
+
   return (
-    <svg width={size} height={size} style={{ transform: "rotate(-90deg)", flexShrink: 0 }}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f1f5f9" strokeWidth={8} />
-      {total > 0 && segments.map((seg, i) =>
-        seg.count > 0 ? (
-          <circle
-            key={i}
-            cx={size / 2} cy={size / 2} r={r}
-            fill="none" stroke={seg.color} strokeWidth={8}
-            strokeDasharray={`${seg.dash} ${circ}`}
-            strokeDashoffset={seg.offset}
-          />
-        ) : null
-      )}
+    <svg
+      width={size}
+      height={size}
+      style={{ transform: "rotate(-90deg)", flexShrink: 0 }}
+      role="img"
+      aria-label={ariaLabel}
+    >
+      <title>{ariaLabel}</title>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-muted)" strokeWidth={8} />
+      {total > 0 &&
+        segments.map((seg, i) =>
+          seg.count > 0 ? (
+            <circle
+              key={i}
+              cx={size / 2} cy={size / 2} r={r}
+              fill="none" stroke={seg.color} strokeWidth={8}
+              strokeDasharray={`${seg.dash} ${circ}`}
+              strokeDashoffset={seg.offset}
+            />
+          ) : null
+        )}
     </svg>
   );
 }
@@ -546,6 +707,7 @@ function RankedBars({
   maxItems?: number;
 }) {
   const slice = data.slice(0, maxItems);
+  const hiddenCount = data.length - slice.length;
   const maxVal = Math.max(...slice.map((d) => d.value), 1);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -557,12 +719,17 @@ function RankedBars({
               <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>{item.label}</span>
               <span style={{ fontSize: "0.72rem", fontWeight: 800, color, flexShrink: 0 }}>{item.value}{item.sub}</span>
             </div>
-            <div style={{ height: 6, background: "#f1f5f9", borderRadius: 4 }}>
+            <div style={{ height: 6, background: "var(--color-muted)", borderRadius: 4 }}>
               <div style={{ width: `${(item.value / maxVal) * 100}%`, height: "100%", background: color, borderRadius: 4, transition: "width 0.5s" }} />
             </div>
           </div>
         </div>
       ))}
+      {hiddenCount > 0 && (
+        <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", paddingLeft: 30 }}>
+          +{hiddenCount} more · {data.length} total
+        </div>
+      )}
     </div>
   );
 }
@@ -592,32 +759,45 @@ function QualityBubble({
 
   const maxBatches = Math.max(...validData.map((d) => d.batches), 1);
 
+  const ariaLabel =
+    `${validData.length} client(s) plotted by average NPS against average batch feedback, sized by batch volume. ` +
+    validData
+      .map((d) => `${d.label}: NPS ${d.nps!.toFixed(0)}, feedback ${d.feedback!.toFixed(2)} over ${d.batches} batches`)
+      .join("; ");
+
   return (
     <div style={{ width: "100%", overflowX: "auto" }}>
-      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", minWidth: 300, height: h }}>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        style={{ width: "100%", minWidth: 300, height: h }}
+        role="img"
+        aria-label={ariaLabel}
+      >
+        <title>Client quality matrix</title>
+        <desc>Average NPS on the vertical axis, average batch feedback on the horizontal axis, bubble size is batch volume.</desc>
         {/* Axes */}
-        <line x1={pL} y1={pT} x2={pL} y2={pT + cH} stroke="#e2e8f0" strokeWidth={1} />
-        <line x1={pL} y1={pT + cH} x2={pL + cW} y2={pT + cH} stroke="#e2e8f0" strokeWidth={1} />
+        <line x1={pL} y1={pT} x2={pL} y2={pT + cH} stroke="var(--color-border)" strokeWidth={1} />
+        <line x1={pL} y1={pT + cH} x2={pL + cW} y2={pT + cH} stroke="var(--color-border)" strokeWidth={1} />
         {/* X axis labels: Feedback 1–5 */}
         {[1, 2, 3, 4, 5].map((v) => (
           <g key={v}>
-            <line x1={pL + ((v - 1) / 4) * cW} y1={pT} x2={pL + ((v - 1) / 4) * cW} y2={pT + cH} stroke="#f1f5f9" strokeWidth={1} />
-            <text x={pL + ((v - 1) / 4) * cW} y={pT + cH + 14} textAnchor="middle" fontSize={9} fill="#94a3b8">{v}</text>
+            <line x1={pL + ((v - 1) / 4) * cW} y1={pT} x2={pL + ((v - 1) / 4) * cW} y2={pT + cH} stroke="var(--color-muted)" strokeWidth={1} />
+            <text x={pL + ((v - 1) / 4) * cW} y={pT + cH + 14} textAnchor="middle" fontSize={9} fill="var(--color-muted-foreground)">{v}</text>
           </g>
         ))}
-        <text x={pL + cW / 2} y={h - 2} textAnchor="middle" fontSize={9} fill="#64748b">Average Batch Feedback</text>
+        <text x={pL + cW / 2} y={h - 2} textAnchor="middle" fontSize={9} fill="var(--text-muted)">Average Batch Feedback</text>
         {/* Y axis labels: NPS -100 to 100 */}
         {[-100, -50, 0, 50, 100].map((v) => {
           const y = pT + cH - ((v + 100) / 200) * cH;
           return (
             <g key={v}>
-              <line x1={pL} y1={y} x2={pL + cW} y2={y} stroke="#f1f5f9" strokeWidth={1} />
-              <text x={pL - 4} y={y + 4} textAnchor="end" fontSize={8} fill="#94a3b8">{v}</text>
+              <line x1={pL} y1={y} x2={pL + cW} y2={y} stroke="var(--color-muted)" strokeWidth={1} />
+              <text x={pL - 4} y={y + 4} textAnchor="end" fontSize={8} fill="var(--color-muted-foreground)">{v}</text>
             </g>
           );
         })}
         {/* Zero NPS line */}
-        <line x1={pL} y1={pT + cH / 2} x2={pL + cW} y2={pT + cH / 2} stroke="#e2e8f0" strokeDasharray="4 3" strokeWidth={1} />
+        <line x1={pL} y1={pT + cH / 2} x2={pL + cW} y2={pT + cH / 2} stroke="var(--color-border)" strokeDasharray="4 3" strokeWidth={1} />
         {/* Bubbles */}
         {validData.map((d, i) => {
           const cx = pL + ((d.feedback! - 1) / 4) * cW;
@@ -625,6 +805,7 @@ function QualityBubble({
           const r = 6 + (d.batches / maxBatches) * 14;
           return (
             <g key={i}>
+              <title>{`${d.label}: NPS ${d.nps!.toFixed(1)}, feedback ${d.feedback!.toFixed(2)}, ${d.batches} batches`}</title>
               <circle cx={cx} cy={cy} r={r} fill={d.color} opacity={0.75} />
               <text x={cx} y={cy + 4} textAnchor="middle" fontSize={8} fontWeight={700} fill="#fff">
                 {d.label.length > 5 ? d.label.slice(0, 5) + "…" : d.label}
@@ -659,120 +840,227 @@ interface CoordinatorWorkloadRow {
 
 type ClientStatRow = [string, { batches: number; enrollments: number; hours: number; active: number }];
 
-interface TableColumn<T> {
-  key: string;
-  label: string;
-  /** Raw value the column sorts / filters / searches on. Missing = not sortable. */
-  accessor?: TableAccessor<T>;
-  sortable?: boolean;
+function loadPercent(active: number, total: number): number {
+  return total > 0 ? Math.round((active / total) * 100) : 0;
 }
 
-function activeColumns<T>(columns: readonly TableColumn<T>[]) {
-  return columns.filter((column) => column.sortable !== false && !!column.accessor);
+/** Rows still on screen, used for the `colSpan` of a full-width state row. */
+function visibleColumnCount<K extends string>(
+  keys: readonly { key: K }[],
+  columns: UseColumnVisibilityResult<K>
+): number {
+  return keys.reduce((count, column) => (columns.isVisible(column.key) ? count + 1 : count), 0);
 }
 
-function buildSortAccessors<T>(columns: readonly TableColumn<T>[]): SortAccessors<T> {
-  const accessors: SortAccessors<T> = {};
-  activeColumns(columns).forEach((column) => {
-    if (column.accessor) accessors[column.key] = column.accessor;
-  });
-  return accessors;
+/** Column defs are declared `as const`, so optional fields are read through the declared type. */
+function columnAlign<T, K extends string>(column: TableColumnDef<T, K>): "left" | "center" | "right" {
+  return column.align ?? "left";
 }
 
-function buildSortOptions<T>(columns: readonly TableColumn<T>[]) {
-  return activeColumns(columns).map((column) => ({ key: column.key, label: column.label }));
-}
+// Body cells and headings share one padding constant per table so the grid lines
+// up; the local header shadows are gone in favour of `TABLE_TH_STYLE`.
+const WORKLOAD_TH_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "12px 16px" };
+const WORKLOAD_CELL_STYLE: React.CSSProperties = { padding: "12px 16px" };
+const PORTFOLIO_TH_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "10px 16px" };
+const PORTFOLIO_CELL_STYLE: React.CSSProperties = { padding: "10px 16px" };
+const ACTIVITY_FEED_TH_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "10px 14px" };
+const ACTIVITY_FEED_CELL_STYLE: React.CSSProperties = { padding: "10px 14px" };
 
-function buildFilterFields<T>(columns: readonly TableColumn<T>[], keys: readonly string[]): TableFilterField<T>[] {
-  return keys.flatMap((key) => {
-    const column = columns.find((c) => c.key === key);
-    return column?.accessor ? [{ key: column.key, accessor: column.accessor }] : [];
-  });
-}
+const MANAGER_LEDGER_COLUMNS = [
+  { key: "manager", label: "Manager", accessor: (row: ManagerWorkloadRow) => row.manager.full_name || "" },
+  {
+    key: "team",
+    label: "Team",
+    accessor: (row: ManagerWorkloadRow) => row.manager.team_name || "",
+    filterable: true,
+  },
+  { key: "active", label: "Active", accessor: (row: ManagerWorkloadRow) => row.active },
+  { key: "pending", label: "Pending", accessor: (row: ManagerWorkloadRow) => row.pending },
+  { key: "completed", label: "Completed", accessor: (row: ManagerWorkloadRow) => row.completed },
+  { key: "total", label: "Total", accessor: (row: ManagerWorkloadRow) => row.total },
+  { key: "hours", label: "Hours", accessor: (row: ManagerWorkloadRow) => row.totalHours },
+  { key: "enrollments", label: "Enrollments", accessor: (row: ManagerWorkloadRow) => row.totalEnrollments },
+  { key: "load", label: "Load %", accessor: (row: ManagerWorkloadRow) => loadPercent(row.active, row.total) },
+] as const satisfies readonly TableColumnDef<ManagerWorkloadRow>[];
 
-function buildSearchAccessor<T>(columns: readonly TableColumn<T>[]): TableAccessor<T> {
-  const accessors = activeColumns(columns).flatMap((column) => (column.accessor ? [column.accessor] : []));
-  return (row) =>
-    accessors
-      .map((accessor) => {
-        const value = accessor(row);
-        return isBlankTableValue(value) ? "" : String(value);
-      })
-      .join(" ");
-}
-
-const WORKLOAD_TH_STYLE: React.CSSProperties = { padding: "12px 16px" };
-
-const MANAGER_LEDGER_COLUMNS: readonly TableColumn<ManagerWorkloadRow>[] = [
-  { key: "manager", label: "Manager", accessor: (row) => row.manager.full_name || "" },
-  { key: "team", label: "Team", accessor: (row) => row.manager.team_name || "" },
-  { key: "active", label: "Active", accessor: (row) => row.active },
-  { key: "pending", label: "Pending", accessor: (row) => row.pending },
-  { key: "completed", label: "Completed", accessor: (row) => row.completed },
-  { key: "total", label: "Total", accessor: (row) => row.total },
-  { key: "hours", label: "Hours", accessor: (row) => row.totalHours },
-  { key: "enrollments", label: "Enrollments", accessor: (row) => row.totalEnrollments },
-  { key: "load", label: "Load %", accessor: (row) => (row.total > 0 ? Math.round((row.active / row.total) * 100) : 0) },
-];
+const MANAGER_LEDGER_COLUMN_KEYS = MANAGER_LEDGER_COLUMNS.map((column) => ({
+  key: column.key,
+  label: column.label,
+}));
+type ManagerLedgerColumnKey = (typeof MANAGER_LEDGER_COLUMN_KEYS)[number]["key"];
+const MANAGER_LEDGER_DEFAULT_HIDDEN: readonly ManagerLedgerColumnKey[] = ["hours", "enrollments"];
 
 const MANAGER_LEDGER_SORT_ACCESSORS = buildSortAccessors(MANAGER_LEDGER_COLUMNS);
 const MANAGER_LEDGER_SORT_OPTIONS = buildSortOptions(MANAGER_LEDGER_COLUMNS);
 const MANAGER_LEDGER_SEARCH_ACCESSOR = buildSearchAccessor(MANAGER_LEDGER_COLUMNS);
-const MANAGER_LEDGER_FILTER_FIELDS = buildFilterFields(MANAGER_LEDGER_COLUMNS, ["team"]);
+const MANAGER_LEDGER_FILTER_FIELDS = buildFilterFields(MANAGER_LEDGER_COLUMNS);
 
-const COORDINATOR_LEDGER_COLUMNS: readonly TableColumn<CoordinatorWorkloadRow>[] = [
-  { key: "coordinator", label: "Coordinator", accessor: (row) => row.coordinator.full_name || "" },
-  { key: "team", label: "Team", accessor: (row) => row.coordinator.team_name || "" },
-  { key: "active", label: "Active", accessor: (row) => row.active },
-  { key: "pipeline", label: "In Pipeline", accessor: (row) => row.pending },
-  { key: "completed", label: "Completed", accessor: (row) => row.completed },
-  { key: "total", label: "Total", accessor: (row) => row.total },
-  { key: "hours", label: "Hours", accessor: (row) => row.totalHours },
-  { key: "learners", label: "Enrollments", accessor: (row) => row.totalEnrollments },
-  { key: "capacity", label: "Load %", accessor: (row) => (row.total > 0 ? Math.round((row.active / row.total) * 100) : 0) },
+const MANAGER_LEDGER_CSV: readonly CsvColumn<ManagerWorkloadRow>[] = [
+  { key: "manager", label: "Manager", value: (row) => row.manager.full_name },
+  { key: "email", label: "Email", value: (row) => row.manager.email },
+  { key: "team", label: "Team", value: (row) => row.manager.team_name || "" },
+  { key: "active", label: "Active", value: (row) => row.active },
+  { key: "pending", label: "Pending", value: (row) => row.pending },
+  { key: "completed", label: "Completed", value: (row) => row.completed },
+  { key: "total", label: "Total", value: (row) => row.total },
+  { key: "hours", label: "Hours", value: (row) => Math.round(row.totalHours) },
+  { key: "enrollments", label: "Enrollments", value: (row) => row.totalEnrollments },
+  { key: "load", label: "Load %", value: (row) => loadPercent(row.active, row.total) },
 ];
+
+const COORDINATOR_LEDGER_COLUMNS = [
+  {
+    key: "coordinator",
+    label: "Coordinator",
+    accessor: (row: CoordinatorWorkloadRow) => row.coordinator.full_name || "",
+  },
+  {
+    key: "team",
+    label: "Team",
+    accessor: (row: CoordinatorWorkloadRow) => row.coordinator.team_name || "",
+    filterable: true,
+  },
+  { key: "active", label: "Active", accessor: (row: CoordinatorWorkloadRow) => row.active },
+  { key: "pipeline", label: "In Pipeline", accessor: (row: CoordinatorWorkloadRow) => row.pending },
+  { key: "completed", label: "Completed", accessor: (row: CoordinatorWorkloadRow) => row.completed },
+  { key: "total", label: "Total", accessor: (row: CoordinatorWorkloadRow) => row.total },
+  { key: "hours", label: "Hours", accessor: (row: CoordinatorWorkloadRow) => row.totalHours },
+  { key: "learners", label: "Enrollments", accessor: (row: CoordinatorWorkloadRow) => row.totalEnrollments },
+  {
+    key: "capacity",
+    label: "Load %",
+    accessor: (row: CoordinatorWorkloadRow) => loadPercent(row.active, row.total),
+  },
+] as const satisfies readonly TableColumnDef<CoordinatorWorkloadRow>[];
+
+const COORDINATOR_LEDGER_COLUMN_KEYS = COORDINATOR_LEDGER_COLUMNS.map((column) => ({
+  key: column.key,
+  label: column.label,
+}));
+type CoordinatorLedgerColumnKey = (typeof COORDINATOR_LEDGER_COLUMN_KEYS)[number]["key"];
+const COORDINATOR_LEDGER_DEFAULT_HIDDEN: readonly CoordinatorLedgerColumnKey[] = ["hours", "learners"];
 
 const COORDINATOR_LEDGER_SORT_ACCESSORS = buildSortAccessors(COORDINATOR_LEDGER_COLUMNS);
 const COORDINATOR_LEDGER_SORT_OPTIONS = buildSortOptions(COORDINATOR_LEDGER_COLUMNS);
 const COORDINATOR_LEDGER_SEARCH_ACCESSOR = buildSearchAccessor(COORDINATOR_LEDGER_COLUMNS);
-const COORDINATOR_LEDGER_FILTER_FIELDS = buildFilterFields(COORDINATOR_LEDGER_COLUMNS, ["team"]);
+const COORDINATOR_LEDGER_FILTER_FIELDS = buildFilterFields(COORDINATOR_LEDGER_COLUMNS);
 
-const CLIENT_PORTFOLIO_COLUMNS: readonly TableColumn<ClientStatRow>[] = [
-  { key: "index", label: "#", sortable: false },
-  { key: "client", label: "Client", accessor: (row) => row[0] },
-  { key: "batches", label: "Batches", accessor: (row) => row[1].batches },
-  { key: "active", label: "Active", accessor: (row) => row[1].active },
-  { key: "enrollments", label: "Enrollments", accessor: (row) => row[1].enrollments },
-  { key: "hours", label: "Hours", accessor: (row) => row[1].hours },
+const COORDINATOR_LEDGER_CSV: readonly CsvColumn<CoordinatorWorkloadRow>[] = [
+  { key: "coordinator", label: "Coordinator", value: (row) => row.coordinator.full_name },
+  { key: "email", label: "Email", value: (row) => row.coordinator.email },
+  { key: "team", label: "Team", value: (row) => row.coordinator.team_name || "" },
+  { key: "active", label: "Active", value: (row) => row.active },
+  { key: "pipeline", label: "In Pipeline", value: (row) => row.pending },
+  { key: "completed", label: "Completed", value: (row) => row.completed },
+  { key: "total", label: "Total", value: (row) => row.total },
+  { key: "hours", label: "Hours", value: (row) => Math.round(row.totalHours) },
+  { key: "learners", label: "Enrollments", value: (row) => row.totalEnrollments },
+  { key: "capacity", label: "Load %", value: (row) => loadPercent(row.active, row.total) },
 ];
+
+const CLIENT_PORTFOLIO_COLUMNS = [
+  // Static rank column: a plain heading, no sort and no search haystack.
+  { key: "index", label: "#", sortable: false, accessor: () => "" },
+  {
+    key: "client",
+    label: "Client",
+    accessor: (row: ClientStatRow) => row[0],
+    filterable: true,
+  },
+  { key: "batches", label: "Batches", accessor: (row: ClientStatRow) => row[1].batches },
+  { key: "active", label: "Active", accessor: (row: ClientStatRow) => row[1].active },
+  { key: "enrollments", label: "Enrollments", accessor: (row: ClientStatRow) => row[1].enrollments },
+  { key: "hours", label: "Hours", accessor: (row: ClientStatRow) => row[1].hours },
+] as const satisfies readonly TableColumnDef<ClientStatRow>[];
+
+const CLIENT_PORTFOLIO_COLUMN_KEYS = CLIENT_PORTFOLIO_COLUMNS.map((column) => ({
+  key: column.key,
+  label: column.label,
+}));
+type ClientPortfolioColumnKey = (typeof CLIENT_PORTFOLIO_COLUMN_KEYS)[number]["key"];
 
 const CLIENT_PORTFOLIO_SORT_ACCESSORS = buildSortAccessors(CLIENT_PORTFOLIO_COLUMNS);
 const CLIENT_PORTFOLIO_SORT_OPTIONS = buildSortOptions(CLIENT_PORTFOLIO_COLUMNS);
 const CLIENT_PORTFOLIO_SEARCH_ACCESSOR = buildSearchAccessor(CLIENT_PORTFOLIO_COLUMNS);
-const CLIENT_PORTFOLIO_FILTER_FIELDS = buildFilterFields(CLIENT_PORTFOLIO_COLUMNS, ["client"]);
+const CLIENT_PORTFOLIO_FILTER_FIELDS = buildFilterFields(CLIENT_PORTFOLIO_COLUMNS);
 
-const ACTIVITY_FEED_COLUMNS: readonly TableColumn<Batch>[] = [
-  { key: "batchId", label: "Batch ID", accessor: (row) => row.batch_id || "" },
-  { key: "client", label: "Client", accessor: (row) => row.client_name || "" },
-  { key: "program", label: "Program", accessor: (row) => row.program_name || "" },
-  { key: "domain", label: "Domain", accessor: (row) => row.domain || "" },
-  { key: "mode", label: "Mode", accessor: (row) => row.delivery_mode || "" },
-  { key: "startDate", label: "Start Date", accessor: (row) => row.start_date || "" },
-  { key: "enrollments", label: "Enrollments", accessor: (row) => Number(row.total_enrollments) || 0 },
-  { key: "hours", label: "Hours", accessor: (row) => Number(row.total_hours) || 0 },
-  { key: "status", label: "Status", accessor: (row) => row.status || "" },
+const CLIENT_PORTFOLIO_CSV: readonly CsvColumn<ClientStatRow>[] = [
+  { key: "client", label: "Client", value: (row) => row[0] },
+  { key: "batches", label: "Batches", value: (row) => row[1].batches },
+  { key: "active", label: "Active", value: (row) => row[1].active },
+  { key: "enrollments", label: "Enrollments", value: (row) => row[1].enrollments },
+  { key: "hours", label: "Hours", value: (row) => Math.round(row[1].hours) },
 ];
+
+const ACTIVITY_FEED_COLUMNS = [
+  { key: "batchId", label: "Batch ID", accessor: (row: Batch) => row.batch_id || "" },
+  {
+    key: "client",
+    label: "Client",
+    accessor: (row: Batch) => row.client_name || "",
+    filterable: true,
+  },
+  { key: "program", label: "Program", accessor: (row: Batch) => row.program_name || "" },
+  {
+    key: "domain",
+    label: "Domain",
+    accessor: (row: Batch) => row.domain || "",
+    filterable: true,
+  },
+  {
+    key: "mode",
+    label: "Mode",
+    accessor: (row: Batch) => row.delivery_mode || "",
+    filterable: true,
+  },
+  { key: "startDate", label: "Start Date", accessor: (row: Batch) => row.start_date || "" },
+  {
+    key: "enrollments",
+    label: "Enrollments",
+    accessor: (row: Batch) => Number(row.total_enrollments) || 0,
+    align: "center",
+  },
+  {
+    key: "hours",
+    label: "Hours",
+    accessor: (row: Batch) => Number(row.total_hours) || 0,
+    align: "center",
+  },
+  {
+    key: "status",
+    label: "Status",
+    accessor: (row: Batch) => row.status || "",
+    filterable: true,
+  },
+] as const satisfies readonly TableColumnDef<Batch>[];
+
+const ACTIVITY_FEED_COLUMN_KEYS = ACTIVITY_FEED_COLUMNS.map((column) => ({
+  key: column.key,
+  label: column.label,
+}));
+type ActivityFeedColumnKey = (typeof ACTIVITY_FEED_COLUMN_KEYS)[number]["key"];
+const ACTIVITY_FEED_DEFAULT_HIDDEN: readonly ActivityFeedColumnKey[] = ["domain"];
 
 const ACTIVITY_FEED_SORT_ACCESSORS = buildSortAccessors(ACTIVITY_FEED_COLUMNS);
 const ACTIVITY_FEED_SORT_OPTIONS = buildSortOptions(ACTIVITY_FEED_COLUMNS);
 const ACTIVITY_FEED_SEARCH_ACCESSOR = buildSearchAccessor(ACTIVITY_FEED_COLUMNS);
-const ACTIVITY_FEED_FILTER_FIELDS = buildFilterFields(ACTIVITY_FEED_COLUMNS, ["client", "domain", "mode", "status"]);
+const ACTIVITY_FEED_FILTER_FIELDS = buildFilterFields(ACTIVITY_FEED_COLUMNS);
 const ACTIVITY_FEED_DESC_FIRST_KEYS = ["startDate"];
 
-const ACTIVITY_FEED_TH_STYLE: React.CSSProperties = { padding: "10px 14px" };
+const ACTIVITY_FEED_CSV: readonly CsvColumn<Batch>[] = [
+  { key: "batch_id", label: "Batch ID" },
+  { key: "client_name", label: "Client", value: (row) => row.client_name || "" },
+  { key: "program_name", label: "Program" },
+  { key: "domain", label: "Domain", value: (row) => row.domain || "" },
+  { key: "delivery_mode", label: "Mode" },
+  { key: "start_date", label: "Start Date", value: (row) => row.start_date || "" },
+  { key: "total_enrollments", label: "Enrollments" },
+  { key: "total_hours", label: "Hours" },
+  { key: "status", label: "Status" },
+];
 
-/** The "Enrollments" and "Hours" cells are centred in the body, so their headings are too. */
-const ACTIVITY_NUMERIC_TH_STYLE: React.CSSProperties = { padding: "10px 14px", textAlign: "center" };
+const PLOTTED_QUALITY_LIMIT = 12;
+const PLOTTED_TECH_LIMIT = 10;
 
 export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoading, currentUser }: EnterpriseDashboardProps) {
   const [period, setPeriod] = useState<TimePeriod>("monthly");
@@ -781,22 +1069,32 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
   // Pagination states
   const [mgrPage, setMgrPage] = useState(1);
-  const [mgrPageSize, setMgrPageSize] = useState(5);
+  const [mgrPageSize, setMgrPageSize] = usePersistentState(
+    "ops.table.manager-ledger.pageSize",
+    5,
+    reviveNumber
+  );
 
   const [coordPage, setCoordPage] = useState(1);
-  const [coordPageSize, setCoordPageSize] = useState(10);
-
-  const [chartPage, setChartPage] = useState(1);
-  const chartPageSize = 6;
+  const [coordPageSize, setCoordPageSize] = usePersistentState(
+    "ops.table.coordinator-ledger.pageSize",
+    10,
+    reviveNumber
+  );
 
   const [activityPage, setActivityPage] = useState(1);
-  const [activityPageSize, setActivityPageSize] = useState(10);
+  const [activityPageSize, setActivityPageSize] = usePersistentState(
+    "ops.table.activity-feed.pageSize",
+    10,
+    reviveNumber
+  );
 
   const [clientPage, setClientPage] = useState(1);
-  const [clientPageSize, setClientPageSize] = useState(10);
-
-  const currentRole = (currentUser?.role || "").toLowerCase();
-  const isOrgAdmin = currentRole === "admin";
+  const [clientPageSize, setClientPageSize] = usePersistentState(
+    "ops.table.client-portfolio.pageSize",
+    10,
+    reviveNumber
+  );
 
   const coordinatorIdsByManager = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -823,45 +1121,45 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   // 3. "only below him" -> only descendants in the reporting tree
   const subordinateUserIds = useMemo(() => {
     if (!currentUser) return new Set<string>();
-    if (isOrgAdmin) {
-      // For Admin, all organization staff members except Admin himself
-      return new Set(users.filter((u) => u.id !== currentUser.id).map((u) => u.id));
-    }
 
     const subordinates = new Set<string>();
-    const queue: string[] = [currentUser.id];
     const visited = new Set<string>([currentUser.id]);
+    const queue: string[] = [currentUser.id];
 
-    while (queue.length > 0) {
-      const parentId = queue.shift()!;
-      users.forEach((u) => {
-        if (visited.has(u.id)) return;
-        const matchesManagerId = u.manager_id === parentId;
-        const parentUser = users.find((p) => p.id === parentId);
-        const matchesManagerName =
-          parentUser && u.manager_name && u.manager_name.toLowerCase() === parentUser.full_name.toLowerCase();
+    // Reporting edges resolved once: name matching used to be a `users.find`
+    // inside the traversal, so each visited parent rescanned the whole roster.
+    const idToParentId = new Map<string, string>();
+    const nameToId = new Map<string, string>();
+    users.forEach((u) => {
+      const name = (u.full_name ?? "").trim().toLowerCase();
+      if (name && !nameToId.has(name)) nameToId.set(name, u.id);
+    });
+    users.forEach((u) => {
+      const parentId = u.manager_id || nameToId.get((u.manager_name ?? "").trim().toLowerCase());
+      if (parentId) idToParentId.set(u.id, parentId);
+    });
+    const childIdsByParentId = new Map<string, string[]>();
+    idToParentId.forEach((parentId, childId) => {
+      const siblings = childIdsByParentId.get(parentId);
+      if (siblings) siblings.push(childId);
+      else childIdsByParentId.set(parentId, [childId]);
+    });
 
-        if (matchesManagerId || matchesManagerName) {
-          visited.add(u.id);
-          subordinates.add(u.id);
-          queue.push(u.id);
-        }
-      });
+    const enqueue = (id: string) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      subordinates.add(id);
+      queue.push(id);
+    };
 
-      const mappedCoordinators = coordinatorIdsByManager.get(parentId);
-      if (mappedCoordinators) {
-        mappedCoordinators.forEach((coordId) => {
-          if (!visited.has(coordId)) {
-            visited.add(coordId);
-            subordinates.add(coordId);
-            queue.push(coordId);
-          }
-        });
-      }
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const parentId = queue[cursor];
+      childIdsByParentId.get(parentId)?.forEach(enqueue);
+      coordinatorIdsByManager.get(parentId)?.forEach(enqueue);
     }
 
     return subordinates;
-  }, [currentUser, isOrgAdmin, users, coordinatorIdsByManager]);
+  }, [currentUser, users, coordinatorIdsByManager]);
 
   // Subordinate managers strictly below currentUser
   const managers = useMemo(() => {
@@ -885,7 +1183,6 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
   // Batches scoped to current user and their subordinates
   const scopedBatches = useMemo(() => {
-    if (isOrgAdmin) return batches;
     if (!currentUser) return batches;
 
     return batches.filter((b) => {
@@ -897,21 +1194,20 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
       if (b.coordinator_id && subordinateUserIds.has(b.coordinator_id)) return true;
       return false;
     });
-  }, [batches, isOrgAdmin, currentUser, subordinateUserIds]);
+  }, [batches, currentUser, subordinateUserIds]);
 
-  // Automatically switch tab if no subordinate managers exist
+  // Land on a workload tab that has content, but never bounce a user off the tab
+  // they chose just because `users` was re-fetched underneath them.
   React.useEffect(() => {
-    if (managers.length === 0 && coordinators.length > 0) {
-      setWorkloadTab("coordinators");
-    } else if (managers.length > 0) {
-      setWorkloadTab("managers");
-    }
+    setWorkloadTab((current) => {
+      if (current === "managers" ? managers.length > 0 : coordinators.length > 0) return current;
+      return coordinators.length > 0 ? "coordinators" : "managers";
+    });
   }, [managers.length, coordinators.length]);
 
   // Reset pagination pages on period filter change
   React.useEffect(() => {
     setActivityPage(1);
-    setChartPage(1);
     setMgrPage(1);
     setCoordPage(1);
     setClientPage(1);
@@ -980,11 +1276,6 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     [managers, activeBatchesDataset, coordinatorIdsByManager]
   );
 
-  const paginatedManagerWorkload = useMemo(() => {
-    const start = (mgrPage - 1) * mgrPageSize;
-    return managerWorkload.slice(start, start + mgrPageSize);
-  }, [managerWorkload, mgrPage, mgrPageSize]);
-
   const coordinatorWorkload: CoordinatorWorkloadRow[] = useMemo(
     () =>
       coordinators
@@ -1003,11 +1294,6 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
         .sort((a, b) => b.active - a.active),
     [coordinators, activeBatchesDataset]
   );
-
-  const paginatedCoordinatorWorkload = useMemo(() => {
-    const start = (coordPage - 1) * coordPageSize;
-    return coordinatorWorkload.slice(start, start + coordPageSize);
-  }, [coordinatorWorkload, coordPage, coordPageSize]);
 
   const clientStats: ClientStatRow[] = useMemo(() => {
     const map: Record<string, { batches: number; enrollments: number; hours: number; active: number }> = {};
@@ -1097,6 +1383,36 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     return activityFeedRows.slice(start, start + activityPageSize);
   }, [activityFeedRows, activityPage, activityPageSize]);
 
+  // The workload bar charts read the same rows as their ledger tables, so a
+  // search or filter typed into either table moves both.
+  const managerColumns = useColumnVisibility<ManagerLedgerColumnKey>({
+    columns: MANAGER_LEDGER_COLUMN_KEYS,
+    defaultHidden: MANAGER_LEDGER_DEFAULT_HIDDEN,
+    storageKey: "ops.table.manager-ledger.columns",
+  });
+  const coordinatorColumns = useColumnVisibility<CoordinatorLedgerColumnKey>({
+    columns: COORDINATOR_LEDGER_COLUMN_KEYS,
+    defaultHidden: COORDINATOR_LEDGER_DEFAULT_HIDDEN,
+    storageKey: "ops.table.coordinator-ledger.columns",
+  });
+  const clientColumns = useColumnVisibility<ClientPortfolioColumnKey>({
+    columns: CLIENT_PORTFOLIO_COLUMN_KEYS,
+    storageKey: "ops.table.client-portfolio.columns",
+  });
+  const activityColumns = useColumnVisibility<ActivityFeedColumnKey>({
+    columns: ACTIVITY_FEED_COLUMN_KEYS,
+    defaultHidden: ACTIVITY_FEED_DEFAULT_HIDDEN,
+    storageKey: "ops.table.activity-feed.columns",
+  });
+
+  const managerVisibleColumnCount = visibleColumnCount(MANAGER_LEDGER_COLUMN_KEYS, managerColumns);
+  const coordinatorVisibleColumnCount = visibleColumnCount(
+    COORDINATOR_LEDGER_COLUMN_KEYS,
+    coordinatorColumns
+  );
+  const clientVisibleColumnCount = visibleColumnCount(CLIENT_PORTFOLIO_COLUMN_KEYS, clientColumns);
+  const activityVisibleColumnCount = visibleColumnCount(ACTIVITY_FEED_COLUMN_KEYS, activityColumns);
+
   const modeStats = useMemo(() => {
     const map: Record<string, number> = {};
     activeBatchesDataset.forEach((b) => {
@@ -1147,10 +1463,8 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
   // Only include teams that belong to the current manager's own team (e.g. Delivery, not Finance).
   // Finance managers may appear as subordinates of this user, but their team is excluded here.
-  // Admins see all teams.
   const teamList = useMemo(() => {
     const all = Array.from(teamMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    if (isOrgAdmin) return all;
 
     // Derive the manager's own team_id: prefer currentUser.team_id, fallback to looking up
     // the full user record from the users array (which is loaded from the admin API).
@@ -1170,7 +1484,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
           (subordinateUserIds.has(u.id) || u.id === currentUser?.id)
       );
     });
-  }, [teamMap, isOrgAdmin, users, subordinateUserIds, currentUser]);
+  }, [teamMap, users, subordinateUserIds, currentUser]);
 
 
   // Per-team member role composition — scoped to subordinate members only (not the full team roster)
@@ -1179,13 +1493,13 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     teamList.forEach((t) => result.set(t.id, {}));
     users.forEach((u) => {
       if (!u.team_id || !result.has(u.team_id)) return;
-      // Non-admin: only count users in the manager's direct-report hierarchy
-      if (!isOrgAdmin && !subordinateUserIds.has(u.id) && u.id !== currentUser?.id) return;
+      // Only count users in the manager's direct-report hierarchy
+      if (!subordinateUserIds.has(u.id) && u.id !== currentUser?.id) return;
       const rec = result.get(u.team_id)!;
       rec[u.role] = (rec[u.role] || 0) + 1;
     });
     return result;
-  }, [teamList, users, isOrgAdmin, subordinateUserIds, currentUser]);
+  }, [teamList, users, subordinateUserIds, currentUser]);
 
   // Per-team batch stats (linked via primary_manager or coordinator who belongs to that team)
   const teamBatchStats = useMemo(() => {
@@ -1240,6 +1554,17 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     }).filter((t) => t.memberCount > 0 || t.total > 0)
   , [teamList, teamBatchStats, teamRoleComposition]);
 
+  // Ranking copies: sorting `teamKpiData` in place reordered the memoised array
+  // itself, so the grid below it rendered in whatever order the last render left.
+  const teamsByHours = useMemo(
+    () => [...teamKpiData].sort((a, b) => b.hours - a.hours),
+    [teamKpiData]
+  );
+  const teamsByNps = useMemo(
+    () => teamKpiData.filter((t) => t.avgNps !== null).sort((a, b) => (b.avgNps || 0) - (a.avgNps || 0)),
+    [teamKpiData]
+  );
+
   // City / location stats
   const cityStats = useMemo(() => {
     const map: Record<string, { batches: number; hours: number; enrollments: number }> = {};
@@ -1267,7 +1592,6 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     return Object.entries(map)
       .filter(([, v]) => v.npsCount > 0 || v.fbCount > 0)
       .sort((a, b) => b[1].batches - a[1].batches)
-      .slice(0, 12)
       .map(([label, v], i) => ({
         label,
         nps: v.npsCount > 0 ? v.npsSum / v.npsCount : null,
@@ -1276,6 +1600,13 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
         color: BUBBLE_COLORS[i % BUBBLE_COLORS.length],
       }));
   }, [activeBatchesDataset]);
+
+  // The matrix is capped, so the overflow is disclosed next to the legend.
+  const plottedQualityData = useMemo(
+    () => clientQualityData.slice(0, PLOTTED_QUALITY_LIMIT),
+    [clientQualityData]
+  );
+  const hiddenQualityClientCount = clientQualityData.length - plottedQualityData.length;
 
   // Technology breakdown
   const techStats = useMemo(() => {
@@ -1302,7 +1633,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   if (isLoading) {
     return (
       <div style={{ textAlign: "center", padding: "64px 0" }}>
-        <RefreshCw className="animate-spin" size={32} color="#0b5cab" style={{ margin: "0 auto 12px" }} />
+        <RefreshCw className="mx-auto mb-3 animate-spin text-primary" size={32} aria-hidden="true" />
         <div style={{ color: "var(--text-muted)", fontWeight: 600 }}>Loading enterprise analytics...</div>
       </div>
     );
@@ -1312,69 +1643,37 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       {/* Header & Filter Controls */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14 }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <h2 style={{ fontSize: "1.45rem", fontWeight: 800, color: "var(--text-main)", margin: 0 }}>
               Team Analytics & Operations Command
             </h2>
-            <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "#dbeafe", color: "#0b5cab", padding: "3px 8px", borderRadius: 12 }}>
-              {isOrgAdmin ? "Executive View (All Teams)" : `Team Scope: ${currentUser?.full_name || "Manager View"}`}
+            <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "var(--color-primary-light)", color: "var(--color-primary)", padding: "3px 8px", borderRadius: 12 }}>
+              {`Team Scope: ${currentUser?.full_name || "Manager View"}`}
             </span>
           </div>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0 0" }}>
-            {isOrgAdmin
-              ? "Organization-wide visual workload distribution, operational throughput, and capacity analytics."
-              : `Visual workload analytics strictly scoped to reporting personnel below ${currentUser?.full_name || "your management line"}.`}
+            {`Visual workload analytics strictly scoped to reporting personnel below ${currentUser?.full_name || "your management line"}.`}
           </p>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Horizon Period Selector with Dynamic Live Counts */}
-          <div style={{ display: "flex", gap: 4, background: "#f1f5f9", borderRadius: 10, padding: "4px" }}>
-            {(Object.keys(PERIOD_LABELS) as TimePeriod[]).map((p) => {
-              const count = periodCounts[p];
-              const isSelected = period === p;
-              return (
-                <button
-                  key={p}
-                  onClick={() => setPeriod(p)}
-                  style={{
-                    padding: "6px 13px",
-                    borderRadius: 7,
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: "0.78rem",
-                    fontWeight: 700,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    background: isSelected ? "linear-gradient(135deg,#0b5cab,#1d6ed8)" : "transparent",
-                    color: isSelected ? "#fff" : "var(--text-dim)",
-                    boxShadow: isSelected ? "0 2px 6px rgba(11,92,171,0.25)" : "none",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <span>{PERIOD_LABELS[p]}</span>
-                  <span
-                    style={{
-                      fontSize: "0.68rem",
-                      fontWeight: 800,
-                      padding: "1px 6px",
-                      borderRadius: 10,
-                      background: isSelected ? "rgba(255,255,255,0.28)" : "#e2e8f0",
-                      color: isSelected ? "#fff" : "var(--text-dim)",
-                    }}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <SegmentedControl
+            label="Reporting horizon"
+            value={period}
+            onChange={setPeriod}
+            options={(Object.keys(PERIOD_LABELS) as TimePeriod[]).map((p) => ({
+              value: p,
+              label: PERIOD_LABELS[p],
+              count: periodCounts[p],
+            }))}
+          />
 
           {/* Active Filter Scope Info / Reset */}
           {period !== "all" ? (
             <button
+              type="button"
               onClick={() => setPeriod("all")}
               className="btn btn-secondary"
               style={{
@@ -1383,13 +1682,13 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 display: "flex",
                 alignItems: "center",
                 gap: 5,
-                color: "#0b5cab",
-                border: "1px solid #bfdbfe",
-                background: "#eff6ff",
+                color: "var(--color-primary)",
+                border: "1px solid var(--color-primary-light)",
+                background: "var(--color-primary-light)",
               }}
               title="Reset horizon to show all batches"
             >
-              <RefreshCw size={12} />
+              <RefreshCw size={12} aria-hidden="true" />
               <span>Reset (All {batches.length})</span>
             </button>
           ) : (
@@ -1402,14 +1701,14 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
       {/* KPI Strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(185px, 1fr))", gap: 14 }}>
-        <KpiCard label="Total Batches" value={totalBatches} sub="Under governance" color="#0b5cab" icon={Briefcase} />
+        <KpiCard label="Total Batches" value={totalBatches} sub="Under governance" color="var(--color-primary)" icon={Briefcase} />
         <KpiCard label="Active Batches" value={activeBatchesCount} sub={`${activeRate}% of portfolio`} color="#8b5cf6" icon={Activity} />
-        <KpiCard label="Total Enrollments" value={totalEnrollments.toLocaleString()} sub="Learners deployed" color="#06b6d4" icon={Users} />
-        <KpiCard label="Scheduled Hours" value={`${Math.round(totalHours).toLocaleString()}h`} sub="Curriculum delivery" color="#f59e0b" icon={Clock} />
-        <KpiCard label="Completed" value={completedBatches} sub={`${completionRate}% completion rate`} color="#16a34a" icon={CheckCircle2} />
+        <KpiCard label="Total Enrollments" value={totalEnrollments.toLocaleString()} sub="Learners deployed" color="var(--color-info)" icon={Users} />
+        <KpiCard label="Scheduled Hours" value={`${Math.round(totalHours).toLocaleString()}h`} sub="Curriculum delivery" color="var(--color-warning)" icon={Clock} />
+        <KpiCard label="Completed" value={completedBatches} sub={`${completionRate}% completion rate`} color="var(--color-success)" icon={CheckCircle2} />
         <KpiCard label="Pending Approvals" value={pendingApprovals} sub="Awaiting signoff" color="#f97316" icon={AlertTriangle} />
         <KpiCard label="On Hold" value={onHoldBatches} sub="Action required" color="#d97706" icon={Shield} />
-        <KpiCard label="Cancellations" value={cancelledBatches} sub={`${cancellationRate}% cancellation rate`} color="#ef4444" icon={TrendingDown} />
+        <KpiCard label="Cancellations" value={cancelledBatches} sub={`${cancellationRate}% cancellation rate`} color="var(--color-destructive)" icon={TrendingDown} />
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
@@ -1425,7 +1724,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               sub="Per-team batch delivery KPIs, member breakdown and quality scores"
               icon={Users}
             />
-            <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "#f1f5f9", color: "var(--text-dim)", padding: "3px 9px", borderRadius: 12 }}>
+            <span style={{ fontSize: "0.72rem", fontWeight: 700, background: "var(--color-muted)", color: "var(--text-dim)", padding: "3px 9px", borderRadius: 12 }}>
               {teamKpiData.length} Teams
             </span>
           </div>
@@ -1438,19 +1737,20 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               return (
                 <div
                   key={t.team.id}
+                  className="min-w-0"
                   style={{
                     border: "1px solid var(--border-subtle)",
                     borderRadius: 12,
                     padding: "16px 18px",
-                    background: `${color}05`,
+                    background: tint(color, 0.03),
                     borderLeft: `4px solid ${color}`,
                     position: "relative",
                     overflow: "hidden",
                   }}
                 >
                   {/* Team header */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                    <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+                    <div className="min-w-0">
                       <div style={{ fontWeight: 800, fontSize: "0.92rem", color, lineHeight: 1.2 }}>{t.team.name}</div>
                       <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 600, marginTop: 2 }}>{t.team.department}</div>
                     </div>
@@ -1458,14 +1758,14 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                   </div>
 
                   {/* 4-grid KPI */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div className="grid grid-cols-2 gap-2.5" style={{ marginBottom: 12 }}>
                     {[
                       { label: "Members", val: totalMembers, col: color },
                       { label: "Active Batches", val: t.active, col: "#8b5cf6" },
-                      { label: "Completed", val: t.completed, col: "#16a34a" },
-                      { label: "Hours", val: `${Math.round(t.hours)}h`, col: "#f59e0b" },
+                      { label: "Completed", val: t.completed, col: "var(--color-success)" },
+                      { label: "Hours", val: `${Math.round(t.hours)}h`, col: "var(--color-warning)" },
                     ].map(({ label, val, col }) => (
-                      <div key={label}>
+                      <div key={label} style={{ minWidth: 0 }}>
                         <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>{label}</div>
                         <div style={{ fontSize: "1.05rem", fontWeight: 800, color: col }}>{val}</div>
                       </div>
@@ -1479,9 +1779,9 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                         Manager: "#0b5cab", Coordinator: "#06b6d4",
                         Faculty: "#8b5cf6", Sales: "#f59e0b", Admin: "#ef4444",
                       };
-                      const rc = roleColors[role] || "#94a3b8";
+                      const rc = roleColors[role] || "var(--color-muted-foreground)";
                       return (
-                        <span key={role} style={{ fontSize: "0.65rem", fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: `${rc}15`, color: rc, border: `1px solid ${rc}30` }}>
+                        <span key={role} style={{ fontSize: "0.65rem", fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: tint(rc, 0.09), color: rc, border: `1px solid ${tint(rc, 0.2)}` }}>
                           {role}: {count}
                         </span>
                       );
@@ -1492,20 +1792,20 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                   <div style={{ display: "flex", gap: 14, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
                     <div>
                       <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>Avg NPS</div>
-                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: t.avgNps !== null ? (t.avgNps >= 50 ? "#16a34a" : t.avgNps >= 0 ? "#f59e0b" : "#ef4444") : "#94a3b8" }}>
+                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: t.avgNps !== null ? (t.avgNps >= 50 ? "var(--color-success)" : t.avgNps >= 0 ? "var(--color-warning)" : "var(--color-destructive)") : "var(--color-muted-foreground)" }}>
                         {t.avgNps !== null ? t.avgNps.toFixed(1) : "—"}
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>Avg Feedback</div>
-                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: t.avgFeedback !== null ? (t.avgFeedback >= 4 ? "#16a34a" : t.avgFeedback >= 3 ? "#f59e0b" : "#ef4444") : "#94a3b8" }}>
+                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: t.avgFeedback !== null ? (t.avgFeedback >= 4 ? "var(--color-success)" : t.avgFeedback >= 3 ? "var(--color-warning)" : "var(--color-destructive)") : "var(--color-muted-foreground)" }}>
                         {t.avgFeedback !== null ? t.avgFeedback.toFixed(2) : "—"}
                         {t.avgFeedback !== null && <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 500 }}> / 5</span>}
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", fontWeight: 700, textTransform: "uppercase" }}>Enrollments</div>
-                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: "#06b6d4" }}>{t.enrollments.toLocaleString()}</div>
+                      <div style={{ fontSize: "0.95rem", fontWeight: 800, color: "var(--color-info)" }}>{t.enrollments.toLocaleString()}</div>
                     </div>
                   </div>
                 </div>
@@ -1523,38 +1823,23 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             sub="Detailed cross-team performance, composition, and quality analysis"
             icon={BarChart3}
           />
-          <div style={{ display: "flex", gap: 4, background: "#f8fafc", padding: "4px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
-            {(["comparison", "composition", "quality"] as const).map((tab) => {
-              const labels = { comparison: "📊 Delivery Comparison", composition: "🧩 Role Composition", quality: "⭐ Quality Matrix" };
-              return (
-                <button
-                  key={tab}
-                  onClick={() => setTeamAnalyticsTab(tab)}
-                  style={{
-                    padding: "6px 13px",
-                    borderRadius: 6,
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: "0.77rem",
-                    fontWeight: 700,
-                    background: teamAnalyticsTab === tab ? "linear-gradient(135deg,#0b5cab,#1d6ed8)" : "transparent",
-                    color: teamAnalyticsTab === tab ? "#fff" : "var(--text-dim)",
-                    transition: "all 0.2s",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {labels[tab]}
-                </button>
-              );
-            })}
-          </div>
+          <SegmentedControl
+            label="Team analytics view"
+            value={teamAnalyticsTab}
+            onChange={setTeamAnalyticsTab}
+            options={[
+              { value: "comparison", label: "📊 Delivery Comparison" },
+              { value: "composition", label: "🧩 Role Composition" },
+              { value: "quality", label: "⭐ Quality Matrix" },
+            ]}
+          />
         </div>
 
         {/* Tab: Delivery Comparison */}
         {teamAnalyticsTab === "comparison" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             {/* Left: Grouped bar chart per team */}
-            <div>
+            <div className="min-w-0">
               <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 14 }}>Batch Delivery Status by Team</div>
               {teamKpiData.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: "0.82rem" }}>No team data available.</div>
@@ -1575,16 +1860,14 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             </div>
 
             {/* Right: Hours delivered per team */}
-            <div>
+            <div className="min-w-0">
               <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 14 }}>Training Hours Delivered per Team</div>
               {teamKpiData.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: "0.82rem" }}>No team data available.</div>
               ) : (
                 <RankedBars
-                  data={teamKpiData
-                    .sort((a, b) => b.hours - a.hours)
-                    .map((t) => ({ label: t.team.name, value: Math.round(t.hours), sub: "h" }))}
-                  color="#0b5cab"
+                  data={teamsByHours.map((t) => ({ label: t.team.name, value: Math.round(t.hours), sub: "h" }))}
+                  color="var(--color-primary)"
                   maxItems={8}
                 />
               )}
@@ -1610,7 +1893,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                       <TeamRoleDonut counts={composition} size={64} />
                       <div style={{ flex: 1 }}>
                         {Object.entries(composition).map(([role, count]) => {
-                          const rc = roleColors[role] || "#94a3b8";
+                          const rc = roleColors[role] || "var(--color-muted-foreground)";
                           const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                           return (
                             <div key={role} style={{ marginBottom: 5 }}>
@@ -1618,7 +1901,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                                 <span style={{ fontSize: "0.68rem", fontWeight: 700, color: rc }}>{role}</span>
                                 <span style={{ fontSize: "0.68rem", color: "var(--text-dim)" }}>{count} ({pct}%)</span>
                               </div>
-                              <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2 }}>
+                              <div style={{ height: 4, background: "var(--color-muted)", borderRadius: 2 }}>
                                 <div style={{ width: `${pct}%`, height: "100%", background: rc, borderRadius: 2 }} />
                               </div>
                             </div>
@@ -1634,23 +1917,23 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             {/* Technology breakdown */}
             <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 18 }}>
               <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 14 }}>
-                <Layers size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
+                <Layers size={14} style={{ marginRight: 6, verticalAlign: "middle" }} aria-hidden="true" />
                 Technology Stack Distribution
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
-                {techStats.slice(0, 10).map(([tech, s], i) => {
+                {techStats.slice(0, PLOTTED_TECH_LIMIT).map(([tech, s], i) => {
                   const TECH_COLORS = ["#0b5cab", "#8b5cf6", "#06b6d4", "#f59e0b", "#16a34a", "#f97316", "#ec4899", "#ef4444", "#64748b", "#a855f7"];
                   const c = TECH_COLORS[i % TECH_COLORS.length];
                   const activePct = s.batches > 0 ? Math.round((s.active / s.batches) * 100) : 0;
                   return (
-                    <div key={tech} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: `${c}06` }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 8, background: `${c}18`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <div key={tech} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: tint(c, 0.03) }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: tint(c, 0.09), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <span style={{ fontSize: "0.8rem", fontWeight: 800, color: c }}>{s.batches}</span>
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tech}</div>
                         <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{Math.round(s.hours)}h · {activePct}% active</div>
-                        <div style={{ height: 3, background: "#e2e8f0", borderRadius: 2, marginTop: 3 }}>
+                        <div style={{ height: 3, background: "var(--color-muted)", borderRadius: 2, marginTop: 3 }}>
                           <div style={{ width: `${activePct}%`, height: "100%", background: c, borderRadius: 2 }} />
                         </div>
                       </div>
@@ -1658,72 +1941,79 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                   );
                 })}
               </div>
+              {techStats.length > PLOTTED_TECH_LIMIT && (
+                <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", marginTop: 10 }}>
+                  Showing the top {PLOTTED_TECH_LIMIT} of {techStats.length} technologies.
+                </p>
+              )}
             </div>
           </div>
         )}
 
         {/* Tab: Quality Matrix */}
         {teamAnalyticsTab === "quality" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             {/* NPS vs Feedback bubble chart */}
-            <div>
+            <div className="min-w-0">
               <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 8 }}>Client NPS vs Avg Feedback (bubble = batch volume)</div>
-              <QualityBubble data={clientQualityData} />
+              <QualityBubble data={plottedQualityData} />
               <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: 8, display: "flex", flexWrap: "wrap", gap: 12 }}>
-                {clientQualityData.map((d) => (
+                {plottedQualityData.map((d) => (
                   <div key={d.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
                     <span>{d.label}</span>
                   </div>
                 ))}
               </div>
+              {hiddenQualityClientCount > 0 && (
+                <p style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", marginTop: 8 }}>
+                  +{hiddenQualityClientCount} more client{hiddenQualityClientCount === 1 ? "" : "s"} with NPS or feedback data not plotted ({clientQualityData.length} total).
+                </p>
+              )}
             </div>
 
             {/* City heatmap + team NPS ranked */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
               <div>
                 <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 12 }}>
-                  <MapPin size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                  <MapPin size={13} style={{ marginRight: 5, verticalAlign: "middle" }} aria-hidden="true" />
                   Top Delivery Locations
                 </div>
                 <RankedBars
                   data={cityStats.map(([city, s]) => ({ label: city, value: s.batches }))}
-                  color="#06b6d4"
+                  color="var(--color-info)"
                   maxItems={6}
                 />
               </div>
 
               <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 14 }}>
                 <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 12 }}>
-                  <Award size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                  <Award size={13} style={{ marginRight: 5, verticalAlign: "middle" }} aria-hidden="true" />
                   Team NPS League
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {teamKpiData
-                    .filter((t) => t.avgNps !== null)
-                    .sort((a, b) => (b.avgNps || 0) - (a.avgNps || 0))
-                    .map((t, rank) => {
-                      const nps = t.avgNps!;
-                      const npsColor = nps >= 50 ? "#16a34a" : nps >= 0 ? "#f59e0b" : "#ef4444";
-                      const pct = Math.max(0, Math.min(100, ((nps + 100) / 200) * 100));
-                      return (
-                        <div key={t.team.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{ width: 22, height: 22, borderRadius: "50%", background: rank < 3 ? npsColor : "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.65rem", fontWeight: 800, color: rank < 3 ? "#fff" : "var(--text-dim)", flexShrink: 0 }}>
-                            {rank + 1}
+                  {teamsByNps.map((t, rank) => {
+                    const nps = t.avgNps!;
+                    const npsColor = nps >= 50 ? "var(--color-success)" : nps >= 0 ? "var(--color-warning)" : "var(--color-destructive)";
+                    const pct = Math.max(0, Math.min(100, ((nps + 100) / 200) * 100));
+                    return (
+                      <div key={t.team.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: "50%", background: rank < 3 ? npsColor : "var(--color-muted)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.65rem", fontWeight: 800, color: rank < 3 ? "var(--color-primary-foreground)" : "var(--text-dim)", flexShrink: 0 }}>
+                          {rank + 1}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                            <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)" }}>{t.team.name}</span>
+                            <span style={{ fontSize: "0.78rem", fontWeight: 800, color: npsColor }}>{nps.toFixed(1)}</span>
                           </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                              <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-main)" }}>{t.team.name}</span>
-                              <span style={{ fontSize: "0.78rem", fontWeight: 800, color: npsColor }}>{nps.toFixed(1)}</span>
-                            </div>
-                            <div style={{ height: 5, background: "#f1f5f9", borderRadius: 3 }}>
-                              <div style={{ width: `${pct}%`, height: "100%", background: npsColor, borderRadius: 3 }} />
-                            </div>
+                          <div style={{ height: 5, background: "var(--color-muted)", borderRadius: 3 }}>
+                            <div style={{ width: `${pct}%`, height: "100%", background: npsColor, borderRadius: 3 }} />
                           </div>
                         </div>
-                      );
-                    })}
-                  {teamKpiData.filter((t) => t.avgNps !== null).length === 0 && (
+                      </div>
+                    );
+                  })}
+                  {teamsByNps.length === 0 && (
                     <div style={{ textAlign: "center", padding: "16px 0", color: "var(--text-muted)", fontSize: "0.8rem" }}>No NPS data yet.</div>
                   )}
                 </div>
@@ -1742,40 +2032,15 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             icon={BarChart2}
           />
 
-          <div style={{ display: "flex", gap: 6, background: "#f8fafc", padding: "4px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
-            <button
-              onClick={() => setWorkloadTab("managers")}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 6,
-                border: "none",
-                cursor: "pointer",
-                fontSize: "0.78rem",
-                fontWeight: 700,
-                background: workloadTab === "managers" ? "#0b5cab" : "transparent",
-                color: workloadTab === "managers" ? "#fff" : "var(--text-dim)",
-                transition: "all 0.2s",
-              }}
-            >
-              Managers ({managers.length})
-            </button>
-            <button
-              onClick={() => setWorkloadTab("coordinators")}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 6,
-                border: "none",
-                cursor: "pointer",
-                fontSize: "0.78rem",
-                fontWeight: 700,
-                background: workloadTab === "coordinators" ? "#06b6d4" : "transparent",
-                color: workloadTab === "coordinators" ? "#fff" : "var(--text-dim)",
-                transition: "all 0.2s",
-              }}
-            >
-              Coordinators ({coordinators.length})
-            </button>
-          </div>
+          <SegmentedControl
+            label="Workload view"
+            value={workloadTab}
+            onChange={setWorkloadTab}
+            options={[
+              { value: "managers", label: "Managers", count: managers.length },
+              { value: "coordinators", label: "Coordinators", count: coordinators.length },
+            ]}
+          />
         </div>
 
         {/* Legend */}
@@ -1794,11 +2059,12 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
           </div>
         </div>
 
-        {/* Stacked Visual Bar Graph */}
+        {/* Stacked Visual Bar Graph — reads the ledger's sorted, filtered and
+            paginated rows so the bars and the table below never disagree. */}
         {workloadTab === "managers" ? (
           managerWorkload.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "36px 20px", color: "var(--text-muted)", background: "#f8fafc", borderRadius: 10, border: "1px dashed var(--border-subtle)" }}>
-              <Briefcase size={36} color="#94a3b8" style={{ margin: "0 auto 12px" }} />
+            <div style={{ textAlign: "center", padding: "36px 20px", color: "var(--text-muted)", background: "var(--color-background)", borderRadius: 10, border: "1px dashed var(--border-subtle)" }}>
+              <Briefcase size={36} className="mx-auto mb-3 text-muted-foreground" aria-hidden="true" />
               <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
                 No Subordinate Managers
               </div>
@@ -1807,6 +2073,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               </div>
               {coordinators.length > 0 && (
                 <button
+                  type="button"
                   onClick={() => setWorkloadTab("coordinators")}
                   className="btn btn-primary"
                   style={{ padding: "6px 16px", fontSize: "0.8rem" }}
@@ -1815,25 +2082,37 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 </button>
               )}
             </div>
+          ) : paginatedManagerLedger.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", background: "var(--color-background)", borderRadius: 10, border: "1px dashed var(--border-subtle)" }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+                No managers match your filters
+              </div>
+              <div style={{ fontSize: "0.83rem", color: "var(--text-muted)", marginBottom: 14 }}>
+                Clear the search or team filter in the Manager Workload Ledger to bring the bars back.
+              </div>
+              <Button size="sm" variant="outline" onClick={managerFilters.clearFilters}>
+                Clear filters
+              </Button>
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {paginatedManagerWorkload.map((w) => {
+              {paginatedManagerLedger.map((w) => {
                 const total = Math.max(w.total, 1);
                 const activePct = (w.active / total) * 100;
                 const pendingPct = (w.pending / total) * 100;
                 const completedPct = (w.completed / total) * 100;
-                const load = w.total > 0 ? Math.round((w.active / w.total) * 100) : 0;
-                const loadColor = load >= 75 ? "#ef4444" : load >= 45 ? "#f59e0b" : "#16a34a";
+                const load = loadPercent(w.active, w.total);
+                const loadColor = load >= 75 ? "var(--color-destructive)" : load >= 45 ? "var(--color-warning)" : "var(--color-success)";
                 const loadStatus = load >= 75 ? "Heavy Load" : load >= 45 ? "Optimal" : "Available";
 
                 return (
-                  <div key={w.manager.id} style={{ background: "#f8fafc", borderRadius: 10, padding: "14px 18px", border: "1px solid var(--border-subtle)" }}>
+                  <div key={w.manager.id} style={{ background: "var(--color-background)", borderRadius: 10, padding: "14px 18px", border: "1px solid var(--border-subtle)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#0b5cab,#1d6ed8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.75rem", fontWeight: 800 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                        <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,var(--color-primary),var(--color-primary-hover))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-primary-foreground)", fontSize: "0.75rem", fontWeight: 800, flexShrink: 0 }}>
                           {w.manager.full_name.charAt(0).toUpperCase()}
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <span style={{ fontWeight: 800, fontSize: "0.9rem", color: "var(--text-main)" }}>{w.manager.full_name}</span>
                           <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: 8 }}>
                             {w.manager.team_name || "Delivery Team"}
@@ -1845,14 +2124,14 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                         <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                           <strong>{Math.round(w.totalHours)}h</strong> · <strong>{w.totalEnrollments.toLocaleString()}</strong> learners
                         </span>
-                        <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "3px 9px", borderRadius: 12, background: `${loadColor}18`, color: loadColor, border: `1px solid ${loadColor}40` }}>
+                        <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "3px 9px", borderRadius: 12, background: tint(loadColor, 0.09), color: loadColor, border: `1px solid ${tint(loadColor, 0.25)}` }}>
                           {load}% · {loadStatus}
                         </span>
                       </div>
                     </div>
 
                     {/* Segmented Stacked Bar */}
-                    <div style={{ height: 16, background: "#e2e8f0", borderRadius: 8, overflow: "hidden", display: "flex" }}>
+                    <div style={{ height: 16, background: "var(--color-muted)", borderRadius: 8, overflow: "hidden", display: "flex" }}>
                       {w.active > 0 && (
                         <div
                           style={{ width: `${activePct}%`, background: "#8b5cf6", height: "100%", transition: "width 0.5s ease" }}
@@ -1861,13 +2140,13 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                       )}
                       {w.pending > 0 && (
                         <div
-                          style={{ width: `${pendingPct}%`, background: "#f59e0b", height: "100%", transition: "width 0.5s ease" }}
+                          style={{ width: `${pendingPct}%`, background: "var(--color-warning)", height: "100%", transition: "width 0.5s ease" }}
                           title={`Pending: ${w.pending}`}
                         />
                       )}
                       {w.completed > 0 && (
                         <div
-                          style={{ width: `${completedPct}%`, background: "#16a34a", height: "100%", transition: "width 0.5s ease" }}
+                          style={{ width: `${completedPct}%`, background: "var(--color-success)", height: "100%", transition: "width 0.5s ease" }}
                           title={`Completed: ${w.completed}`}
                         />
                       )}
@@ -1875,47 +2154,59 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: "0.72rem", color: "var(--text-dim)" }}>
                       <span>Active: <strong style={{ color: "#8b5cf6" }}>{w.active}</strong></span>
-                      <span>In Review: <strong style={{ color: "#f59e0b" }}>{w.pending}</strong></span>
-                      <span>Completed: <strong style={{ color: "#16a34a" }}>{w.completed}</strong></span>
+                      <span>In Review: <strong style={{ color: "var(--color-warning)" }}>{w.pending}</strong></span>
+                      <span>Completed: <strong style={{ color: "var(--color-success)" }}>{w.completed}</strong></span>
                       <span>Total Batches: <strong>{w.total}</strong></span>
                     </div>
                   </div>
                 );
               })}
-              {managerWorkload.length > mgrPageSize && (
+              {managerLedgerRows.length > mgrPageSize && (
                 <PaginationControls
+                  label="Manager workload chart pages"
                   currentPage={mgrPage}
-                  totalItems={managerWorkload.length}
+                  totalItems={managerLedgerRows.length}
                   pageSize={mgrPageSize}
                   onPageChange={setMgrPage}
                   onPageSizeChange={setMgrPageSize}
                   pageSizeOptions={[3, 5, 10]}
-                  color="#0b5cab"
                 />
               )}
             </div>
           )
         ) : coordinatorWorkload.length === 0 ? (
           <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>No coordinator workload data available in your scope.</div>
+        ) : paginatedCoordinatorLedger.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", background: "var(--color-background)", borderRadius: 10, border: "1px dashed var(--border-subtle)" }}>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginBottom: 4 }}>
+              No coordinators match your filters
+            </div>
+            <div style={{ fontSize: "0.83rem", color: "var(--text-muted)", marginBottom: 14 }}>
+              Clear the search or team filter in the Coordinator Workload Ledger to bring the bars back.
+            </div>
+            <Button size="sm" variant="outline" onClick={coordinatorFilters.clearFilters}>
+              Clear filters
+            </Button>
+          </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {paginatedCoordinatorWorkload.map((w) => {
+            {paginatedCoordinatorLedger.map((w) => {
               const total = Math.max(w.total, 1);
               const activePct = (w.active / total) * 100;
               const pendingPct = (w.pending / total) * 100;
               const completedPct = (w.completed / total) * 100;
-              const capacity = w.total > 0 ? Math.round((w.active / w.total) * 100) : 0;
-              const capColor = capacity >= 80 ? "#ef4444" : capacity >= 45 ? "#f59e0b" : "#06b6d4";
+              const capacity = loadPercent(w.active, w.total);
+              const capColor = capacity >= 80 ? "var(--color-destructive)" : capacity >= 45 ? "var(--color-warning)" : "var(--color-info)";
               const capStatus = capacity >= 80 ? "High Allocation" : capacity >= 45 ? "Optimal" : "Available Capacity";
 
               return (
-                <div key={w.coordinator.id} style={{ background: "#f8fafc", borderRadius: 10, padding: "14px 18px", border: "1px solid var(--border-subtle)" }}>
+                <div key={w.coordinator.id} style={{ background: "var(--color-background)", borderRadius: 10, padding: "14px 18px", border: "1px solid var(--border-subtle)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.75rem", fontWeight: 800 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.75rem", fontWeight: 800, flexShrink: 0 }}>
                         {w.coordinator.full_name.charAt(0).toUpperCase()}
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <span style={{ fontWeight: 800, fontSize: "0.9rem", color: "var(--text-main)" }}>{w.coordinator.full_name}</span>
                         <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: 8 }}>
                           {w.coordinator.team_name || "Coordination Team"}
@@ -1927,52 +2218,52 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                       <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                         <strong>{Math.round(w.totalHours)}h</strong> · <strong>{w.totalEnrollments.toLocaleString()}</strong> learners
                       </span>
-                      <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "3px 9px", borderRadius: 12, background: `${capColor}18`, color: capColor, border: `1px solid ${capColor}40` }}>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "3px 9px", borderRadius: 12, background: tint(capColor, 0.09), color: capColor, border: `1px solid ${tint(capColor, 0.25)}` }}>
                         {capacity}% · {capStatus}
                       </span>
                     </div>
                   </div>
 
                   {/* Segmented Stacked Bar */}
-                  <div style={{ height: 16, background: "#e2e8f0", borderRadius: 8, overflow: "hidden", display: "flex" }}>
+                  <div style={{ height: 16, background: "var(--color-muted)", borderRadius: 8, overflow: "hidden", display: "flex" }}>
                     {w.active > 0 && (
                       <div
-                        style={{ width: `${activePct}%`, background: "#06b6d4", height: "100%", transition: "width 0.5s ease" }}
+                        style={{ width: `${activePct}%`, background: "var(--color-info)", height: "100%", transition: "width 0.5s ease" }}
                         title={`Active: ${w.active}`}
                       />
                     )}
                     {w.pending > 0 && (
                       <div
-                        style={{ width: `${pendingPct}%`, background: "#f59e0b", height: "100%", transition: "width 0.5s ease" }}
+                        style={{ width: `${pendingPct}%`, background: "var(--color-warning)", height: "100%", transition: "width 0.5s ease" }}
                         title={`Pending: ${w.pending}`}
                       />
                     )}
                     {w.completed > 0 && (
                       <div
-                        style={{ width: `${completedPct}%`, background: "#16a34a", height: "100%", transition: "width 0.5s ease" }}
+                        style={{ width: `${completedPct}%`, background: "var(--color-success)", height: "100%", transition: "width 0.5s ease" }}
                         title={`Completed: ${w.completed}`}
                       />
                     )}
                   </div>
 
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: "0.72rem", color: "var(--text-dim)" }}>
-                    <span>Active Coordinated: <strong style={{ color: "#06b6d4" }}>{w.active}</strong></span>
-                    <span>In Pipeline: <strong style={{ color: "#f59e0b" }}>{w.pending}</strong></span>
-                    <span>Completed: <strong style={{ color: "#16a34a" }}>{w.completed}</strong></span>
+                    <span>Active Coordinated: <strong style={{ color: "var(--color-info)" }}>{w.active}</strong></span>
+                    <span>In Pipeline: <strong style={{ color: "var(--color-warning)" }}>{w.pending}</strong></span>
+                    <span>Completed: <strong style={{ color: "var(--color-success)" }}>{w.completed}</strong></span>
                     <span>Total Batches: <strong>{w.total}</strong></span>
                   </div>
                 </div>
               );
             })}
-            {coordinatorWorkload.length > coordPageSize && (
+            {coordinatorLedgerRows.length > coordPageSize && (
               <PaginationControls
+                label="Coordinator workload chart pages"
                 currentPage={coordPage}
-                totalItems={coordinatorWorkload.length}
+                totalItems={coordinatorLedgerRows.length}
                 pageSize={coordPageSize}
                 onPageChange={setCoordPage}
                 onPageSizeChange={setCoordPageSize}
                 pageSizeOptions={[5, 10, 20]}
-                color="#06b6d4"
               />
             )}
           </div>
@@ -1998,14 +2289,14 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
           <SvgDeliveryTimeline batches={activeBatchesDataset} />
           <div style={{ display: "flex", justifyContent: "space-around", marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border-subtle)", fontSize: "0.75rem", color: "var(--text-muted)" }}>
             <div>Active Delivery Velocity: <strong style={{ color: "#8b5cf6" }}>{activeBatchesCount} batches</strong></div>
-            <div>Completion Velocity: <strong style={{ color: "#16a34a" }}>{completedBatches} batches</strong></div>
+            <div>Completion Velocity: <strong style={{ color: "var(--color-success)" }}>{completedBatches} batches</strong></div>
           </div>
         </div>
       </div>
 
       {/* VISUAL REPRESENTATION 3: Pipeline Funnel + Mode Split */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-        <div className="glass-panel" style={{ padding: "22px 24px" }}>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
+        <div className="glass-panel min-w-0" style={{ padding: "22px 24px" }}>
           <SectionHeader title="Batch Pipeline Funnel" sub="Full lifecycle status distribution" icon={BarChart3} />
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {pipelineFunnel.map((stage) => (
@@ -2013,7 +2304,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 <div style={{ width: 95, fontSize: "0.74rem", fontWeight: 600, color: "var(--text-dim)", textAlign: "right", flexShrink: 0 }}>
                   {stage.label}
                 </div>
-                <div style={{ flex: 1, background: "#f1f5f9", borderRadius: 6, height: 22, position: "relative", overflow: "hidden" }}>
+                <div style={{ flex: 1, background: "var(--color-muted)", borderRadius: 6, height: 22, position: "relative", overflow: "hidden" }}>
                   <div
                     style={{
                       width: `${(stage.count / maxFunnelCount) * 100}%`,
@@ -2025,7 +2316,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                     }}
                   />
                 </div>
-                <div style={{ width: 34, textAlign: "center", fontSize: "0.8rem", fontWeight: 800, color: stage.count > 0 ? stage.color : "#94a3b8" }}>
+                <div style={{ width: 34, textAlign: "center", fontSize: "0.8rem", fontWeight: 800, color: stage.count > 0 ? stage.color : "var(--color-muted-foreground)" }}>
                   {stage.count}
                 </div>
               </div>
@@ -2033,17 +2324,17 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <div className="glass-panel" style={{ padding: "20px 22px", display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{ position: "relative", width: 64, height: 64, flexShrink: 0 }}>
-              <RingProgress percent={completionRate} color="#16a34a" size={64} />
-              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", fontWeight: 800, color: "#16a34a" }}>
+              <RingProgress percent={completionRate} color="var(--color-success)" size={64} />
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", fontWeight: 800, color: "var(--color-success)" }}>
                 {completionRate}%
               </div>
             </div>
             <div>
               <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)" }}>Completion Rate</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#16a34a" }}>{completedBatches} Done</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--color-success)" }}>{completedBatches} Done</div>
               <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>of {totalBatches} total batches</div>
             </div>
           </div>
@@ -2053,7 +2344,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               Delivery Mode Split
             </div>
             {modeStats.map(([mode, count]) => {
-              const modeColor = mode === "Online" ? "#06b6d4" : mode === "Offline" ? "#8b5cf6" : "#f59e0b";
+              const modeColor = mode === "Online" ? "var(--color-info)" : mode === "Offline" ? "#8b5cf6" : "var(--color-warning)";
               return (
                 <div key={mode} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2061,7 +2352,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                     <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-main)" }}>{mode}</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 60, height: 5, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: 60, height: 5, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
                       <div style={{ width: `${totalBatches > 0 ? (count / totalBatches) * 100 : 0}%`, height: "100%", background: modeColor, borderRadius: 3 }} />
                     </div>
                     <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-dim)", width: 28, textAlign: "right" }}>{count}</span>
@@ -2084,28 +2375,29 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             return (
               <div
                 key={domain}
+                className="min-w-0"
                 style={{
                   border: "1px solid var(--border-subtle)",
                   borderRadius: 10,
                   padding: "14px 16px",
-                  background: `${color}06`,
+                  background: tint(color, 0.03),
                   borderLeft: `3px solid ${color}`,
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <span style={{ fontSize: "0.88rem", fontWeight: 800, color }}>{domain}</span>
-                  <span style={{ fontSize: "0.7rem", fontWeight: 700, background: `${color}18`, color, padding: "2px 8px", borderRadius: 10 }}>
+                  <span style={{ fontSize: "0.7rem", fontWeight: 700, background: tint(color, 0.09), color, padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>
                     {stats.active} Active
                   </span>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div className="grid grid-cols-2 gap-2">
                   {[
                     { label: "Total", val: stats.total },
                     { label: "Completed", val: stats.completed },
                     { label: "Enrollments", val: stats.enrollments.toLocaleString() },
                     { label: "Hours", val: `${Math.round(stats.hours)}h` },
                   ].map(({ label, val }) => (
-                    <div key={label}>
+                    <div key={label} style={{ minWidth: 0 }}>
                       <div style={{ fontSize: "0.65rem", color: "var(--text-dim)", fontWeight: 600, textTransform: "uppercase" }}>{label}</div>
                       <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)" }}>{val}</div>
                     </div>
@@ -2116,7 +2408,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                     <span style={{ fontSize: "0.65rem", color: "var(--text-dim)" }}>Completion</span>
                     <span style={{ fontSize: "0.65rem", fontWeight: 700, color }}>{domainCompletion}%</span>
                   </div>
-                  <div style={{ height: 4, background: "#e2e8f0", borderRadius: 3 }}>
+                  <div style={{ height: 4, background: "var(--color-muted)", borderRadius: 3 }}>
                     <div style={{ width: `${domainCompletion}%`, height: "100%", background: color, borderRadius: 3, transition: "width 0.5s" }} />
                   </div>
                 </div>
@@ -2128,14 +2420,22 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
       {/* Detailed Manager Workload Ledger Table */}
       <FullscreenTable
+        stickyHeader
+        stickyTop={NAVBAR_HEIGHT}
         title={
-          <SectionHeader
+          <PanelTitle
             title="Manager Workload Ledger"
-            sub={`${managers.length} manager(s) — detailed operational responsibility and allocation`}
-            icon={Briefcase}
+            description="Detailed operational responsibility and allocation for each subordinate manager."
+            meta={
+              <CountBadge
+                value={`${managerLedgerRows.length} of ${managerWorkload.length}`}
+                label={
+                  managerLedgerRows.length === managerWorkload.length ? "managers" : "managers match"
+                }
+              />
+            }
           />
         }
-        titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
         toolbar={
           <TableFilters
             search={{
@@ -2164,77 +2464,135 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             activeFilterCount={managerFilters.activeFilterCount}
           />
         }
+        actions={
+          <>
+            <ColumnsMenu
+              columns={MANAGER_LEDGER_COLUMN_KEYS}
+              hidden={managerColumns.hidden}
+              onToggle={managerColumns.toggle}
+              onShowAll={managerColumns.showAll}
+            />
+            <ExportButton
+              filename="manager-workload-ledger"
+              columns={MANAGER_LEDGER_CSV}
+              rows={managerLedgerRows}
+            />
+          </>
+        }
         footer={
           managerWorkload.length > 0 ? (
             <PaginationControls
+              label="Manager ledger pages"
               currentPage={mgrPage}
               totalItems={managerLedgerRows.length}
               pageSize={mgrPageSize}
               onPageChange={setMgrPage}
               onPageSizeChange={setMgrPageSize}
               pageSizeOptions={[5, 10, 20]}
-              color="#0b5cab"
             />
           ) : null
         }
       >
-        <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 800 }}>
+          <TableCaption>
+            Subordinate managers with active, pending and completed batch counts, hours, enrollments and load
+          </TableCaption>
           <thead>
             <tr>
-              {MANAGER_LEDGER_COLUMNS.map((column) => (
-                <SortableHeaderCell
-                  key={column.key}
-                  columnKey={column.key}
-                  label={column.label}
-                  sortKey={managerSort.sortKey}
-                  sortDir={managerSort.sortDir}
-                  onSort={managerSort.toggleSort}
-                  style={WORKLOAD_TH_STYLE}
-                />
-              ))}
+              {MANAGER_LEDGER_COLUMNS.map((column) =>
+                managerColumns.isVisible(column.key) ? (
+                  <SortableHeaderCell
+                    key={column.key}
+                    columnKey={column.key}
+                    label={column.label}
+                    sortKey={managerSort.sortKey}
+                    sortDir={managerSort.sortDir}
+                    onSort={managerSort.toggleSort}
+                    style={WORKLOAD_TH_STYLE}
+                  />
+                ) : null
+              )}
             </tr>
           </thead>
           <tbody>
             {managerLedgerRows.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                  No subordinate managers reporting under your direct line.
-                </td>
-              </tr>
+              <TableStateRow colSpan={managerVisibleColumnCount}>
+                {managerFilters.hasActiveFilters ? (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                    title="No managers match your filters"
+                    description="Clear the search or team selection to see every subordinate manager."
+                    action={
+                      <Button size="sm" variant="outline" onClick={managerFilters.clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<Briefcase className="h-5 w-5" aria-hidden="true" />}
+                    title="No subordinate managers"
+                    description="There is no managerial personnel reporting below your direct line."
+                  />
+                )}
+              </TableStateRow>
             ) : (
-              paginatedManagerLedger.map(({ manager, total, active, pending, completed, totalHours, totalEnrollments }) => {
-                const load = total > 0 ? Math.round((active / total) * 100) : 0;
-                const loadColor = load >= 75 ? "#ef4444" : load >= 45 ? "#f59e0b" : "#16a34a";
+              paginatedManagerLedger.map((row) => {
+                const { manager, total, active, pending, completed, totalHours, totalEnrollments } = row;
+                const load = loadPercent(active, total);
+                const loadColor = load >= 75 ? "var(--color-destructive)" : load >= 45 ? "var(--color-warning)" : "var(--color-success)";
                 return (
                   <tr key={manager.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#0b5cab,#1d6ed8)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
-                          {manager.full_name.charAt(0).toUpperCase()}
+                    {managerColumns.isVisible("manager") && (
+                      <td style={WORKLOAD_CELL_STYLE}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,var(--color-primary),var(--color-primary-hover))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-primary-foreground)", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
+                            {manager.full_name.charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700 }}>{manager.full_name}</div>
+                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{manager.email}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{manager.full_name}</div>
-                          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{manager.email}</div>
+                      </td>
+                    )}
+                    {managerColumns.isVisible("team") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{manager.team_name || "—"}</td>
+                    )}
+                    {managerColumns.isVisible("active") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 800, color: "#8b5cf6", fontSize: "1rem" }}>{active}</td>
+                    )}
+                    {managerColumns.isVisible("pending") && (
+                      <td style={WORKLOAD_CELL_STYLE}>
+                        {pending > 0 ? (
+                          <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{pending}</span>
+                        ) : (
+                          <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
+                        )}
+                      </td>
+                    )}
+                    {managerColumns.isVisible("completed") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--color-success)", fontWeight: 600 }}>{completed}</td>
+                    )}
+                    {managerColumns.isVisible("total") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 700 }}>{total}</td>
+                    )}
+                    {managerColumns.isVisible("hours") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
+                    )}
+                    {managerColumns.isVisible("enrollments") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
+                    )}
+                    {managerColumns.isVisible("load") && (
+                      <td style={WORKLOAD_CELL_STYLE}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                          <div style={{ height: 6, width: 72, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{ width: `${load}%`, height: "100%", background: loadColor, borderRadius: 3, transition: "width 0.4s" }} />
+                          </div>
+                          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: loadColor }}>{load}%</span>
                         </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{manager.team_name || "—"}</td>
-                    <td style={{ padding: "12px 16px", fontWeight: 800, color: "#8b5cf6", fontSize: "1rem" }}>{active}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      {pending > 0 ? <span style={{ color: "#f59e0b", fontWeight: 700 }}>{pending}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
-                    </td>
-                    <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{completed}</td>
-                    <td style={{ padding: "12px 16px", fontWeight: 700 }}>{total}</td>
-                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
-                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                        <div style={{ height: 6, width: 72, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
-                          <div style={{ width: `${load}%`, height: "100%", background: loadColor, borderRadius: 3, transition: "width 0.4s" }} />
-                        </div>
-                        <span style={{ fontSize: "0.68rem", fontWeight: 700, color: loadColor }}>{load}%</span>
-                      </div>
-                    </td>
+                      </td>
+                    )}
                   </tr>
                 );
               })
@@ -2245,14 +2603,24 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
       {/* Detailed Coordinator Workload Ledger Table */}
       <FullscreenTable
+        stickyHeader
+        stickyTop={NAVBAR_HEIGHT}
         title={
-          <SectionHeader
+          <PanelTitle
             title="Coordinator Workload Ledger"
-            sub={`${coordinators.length} coordinator(s) in scope — operational capacity & batch tracking`}
-            icon={Users}
+            description="Operational capacity and batch tracking for each coordinator in scope."
+            meta={
+              <CountBadge
+                value={`${coordinatorLedgerRows.length} of ${coordinatorWorkload.length}`}
+                label={
+                  coordinatorLedgerRows.length === coordinatorWorkload.length
+                    ? "coordinators"
+                    : "coordinators match"
+                }
+              />
+            }
           />
         }
-        titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
         toolbar={
           <TableFilters
             search={{
@@ -2281,77 +2649,135 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             activeFilterCount={coordinatorFilters.activeFilterCount}
           />
         }
+        actions={
+          <>
+            <ColumnsMenu
+              columns={COORDINATOR_LEDGER_COLUMN_KEYS}
+              hidden={coordinatorColumns.hidden}
+              onToggle={coordinatorColumns.toggle}
+              onShowAll={coordinatorColumns.showAll}
+            />
+            <ExportButton
+              filename="coordinator-workload-ledger"
+              columns={COORDINATOR_LEDGER_CSV}
+              rows={coordinatorLedgerRows}
+            />
+          </>
+        }
         footer={
           coordinatorWorkload.length > 0 ? (
             <PaginationControls
+              label="Coordinator ledger pages"
               currentPage={coordPage}
               totalItems={coordinatorLedgerRows.length}
               pageSize={coordPageSize}
               onPageChange={setCoordPage}
               onPageSizeChange={setCoordPageSize}
               pageSizeOptions={[5, 10, 20, 50]}
-              color="#06b6d4"
             />
           ) : null
         }
       >
-        <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 800 }}>
+          <TableCaption>
+            Coordinators with active, in-pipeline and completed batch counts, hours, enrollments and allocation
+          </TableCaption>
           <thead>
             <tr>
-              {COORDINATOR_LEDGER_COLUMNS.map((column) => (
-                <SortableHeaderCell
-                  key={column.key}
-                  columnKey={column.key}
-                  label={column.label}
-                  sortKey={coordinatorSort.sortKey}
-                  sortDir={coordinatorSort.sortDir}
-                  onSort={coordinatorSort.toggleSort}
-                  style={WORKLOAD_TH_STYLE}
-                />
-              ))}
+              {COORDINATOR_LEDGER_COLUMNS.map((column) =>
+                coordinatorColumns.isVisible(column.key) ? (
+                  <SortableHeaderCell
+                    key={column.key}
+                    columnKey={column.key}
+                    label={column.label}
+                    sortKey={coordinatorSort.sortKey}
+                    sortDir={coordinatorSort.sortDir}
+                    onSort={coordinatorSort.toggleSort}
+                    style={WORKLOAD_TH_STYLE}
+                  />
+                ) : null
+              )}
             </tr>
           </thead>
           <tbody>
             {coordinatorLedgerRows.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)" }}>
-                  No coordinator data available in your scope.
-                </td>
-              </tr>
+              <TableStateRow colSpan={coordinatorVisibleColumnCount}>
+                {coordinatorFilters.hasActiveFilters ? (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                    title="No coordinators match your filters"
+                    description="Clear the search or team selection to see every coordinator in scope."
+                    action={
+                      <Button size="sm" variant="outline" onClick={coordinatorFilters.clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<Users className="h-5 w-5" aria-hidden="true" />}
+                    title="No coordinators in scope"
+                    description="No coordinator workload data is available in your scope."
+                  />
+                )}
+              </TableStateRow>
             ) : (
-              paginatedCoordinatorLedger.map(({ coordinator, total, active, pending, completed, totalHours, totalEnrollments }) => {
-                const capacity = total > 0 ? Math.round((active / total) * 100) : 0;
-                const capColor = capacity >= 80 ? "#ef4444" : capacity >= 45 ? "#f59e0b" : "#06b6d4";
+              paginatedCoordinatorLedger.map((row) => {
+                const { coordinator, total, active, pending, completed, totalHours, totalEnrollments } = row;
+                const capacity = loadPercent(active, total);
+                const capColor = capacity >= 80 ? "var(--color-destructive)" : capacity >= 45 ? "var(--color-warning)" : "var(--color-info)";
                 return (
                   <tr key={coordinator.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
-                          {coordinator.full_name.charAt(0).toUpperCase()}
+                    {coordinatorColumns.isVisible("coordinator") && (
+                      <td style={WORKLOAD_CELL_STYLE}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
+                            {coordinator.full_name.charAt(0).toUpperCase()}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700 }}>{coordinator.full_name}</div>
+                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{coordinator.email}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{coordinator.full_name}</div>
-                          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{coordinator.email}</div>
+                      </td>
+                    )}
+                    {coordinatorColumns.isVisible("team") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{coordinator.team_name || "—"}</td>
+                    )}
+                    {coordinatorColumns.isVisible("active") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 800, color: "var(--color-info)", fontSize: "1rem" }}>{active}</td>
+                    )}
+                    {coordinatorColumns.isVisible("pipeline") && (
+                      <td style={WORKLOAD_CELL_STYLE}>
+                        {pending > 0 ? (
+                          <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{pending}</span>
+                        ) : (
+                          <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
+                        )}
+                      </td>
+                    )}
+                    {coordinatorColumns.isVisible("completed") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--color-success)", fontWeight: 600 }}>{completed}</td>
+                    )}
+                    {coordinatorColumns.isVisible("total") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 700 }}>{total}</td>
+                    )}
+                    {coordinatorColumns.isVisible("hours") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
+                    )}
+                    {coordinatorColumns.isVisible("learners") && (
+                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
+                    )}
+                    {coordinatorColumns.isVisible("capacity") && (
+                      <td style={WORKLOAD_CELL_STYLE}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                          <div style={{ height: 6, width: 72, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{ width: `${capacity}%`, height: "100%", background: capColor, borderRadius: 3, transition: "width 0.4s" }} />
+                          </div>
+                          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: capColor }}>{capacity}%</span>
                         </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{coordinator.team_name || "—"}</td>
-                    <td style={{ padding: "12px 16px", fontWeight: 800, color: "#06b6d4", fontSize: "1rem" }}>{active}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      {pending > 0 ? <span style={{ color: "#f59e0b", fontWeight: 700 }}>{pending}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
-                    </td>
-                    <td style={{ padding: "12px 16px", color: "#16a34a", fontWeight: 600 }}>{completed}</td>
-                    <td style={{ padding: "12px 16px", fontWeight: 700 }}>{total}</td>
-                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
-                    <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                        <div style={{ height: 6, width: 72, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
-                          <div style={{ width: `${capacity}%`, height: "100%", background: capColor, borderRadius: 3, transition: "width 0.4s" }} />
-                        </div>
-                        <span style={{ fontSize: "0.68rem", fontWeight: 700, color: capColor }}>{capacity}%</span>
-                      </div>
-                    </td>
+                      </td>
+                    )}
                   </tr>
                 );
               })
@@ -2361,16 +2787,25 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
       </FullscreenTable>
 
       {/* Client Portfolio + Executive Quality Panel */}
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">
         <FullscreenTable
+          className="min-w-0"
+          stickyHeader
+          stickyTop={NAVBAR_HEIGHT}
           title={
-            <SectionHeader
+            <PanelTitle
               title="Client Portfolio"
-              sub="Top clients by batch volume and active deployments"
-              icon={Target}
+              description="Top clients by batch volume and active deployments."
+              meta={
+                <CountBadge
+                  value={`${clientPortfolioRows.length} of ${clientStats.length}`}
+                  label={
+                    clientPortfolioRows.length === clientStats.length ? "clients" : "clients match"
+                  }
+                />
+              }
             />
           }
-          titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
           toolbar={
             <TableFilters
               search={{
@@ -2399,26 +2834,43 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
               activeFilterCount={clientFilters.activeFilterCount}
             />
           }
+          actions={
+            <>
+              <ColumnsMenu
+                columns={CLIENT_PORTFOLIO_COLUMN_KEYS}
+                hidden={clientColumns.hidden}
+                onToggle={clientColumns.toggle}
+                onShowAll={clientColumns.showAll}
+              />
+              <ExportButton
+                filename="client-portfolio"
+                columns={CLIENT_PORTFOLIO_CSV}
+                rows={clientPortfolioRows}
+              />
+            </>
+          }
           footer={
             clientPortfolioRows.length > clientPageSize ? (
               <PaginationControls
+                label="Client portfolio pages"
                 currentPage={clientPage}
                 totalItems={clientPortfolioRows.length}
                 pageSize={clientPageSize}
                 onPageChange={setClientPage}
                 onPageSizeChange={setClientPageSize}
                 pageSizeOptions={[5, 10, 20]}
-                color="#0b5cab"
               />
             ) : null
           }
         >
-          <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table className="glass-table table-pin-first-col w-full border-collapse">
+            <TableCaption>Clients ranked by batch volume, with active deployments, enrollments and hours</TableCaption>
             <thead>
               <tr>
-                {CLIENT_PORTFOLIO_COLUMNS.map((column) =>
-                  column.sortable === false ? (
-                    <PlainHeaderCell key={column.key} style={{ padding: "10px 16px" }}>
+                {CLIENT_PORTFOLIO_COLUMNS.map((column) => {
+                  if (!clientColumns.isVisible(column.key)) return null;
+                  return !isSortable(column) ? (
+                    <PlainHeaderCell key={column.key} style={PORTFOLIO_TH_STYLE}>
                       {column.label}
                     </PlainHeaderCell>
                   ) : (
@@ -2429,30 +2881,63 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                       sortKey={clientSort.sortKey}
                       sortDir={clientSort.sortDir}
                       onSort={clientSort.toggleSort}
-                      style={{ padding: "10px 16px" }}
+                      style={PORTFOLIO_TH_STYLE}
                     />
-                  )
-                )}
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
               {clientPortfolioRows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)" }}>
-                    No client data available in this horizon.
-                  </td>
-                </tr>
+                <TableStateRow colSpan={clientVisibleColumnCount}>
+                  {clientFilters.hasActiveFilters ? (
+                    <EmptyState
+                      icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                      title="No clients match your filters"
+                      description="Clear the search or client selection to see the full portfolio."
+                      action={
+                        <Button size="sm" variant="outline" onClick={clientFilters.clearFilters}>
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={<Target className="h-5 w-5" aria-hidden="true" />}
+                      title="No client data in this horizon"
+                      description="Switch the reporting horizon to a wider window to see client activity."
+                    />
+                  )}
+                </TableStateRow>
               ) : (
                 paginatedClientStats.map(([client, stats], i) => (
                   <tr key={client} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.82rem" }}>
-                    <td style={{ padding: "10px 16px", color: "var(--text-dim)", fontWeight: 700 }}>{(clientPage - 1) * clientPageSize + i + 1}</td>
-                    <td style={{ padding: "10px 16px", fontWeight: 700 }}>{client}</td>
-                    <td style={{ padding: "10px 16px", fontWeight: 800, color: "#0b5cab" }}>{stats.batches}</td>
-                    <td style={{ padding: "10px 16px" }}>
-                      {stats.active > 0 ? <span style={{ color: "#16a34a", fontWeight: 700 }}>{stats.active}</span> : <span style={{ color: "#94a3b8" }}>—</span>}
-                    </td>
-                    <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>{stats.enrollments.toLocaleString()}</td>
-                    <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>{Math.round(stats.hours)}h</td>
+                    {clientColumns.isVisible("index") && (
+                      <td style={{ ...PORTFOLIO_CELL_STYLE, color: "var(--text-dim)", fontWeight: 700 }}>
+                        {(clientPage - 1) * clientPageSize + i + 1}
+                      </td>
+                    )}
+                    {clientColumns.isVisible("client") && (
+                      <td style={{ ...PORTFOLIO_CELL_STYLE, fontWeight: 700 }}>{client}</td>
+                    )}
+                    {clientColumns.isVisible("batches") && (
+                      <td style={{ ...PORTFOLIO_CELL_STYLE, fontWeight: 800, color: "var(--color-primary)" }}>{stats.batches}</td>
+                    )}
+                    {clientColumns.isVisible("active") && (
+                      <td style={PORTFOLIO_CELL_STYLE}>
+                        {stats.active > 0 ? (
+                          <span style={{ color: "var(--color-success)", fontWeight: 700 }}>{stats.active}</span>
+                        ) : (
+                          <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
+                        )}
+                      </td>
+                    )}
+                    {clientColumns.isVisible("enrollments") && (
+                      <td style={{ ...PORTFOLIO_CELL_STYLE, color: "var(--text-muted)" }}>{stats.enrollments.toLocaleString()}</td>
+                    )}
+                    {clientColumns.isVisible("hours") && (
+                      <td style={{ ...PORTFOLIO_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(stats.hours)}h</td>
+                    )}
                   </tr>
                 ))
               )}
@@ -2460,24 +2945,24 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
           </table>
         </FullscreenTable>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           {dashboardSummary && (
             <>
-              <div className="glass-panel" style={{ padding: "18px 20px", borderLeft: "4px solid #16a34a" }}>
+              <div className="glass-panel" style={{ padding: "18px 20px", borderLeft: "4px solid var(--color-success)" }}>
                 <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>
                   Overall NPS
                 </div>
-                <div style={{ fontSize: "2.2rem", fontWeight: 800, color: "#16a34a" }}>
+                <div style={{ fontSize: "2.2rem", fontWeight: 800, color: "var(--color-success)" }}>
                   {dashboardSummary.overall_avg_nps !== null ? Number(dashboardSummary.overall_avg_nps).toFixed(1) : "—"}
                   <span style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--text-muted)" }}> / 10</span>
                 </div>
                 <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginTop: 2 }}>NPS Closure Executive Score</div>
               </div>
-              <div className="glass-panel" style={{ padding: "18px 20px", borderLeft: "4px solid #f59e0b" }}>
+              <div className="glass-panel" style={{ padding: "18px 20px", borderLeft: "4px solid var(--color-warning)" }}>
                 <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 6 }}>
                   Average Batch Feedback
                 </div>
-                <div style={{ fontSize: "2.2rem", fontWeight: 800, color: "#f59e0b" }}>
+                <div style={{ fontSize: "2.2rem", fontWeight: 800, color: "var(--color-warning)" }}>
                   {dashboardSummary.overall_avg_feedback !== null ? Number(dashboardSummary.overall_avg_feedback).toFixed(2) : "—"}
                   <span style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--text-muted)" }}> / 5.0</span>
                 </div>
@@ -2490,12 +2975,12 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                 <div style={{ fontSize: "2.2rem", fontWeight: 800, color: "#8b5cf6" }}>
                   {Number(dashboardSummary.faculty_utilization_ratio).toFixed(1)}%
                 </div>
-                <div style={{ height: 6, background: "#ede9fe", borderRadius: 3, marginTop: 8 }}>
+                <div style={{ height: 6, background: "var(--color-muted)", borderRadius: 3, marginTop: 8 }}>
                   <div style={{ width: `${Number(dashboardSummary.faculty_utilization_ratio)}%`, height: "100%", background: "#8b5cf6", borderRadius: 3 }} />
                 </div>
                 <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginTop: 4 }}>Trainer deployment efficiency</div>
               </div>
-              <div className="glass-panel" style={{ padding: "16px 18px", background: "#fff7ed", border: "1px solid #fed7aa" }}>
+              <div className="glass-panel" style={{ padding: "16px 18px", background: "var(--color-warning-light)", border: "1px solid var(--color-border)" }}>
                 <div style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "#ea580c", marginBottom: 8 }}>
                   ⚠ Gate Alerts
                 </div>
@@ -2517,14 +3002,22 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
 
       {/* Period Activity Feed */}
       <FullscreenTable
+        stickyHeader
+        stickyTop={NAVBAR_HEIGHT}
         title={
-          <SectionHeader
+          <PanelTitle
             title={`${PERIOD_LABELS[period]} — Batch Activity`}
-            sub={`${activeBatchesDataset.length} batch(es) in this horizon`}
-            icon={Calendar}
+            description="Every batch in the selected horizon, with client, program and delivery status."
+            meta={
+              <CountBadge
+                value={`${activityFeedRows.length} of ${activeBatchesDataset.length}`}
+                label={
+                  activityFeedRows.length === activeBatchesDataset.length ? "batches" : "batches match"
+                }
+              />
+            }
           />
         }
-        titleStyle={{ marginBottom: 0, whiteSpace: "normal" }}
         toolbar={
           <TableFilters
             search={{
@@ -2577,29 +3070,39 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
             activeFilterCount={activityFilters.activeFilterCount}
           />
         }
+        actions={
+          <>
+            <ColumnsMenu
+              columns={ACTIVITY_FEED_COLUMN_KEYS}
+              hidden={activityColumns.hidden}
+              onToggle={activityColumns.toggle}
+              onShowAll={activityColumns.showAll}
+            />
+            <ExportButton filename="batch-activity" columns={ACTIVITY_FEED_CSV} rows={activityFeedRows} />
+          </>
+        }
         footer={
           activityFeedRows.length > 0 ? (
             <PaginationControls
+              label="Batch activity pages"
               currentPage={activityPage}
               totalItems={activityFeedRows.length}
               pageSize={activityPageSize}
               onPageChange={setActivityPage}
               onPageSizeChange={setActivityPageSize}
               pageSizeOptions={[10, 25, 50, 100]}
-              color="#0b5cab"
             />
           ) : null
         }
       >
-        {activityFeedRows.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "28px 0", color: "var(--text-muted)", fontSize: "0.875rem" }}>
-            No batch activity found for {PERIOD_LABELS[period].toLowerCase()}.
-          </div>
-        ) : (
-          <table className="glass-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
-            <thead>
-              <tr>
-                {ACTIVITY_FEED_COLUMNS.map((column) => (
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 700 }}>
+          <TableCaption>
+            Batch activity for the selected horizon, with client, program, domain, mode, start date and status
+          </TableCaption>
+          <thead>
+            <tr>
+              {ACTIVITY_FEED_COLUMNS.map((column) =>
+                activityColumns.isVisible(column.key) ? (
                   <SortableHeaderCell
                     key={column.key}
                     columnKey={column.key}
@@ -2607,44 +3110,80 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
                     sortKey={activitySort.sortKey}
                     sortDir={activitySort.sortDir}
                     onSort={activitySort.toggleSort}
-                    style={column.key === "enrollments" || column.key === "hours" ? ACTIVITY_NUMERIC_TH_STYLE : ACTIVITY_FEED_TH_STYLE}
+                    style={{ ...ACTIVITY_FEED_TH_STYLE, textAlign: columnAlign(column) }}
                   />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedActivityBatches.map((b) => (
+                ) : null
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {activityFeedRows.length === 0 ? (
+              <TableStateRow colSpan={activityVisibleColumnCount}>
+                {activityFilters.hasActiveFilters ? (
+                  <EmptyState
+                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                    title="No batches match your filters"
+                    description="Clear the search or filter selections to see every batch in this horizon."
+                    action={
+                      <Button size="sm" variant="outline" onClick={activityFilters.clearFilters}>
+                        Clear filters
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<Calendar className="h-5 w-5" aria-hidden="true" />}
+                    title="No batch activity in this horizon"
+                    description={`Nothing was scheduled, started or created for ${PERIOD_LABELS[period].toLowerCase()}.`}
+                  />
+                )}
+              </TableStateRow>
+            ) : (
+              paginatedActivityBatches.map((b) => (
                 <tr key={b.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.81rem" }}>
-                  <td style={{ padding: "10px 14px", fontWeight: 700, color: "#0b5cab", whiteSpace: "nowrap" }}>{b.batch_id}</td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
-                  <td style={{ padding: "10px 14px", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.program_name}>
-                    {b.program_name}
-                  </td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.delivery_mode}</td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{b.start_date ? formatDate(b.start_date) : "—"}</td>
-                  <td style={{ padding: "10px 14px", textAlign: "center" }}>{b.total_enrollments}</td>
-                  <td style={{ padding: "10px 14px", textAlign: "center" }}>{b.total_hours}</td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                    <span
-                      style={{
-                        padding: "3px 9px",
-                        borderRadius: 12,
-                        fontSize: "0.7rem",
-                        fontWeight: 700,
-                        background: `${STATUS_COLORS[b.status] || "#94a3b8"}18`,
-                        color: STATUS_COLORS[b.status] || "#94a3b8",
-                        border: `1px solid ${STATUS_COLORS[b.status] || "#94a3b8"}40`,
-                      }}
+                  {activityColumns.isVisible("batchId") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, fontWeight: 700, color: "var(--color-primary)", whiteSpace: "nowrap" }}>
+                      {b.batch_id}
+                    </td>
+                  )}
+                  {activityColumns.isVisible("client") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, whiteSpace: "nowrap" }}>{b.client_name || "—"}</td>
+                  )}
+                  {activityColumns.isVisible("program") && (
+                    <td
+                      style={{ ...ACTIVITY_FEED_CELL_STYLE, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={b.program_name}
                     >
-                      {b.status}
-                    </span>
-                  </td>
+                      {b.program_name}
+                    </td>
+                  )}
+                  {activityColumns.isVisible("domain") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, whiteSpace: "nowrap" }}>{b.domain || "—"}</td>
+                  )}
+                  {activityColumns.isVisible("mode") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, whiteSpace: "nowrap" }}>{b.delivery_mode}</td>
+                  )}
+                  {activityColumns.isVisible("startDate") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, whiteSpace: "nowrap" }}>
+                      {b.start_date ? formatDate(b.start_date) : "—"}
+                    </td>
+                  )}
+                  {activityColumns.isVisible("enrollments") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, textAlign: "center" }}>{b.total_enrollments}</td>
+                  )}
+                  {activityColumns.isVisible("hours") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, textAlign: "center" }}>{b.total_hours}</td>
+                  )}
+                  {activityColumns.isVisible("status") && (
+                    <td style={{ ...ACTIVITY_FEED_CELL_STYLE, whiteSpace: "nowrap" }}>
+                      <StatusBadge status={b.status} />
+                    </td>
+                  )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              ))
+            )}
+          </tbody>
+        </table>
       </FullscreenTable>
     </div>
   );

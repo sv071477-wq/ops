@@ -1,10 +1,18 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
-import { Layers, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { Layers, Lock, Mail, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ErrorBanner, PANEL_CLASS, PanelTitle } from "@/components/ui/panel";
+import { BRAND_GRADIENT } from "@/components/Navbar";
+import { errorMessage } from "@/lib/notify";
 import { cn } from "@/lib/utils";
+
+const SIGN_IN_FALLBACK = "Unable to sign in. Verify your email and password and try again.";
 
 export default function LoginPage() {
   const { user, login, isLoading: isAuthLoading } = useAuth();
@@ -14,15 +22,18 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const emailId = React.useId();
+  const passwordId = React.useId();
+
+  // The root layout owns the app-wide `metadata`; this route is a client
+  // component, so Next.js disallows exporting its own `metadata` object here.
+  useEffect(() => {
+    document.title = "Sign in · Enterprise Operations Hub";
+  }, []);
 
   useEffect(() => {
     if (!isAuthLoading && user) {
-      const targetRoute = user.role?.toLowerCase() === "admin" ? "/admin" : "/";
-      if (typeof window !== "undefined") {
-        window.location.href = targetRoute;
-      } else {
-        router.push(targetRoute);
-      }
+      router.replace(user.role?.toLowerCase() === "admin" ? "/admin" : "/");
     }
   }, [user, isAuthLoading, router]);
 
@@ -33,106 +44,105 @@ export default function LoginPage() {
 
     try {
       await login(email.trim().toLowerCase(), password);
-    } catch (err: any) {
-      setError(err.message || "Unable to sign in. Verify your email and password and try again.");
+    } catch (err: unknown) {
+      setError(errorMessage(err, SIGN_IN_FALLBACK));
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden p-6">
       {/* Background decoration */}
-      <div className="absolute inset-0 -z-10">
-        <div className="absolute top-1/3 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/3 right-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
+      <div aria-hidden="true" className="absolute inset-0 -z-10">
+        <div className="absolute left-1/4 top-1/3 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
+        <div className="absolute bottom-1/3 right-1/4 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
       </div>
 
-      <div className="w-full max-w-md mx-auto relative z-10">
-        {/* Brand Card */}
-        <div className="text-center mb-8">
-          <div className="w-14 h-14 mx-auto rounded-xl bg-gradient-to-br from-primary to-primary-hover flex items-center justify-center shadow-md mb-4">
-            <Layers size={28} color="#ffffff" />
+      <div className="relative z-10 mx-auto w-full max-w-md">
+        {/* Brand */}
+        <div className="mb-8 text-center">
+          <div
+            style={{ backgroundImage: BRAND_GRADIENT }}
+            className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl shadow-primary"
+          >
+            <Layers size={28} className="text-primary-foreground" aria-hidden="true" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
             Operations Hub Login
           </h1>
-          <p className="text-sm text-muted-foreground mt-2">
+          <p className="mt-2 text-sm text-muted-foreground">
             Sign in to manage batches, faculty utilization, and quality checkpoints
           </p>
         </div>
 
-        {/* Login Form Container */}
-        <div className="glass-panel">
+        {/* Login Form */}
+        <div className={cn(PANEL_CLASS, "p-5 sm:p-6")}>
+          <PanelTitle
+            title="Sign in"
+            description="Use your corporate email address and password."
+          />
+
           {error && (
-            <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 text-destructive p-4 mb-4">
-              <AlertCircle size={18} className="flex-shrink-0" />
-              <span className="text-sm">{error}</span>
-            </div>
+            <ErrorBanner message={error} className="mt-4" />
           )}
 
-          <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-            <div className="space-y-1">
-              <label className="block text-sm font-semibold text-foreground">
+          <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-5">
+            <div className="space-y-1.5">
+              <Label htmlFor={emailId} className="block text-foreground">
                 Corporate Email Address
-              </label>
+              </Label>
               <div className="relative">
                 <Mail size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                <input
+                <Input
+                  id={emailId}
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className={cn(
-                    "w-full h-10 rounded-lg border border-input bg-background pl-10 pr-3 text-sm transition-colors",
-                    "placeholder:text-muted-foreground/70",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                  )}
+                  className="pl-10 pr-3"
                   required
                   autoComplete="email"
                 />
               </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-sm font-semibold text-foreground">
+            <div className="space-y-1.5">
+              <Label htmlFor={passwordId} className="block text-foreground">
                 Password
-              </label>
+              </Label>
               <div className="relative">
                 <Lock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                <input
+                <Input
+                  id={passwordId}
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className={cn(
-                    "w-full h-10 rounded-lg border border-input bg-background pl-10 pr-14 text-sm transition-colors",
-                    "placeholder:text-muted-foreground/70",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                  )}
+                  className="pl-10 pr-14"
                   required
                   autoComplete="current-password"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-sm"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   aria-pressed={showPassword}
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
+                  {showPassword
+                    ? <EyeOff size={18} aria-hidden="true" />
+                    : <Eye size={18} aria-hidden="true" />}
+                </Button>
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="btn btn-primary w-full py-3 mt-2"
-            >
+            <Button type="submit" loading={isLoading} size="lg" className="mt-2 w-full">
               <span>{isLoading ? "Signing in..." : "Sign in"}</span>
-              <ArrowRight size={18} />
-            </button>
+              <ArrowRight size={18} aria-hidden="true" />
+            </Button>
           </form>
         </div>
       </div>

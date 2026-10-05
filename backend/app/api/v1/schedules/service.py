@@ -5,7 +5,6 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 import pandas as pd
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from uuid import UUID
 from app.schemas.schedule import (
@@ -14,11 +13,11 @@ from app.schemas.schedule import (
     ScheduleIngestResponse,
     ScheduleApplyResponse,
 )
-from app.models.batch import Batch
 from app.models.session import TrainingSession
-from app.models.user import User
+from app.api.v1.auth.repository_interfaces import IUserRepository
 from app.api.v1.schedules.conflict_engine import ConflictEngine
-from app.api.deps import get_manager_scope_user_ids
+from app.api.v1.schedules.repository_interfaces import IScheduleRepository
+from app.api.v1.sessions.repository_interfaces import ISessionRepository
 
 
 class ExcelIngestionService:
@@ -589,29 +588,31 @@ class ExcelIngestionService:
     @classmethod
     def apply_schedule_items(
         cls,
-        db: Session,
+        schedule_repo: IScheduleRepository,
+        user_repo: IUserRepository,
         target_batch_id: str,
         items: List[ExtractedScheduleItem],
         source_filename: Optional[str] = None,
         user_id: Optional[UUID] = None,
+        conflict_repo: Optional[ISessionRepository] = None,
     ) -> ScheduleApplyResponse:
         """Validate and persist a complete schedule upload as one transaction."""
-        batch = db.query(Batch).filter(Batch.batch_id == target_batch_id).first()
+        batch = schedule_repo.get_batch_by_batch_id(target_batch_id)
         if not batch:
             try:
-                batch = db.query(Batch).filter(Batch.id == UUID(target_batch_id)).first()
+                batch = schedule_repo.get_batch_by_id(UUID(target_batch_id))
             except ValueError:
                 batch = None
         if not batch:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target batch not found")
         if user_id:
-            user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+            user = schedule_repo.get_active_user(user_id)
             if not user:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Active user not found")
             role = (user.role or "").lower()
             team = (user.team_detail.name if user.team_detail else "").strip().lower()
             if role != "admin" and team != "finance":
-                scope_ids = set(get_manager_scope_user_ids(user, db))
+                scope_ids = set(user_repo.get_manager_scope_user_ids(user))
                 batch_user_ids = {batch.primary_manager_id, batch.coordinator_id, batch.sales_spoc_id}
                 if not scope_ids.intersection({value for value in batch_user_ids if value is not None}):
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only apply schedules within your manager scope.")
@@ -669,11 +670,7 @@ class ExcelIngestionService:
                 continue
 
             s_date = item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
-            existing = db.query(TrainingSession).filter(
-                TrainingSession.batch_id == batch.id,
-                TrainingSession.session_date == s_date,
-                TrainingSession.module.ilike(item.topic.strip()),
-            ).first()
+            existing = schedule_repo.find_existing_session(batch.id, s_date, item.topic.strip())
             if existing:
                 errors.append({"source_row": item.source_row, "message": "Matching session already exists for this batch"})
                 continue
@@ -681,7 +678,7 @@ class ExcelIngestionService:
             day_key = (faculty_name.lower(), s_date)
             prior_hours = running_hours.get(day_key, Decimal("0"))
             conflicts = ConflictEngine.check_session_conflict(
-                db=db,
+                session_repo=conflict_repo,
                 faculty_name=faculty_name,
                 date_of_training=item.date_of_training,
                 requested_hours=item.no_of_hours,
@@ -725,7 +722,7 @@ class ExcelIngestionService:
                         errors.append({"source_row": 0, "message": "The batch date range does not contain enough missing weekdays to satisfy training_days"})
 
         if errors:
-            db.rollback()
+            schedule_repo.rollback()
             # Aggregate similar errors for better readability
             error_summary = cls._aggregate_errors(errors)
             raise HTTPException(
@@ -737,44 +734,39 @@ class ExcelIngestionService:
                 }
             )
 
+        sessions = []
+        for idx, (item, faculty_name) in enumerate(prepared, start=1):
+            s_date = item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
+            sessions.append(TrainingSession(
+                batch_id=batch.id,
+                sequence_number=idx,
+                session_date=s_date,
+                day_name=s_date.strftime("%A") if hasattr(s_date, "strftime") else None,
+                start_time=item.start_time,
+                end_time=item.end_time,
+                duration_hours=item.no_of_hours,
+                module=item.topic,
+                trainer_name=faculty_name,
+                status="Scheduled",
+            ))
+        for gen_idx, (generated_date, faculty_name) in enumerate(generated, start=len(prepared) + 1):
+            sessions.append(TrainingSession(
+                batch_id=batch.id,
+                sequence_number=gen_idx,
+                session_date=generated_date,
+                day_name=generated_date.strftime("%A") if hasattr(generated_date, "strftime") else None,
+                start_time=time(9, 0),
+                end_time=time(17, 0),
+                duration_hours=Decimal("8.0"),
+                module="Generated training day - details required",
+                trainer_name=faculty_name,
+                status="Scheduled",
+            ))
+
         try:
-            sessions = []
-            for idx, (item, faculty_name) in enumerate(prepared, start=1):
-                s_date = item.date_of_training.date() if isinstance(item.date_of_training, datetime) else item.date_of_training
-                session = TrainingSession(
-                    batch_id=batch.id,
-                    sequence_number=idx,
-                    session_date=s_date,
-                    day_name=s_date.strftime("%A") if hasattr(s_date, "strftime") else None,
-                    start_time=item.start_time,
-                    end_time=item.end_time,
-                    duration_hours=item.no_of_hours,
-                    module=item.topic,
-                    trainer_name=faculty_name,
-                    status="Scheduled",
-                )
-                db.add(session)
-                sessions.append(session)
-            for gen_idx, (generated_date, faculty_name) in enumerate(generated, start=len(prepared) + 1):
-                session = TrainingSession(
-                    batch_id=batch.id,
-                    sequence_number=gen_idx,
-                    session_date=generated_date,
-                    day_name=generated_date.strftime("%A") if hasattr(generated_date, "strftime") else None,
-                    start_time=time(9, 0),
-                    end_time=time(17, 0),
-                    duration_hours=Decimal("8.0"),
-                    module="Generated training day - details required",
-                    trainer_name=faculty_name,
-                    status="Scheduled",
-                )
-                db.add(session)
-                sessions.append(session)
-            db.commit()
-            for session in sessions:
-                db.refresh(session)
+            sessions = schedule_repo.persist_sessions(sessions)
         except IntegrityError as e:
-            db.rollback()
+            schedule_repo.rollback()
             # Handle unique constraint violation on (batch_id, session_date, module)
             if "uq_batch_date_module" in str(e.orig):
                 raise HTTPException(
@@ -785,7 +777,7 @@ class ExcelIngestionService:
                 )
             raise
         except Exception:
-            db.rollback()
+            schedule_repo.rollback()
             raise
 
         return ScheduleApplyResponse(
