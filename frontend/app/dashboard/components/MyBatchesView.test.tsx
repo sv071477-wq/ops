@@ -150,3 +150,78 @@ describe("MyBatchesView column visibility", () => {
     expect(screen.getByRole("columnheader", { name: /Training Days/ })).toBeTruthy();
   });
 });
+
+describe("MyBatchesView filters", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  const acme = makeBatch({
+    id: "b-acme",
+    batch_id: "ACME_001",
+    client_name: "Acme Corp",
+    delivery_mode: "Online",
+    status: "Approved",
+  });
+  const globex = makeBatch({
+    id: "b-globex",
+    batch_id: "GLOBEX_001",
+    client_name: "Globex",
+    delivery_mode: "F2F",
+    status: "Approved",
+  });
+
+  it("narrows rows by client", async () => {
+    const user = userEvent.setup();
+    renderView({ data: [acme, globex] });
+
+    await user.selectOptions(screen.getByLabelText("Client"), "Globex");
+
+    expect(screen.getByText("GLOBEX_001")).toBeTruthy();
+    expect(screen.queryByText("ACME_001")).toBeNull();
+  });
+
+  it("narrows rows by delivery mode", async () => {
+    const user = userEvent.setup();
+    renderView({ data: [acme, globex] });
+
+    await user.selectOptions(screen.getByLabelText("Delivery Mode"), "F2F");
+
+    expect(screen.getByText("GLOBEX_001")).toBeTruthy();
+    expect(screen.queryByText("ACME_001")).toBeNull();
+  });
+
+  it("offers the distinct values of every filterable column as options", () => {
+    renderView({ data: [acme, globex] });
+
+    // A dropdown rendered without options cannot be used, which is exactly what
+    // happened when a select's key had no matching filter field.
+    expect(screen.getByLabelText("Client")).toHaveTextContent("Acme Corp");
+    expect(screen.getByLabelText("Client")).toHaveTextContent("Globex");
+    expect(screen.getByLabelText("Delivery Mode")).toHaveTextContent("Online");
+    expect(screen.getByLabelText("Delivery Mode")).toHaveTextContent("F2F");
+  });
+
+  it("clears every filter back to the full set", async () => {
+    const user = userEvent.setup();
+    renderView({ data: [acme, globex] });
+
+    await user.selectOptions(screen.getByLabelText("Client"), "Globex");
+    expect(screen.queryByText("ACME_001")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Clear/i }));
+
+    expect(screen.getByText("ACME_001")).toBeTruthy();
+    expect(screen.getByText("GLOBEX_001")).toBeTruthy();
+  });
+
+  it("returns to page 1 when the sort column changes", async () => {
+    const user = userEvent.setup();
+    const { onPageChange } = renderView({ data: [acme, globex], page: 3 });
+
+    onPageChange.mockClear();
+    await user.selectOptions(screen.getByLabelText("Sort by"), "startDate");
+
+    expect(onPageChange).toHaveBeenCalledWith(1);
+  });
+});

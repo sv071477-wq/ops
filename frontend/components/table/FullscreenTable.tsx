@@ -135,7 +135,7 @@ export function FullscreenTable({
               zIndex: 100,
               borderRadius: 0,
               padding: 16,
-              overflow: "auto",
+              overflow: "hidden",
               background: fullscreenBackground,
             }
           : null),
@@ -243,8 +243,9 @@ export function FullscreenTable({
           overflowY: scrollBody ? "auto" : "visible",
           minHeight: 0,
           width: "100%",
-          // Only meaningful when this box is the scroll container.
-          ...(scrollBody && stickyHeader && !isFullscreen ? { flex: "1 1 auto" } : null),
+          // The content wrapper owns vertical scrolling in pinned and fullscreen
+          // modes; the outer panel remains a single viewport.
+          ...(scrollBody ? { flex: "1 1 auto" } : null),
           ...contentStyle,
         }}
       >

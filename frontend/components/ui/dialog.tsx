@@ -31,6 +31,14 @@ const DialogContent = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
+    {/*
+      The `fixed` + `left/top: 50%` + `translate(-50%, -50%)` set below is what
+      centres every dialog, so a caller must not override `position` on
+      DialogContent: with `relative` the percentages resolve against the portal
+      div in document.body instead of the viewport. Anything needing a positioned
+      ancestor (an absolutely positioned table, a dropdown) must create one on an
+      inner wrapper.
+    */}
     <DialogPrimitive.Content
       ref={ref}
       className={cn(

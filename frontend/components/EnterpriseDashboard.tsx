@@ -1322,7 +1322,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   const managerLedgerRows = managerFilters.filteredRows;
   React.useEffect(() => {
     setMgrPage(1);
-  }, [managerFilters.filtersVersion]);
+  }, [managerFilters.filtersVersion, managerSort.sortVersion]);
   const paginatedManagerLedger = useMemo(() => {
     const start = (mgrPage - 1) * mgrPageSize;
     return managerLedgerRows.slice(start, start + mgrPageSize);
@@ -1340,7 +1340,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   const coordinatorLedgerRows = coordinatorFilters.filteredRows;
   React.useEffect(() => {
     setCoordPage(1);
-  }, [coordinatorFilters.filtersVersion]);
+  }, [coordinatorFilters.filtersVersion, coordinatorSort.sortVersion]);
   const paginatedCoordinatorLedger = useMemo(() => {
     const start = (coordPage - 1) * coordPageSize;
     return coordinatorLedgerRows.slice(start, start + coordPageSize);
@@ -1358,7 +1358,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   const clientPortfolioRows = clientFilters.filteredRows;
   React.useEffect(() => {
     setClientPage(1);
-  }, [clientFilters.filtersVersion]);
+  }, [clientFilters.filtersVersion, clientSort.sortVersion]);
   const paginatedClientStats = useMemo(() => {
     const start = (clientPage - 1) * clientPageSize;
     return clientPortfolioRows.slice(start, start + clientPageSize);
@@ -1377,7 +1377,7 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
   const activityFeedRows = activityFilters.filteredRows;
   React.useEffect(() => {
     setActivityPage(1);
-  }, [activityFilters.filtersVersion]);
+  }, [activityFilters.filtersVersion, activitySort.sortVersion]);
   const paginatedActivityBatches = useMemo(() => {
     const start = (activityPage - 1) * activityPageSize;
     return activityFeedRows.slice(start, start + activityPageSize);
@@ -2418,373 +2418,378 @@ export function EnterpriseDashboard({ batches, users, dashboardSummary, isLoadin
         </div>
       </div>
 
-      {/* Detailed Manager Workload Ledger Table */}
-      <FullscreenTable
-        stickyHeader
-        stickyTop={NAVBAR_HEIGHT}
-        title={
-          <PanelTitle
-            title="Manager Workload Ledger"
-            description="Detailed operational responsibility and allocation for each subordinate manager."
-            meta={
-              <CountBadge
-                value={`${managerLedgerRows.length} of ${managerWorkload.length}`}
-                label={
-                  managerLedgerRows.length === managerWorkload.length ? "managers" : "managers match"
-                }
+      {/* Detailed workload ledger. The "Workload view" control above owns both the
+          chart and the matching ledger, so picking Coordinators must not leave the
+          Manager ledger on screen underneath coordinator bars. */}
+      {workloadTab === "managers" && (
+        <FullscreenTable
+          stickyHeader
+          stickyTop={NAVBAR_HEIGHT}
+          title={
+            <PanelTitle
+              title="Manager Workload Ledger"
+              description="Detailed operational responsibility and allocation for each subordinate manager."
+              meta={
+                <CountBadge
+                  value={`${managerLedgerRows.length} of ${managerWorkload.length}`}
+                  label={
+                    managerLedgerRows.length === managerWorkload.length ? "managers" : "managers match"
+                  }
+                />
+              }
+            />
+          }
+          toolbar={
+            <TableFilters
+              search={{
+                value: managerFilters.search,
+                onChange: managerFilters.setSearch,
+                placeholder: "Search manager, team...",
+              }}
+              selects={[
+                {
+                  key: "team",
+                  label: "Team",
+                  value: managerFilters.getFilter("team"),
+                  onChange: (value) => managerFilters.setFilter("team", value),
+                  options: managerFilters.optionsFor("team"),
+                  allLabel: "All teams",
+                },
+              ]}
+              sort={{
+                options: MANAGER_LEDGER_SORT_OPTIONS,
+                sortKey: managerSort.sortKey,
+                sortDir: managerSort.sortDir,
+                onChange: managerSort.applySort,
+              }}
+              onClear={managerFilters.clearFilters}
+              hasActiveFilters={managerFilters.hasActiveFilters}
+              activeFilterCount={managerFilters.activeFilterCount}
+            />
+          }
+          actions={
+            <>
+              <ColumnsMenu
+                columns={MANAGER_LEDGER_COLUMN_KEYS}
+                hidden={managerColumns.hidden}
+                onToggle={managerColumns.toggle}
+                onShowAll={managerColumns.showAll}
               />
-            }
-          />
-        }
-        toolbar={
-          <TableFilters
-            search={{
-              value: managerFilters.search,
-              onChange: managerFilters.setSearch,
-              placeholder: "Search manager, team...",
-            }}
-            selects={[
-              {
-                key: "team",
-                label: "Team",
-                value: managerFilters.getFilter("team"),
-                onChange: (value) => managerFilters.setFilter("team", value),
-                options: managerFilters.optionsFor("team"),
-                allLabel: "All teams",
-              },
-            ]}
-            sort={{
-              options: MANAGER_LEDGER_SORT_OPTIONS,
-              sortKey: managerSort.sortKey,
-              sortDir: managerSort.sortDir,
-              onChange: managerSort.applySort,
-            }}
-            onClear={managerFilters.clearFilters}
-            hasActiveFilters={managerFilters.hasActiveFilters}
-            activeFilterCount={managerFilters.activeFilterCount}
-          />
-        }
-        actions={
-          <>
-            <ColumnsMenu
-              columns={MANAGER_LEDGER_COLUMN_KEYS}
-              hidden={managerColumns.hidden}
-              onToggle={managerColumns.toggle}
-              onShowAll={managerColumns.showAll}
-            />
-            <ExportButton
-              filename="manager-workload-ledger"
-              columns={MANAGER_LEDGER_CSV}
-              rows={managerLedgerRows}
-            />
-          </>
-        }
-        footer={
-          managerWorkload.length > 0 ? (
-            <PaginationControls
-              label="Manager ledger pages"
-              currentPage={mgrPage}
-              totalItems={managerLedgerRows.length}
-              pageSize={mgrPageSize}
-              onPageChange={setMgrPage}
-              onPageSizeChange={setMgrPageSize}
-              pageSizeOptions={[5, 10, 20]}
-            />
-          ) : null
-        }
-      >
-        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 800 }}>
-          <TableCaption>
-            Subordinate managers with active, pending and completed batch counts, hours, enrollments and load
-          </TableCaption>
-          <thead>
-            <tr>
-              {MANAGER_LEDGER_COLUMNS.map((column) =>
-                managerColumns.isVisible(column.key) ? (
-                  <SortableHeaderCell
-                    key={column.key}
-                    columnKey={column.key}
-                    label={column.label}
-                    sortKey={managerSort.sortKey}
-                    sortDir={managerSort.sortDir}
-                    onSort={managerSort.toggleSort}
-                    style={WORKLOAD_TH_STYLE}
-                  />
-                ) : null
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {managerLedgerRows.length === 0 ? (
-              <TableStateRow colSpan={managerVisibleColumnCount}>
-                {managerFilters.hasActiveFilters ? (
-                  <EmptyState
-                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
-                    title="No managers match your filters"
-                    description="Clear the search or team selection to see every subordinate manager."
-                    action={
-                      <Button size="sm" variant="outline" onClick={managerFilters.clearFilters}>
-                        Clear filters
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <EmptyState
-                    icon={<Briefcase className="h-5 w-5" aria-hidden="true" />}
-                    title="No subordinate managers"
-                    description="There is no managerial personnel reporting below your direct line."
-                  />
+              <ExportButton
+                filename="manager-workload-ledger"
+                columns={MANAGER_LEDGER_CSV}
+                rows={managerLedgerRows}
+              />
+            </>
+          }
+          footer={
+            managerWorkload.length > 0 ? (
+              <PaginationControls
+                label="Manager ledger pages"
+                currentPage={mgrPage}
+                totalItems={managerLedgerRows.length}
+                pageSize={mgrPageSize}
+                onPageChange={setMgrPage}
+                onPageSizeChange={setMgrPageSize}
+                pageSizeOptions={[5, 10, 20]}
+              />
+            ) : null
+          }
+        >
+          <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 800 }}>
+            <TableCaption>
+              Subordinate managers with active, pending and completed batch counts, hours, enrollments and load
+            </TableCaption>
+            <thead>
+              <tr>
+                {MANAGER_LEDGER_COLUMNS.map((column) =>
+                  managerColumns.isVisible(column.key) ? (
+                    <SortableHeaderCell
+                      key={column.key}
+                      columnKey={column.key}
+                      label={column.label}
+                      sortKey={managerSort.sortKey}
+                      sortDir={managerSort.sortDir}
+                      onSort={managerSort.toggleSort}
+                      style={WORKLOAD_TH_STYLE}
+                    />
+                  ) : null
                 )}
-              </TableStateRow>
-            ) : (
-              paginatedManagerLedger.map((row) => {
-                const { manager, total, active, pending, completed, totalHours, totalEnrollments } = row;
-                const load = loadPercent(active, total);
-                const loadColor = load >= 75 ? "var(--color-destructive)" : load >= 45 ? "var(--color-warning)" : "var(--color-success)";
-                return (
-                  <tr key={manager.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
-                    {managerColumns.isVisible("manager") && (
-                      <td style={WORKLOAD_CELL_STYLE}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,var(--color-primary),var(--color-primary-hover))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-primary-foreground)", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
-                            {manager.full_name.charAt(0).toUpperCase()}
+              </tr>
+            </thead>
+            <tbody>
+              {managerLedgerRows.length === 0 ? (
+                <TableStateRow colSpan={managerVisibleColumnCount}>
+                  {managerFilters.hasActiveFilters ? (
+                    <EmptyState
+                      icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                      title="No managers match your filters"
+                      description="Clear the search or team selection to see every subordinate manager."
+                      action={
+                        <Button size="sm" variant="outline" onClick={managerFilters.clearFilters}>
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={<Briefcase className="h-5 w-5" aria-hidden="true" />}
+                      title="No subordinate managers"
+                      description="There is no managerial personnel reporting below your direct line."
+                    />
+                  )}
+                </TableStateRow>
+              ) : (
+                paginatedManagerLedger.map((row) => {
+                  const { manager, total, active, pending, completed, totalHours, totalEnrollments } = row;
+                  const load = loadPercent(active, total);
+                  const loadColor = load >= 75 ? "var(--color-destructive)" : load >= 45 ? "var(--color-warning)" : "var(--color-success)";
+                  return (
+                    <tr key={manager.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
+                      {managerColumns.isVisible("manager") && (
+                        <td style={WORKLOAD_CELL_STYLE}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,var(--color-primary),var(--color-primary-hover))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-primary-foreground)", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
+                              {manager.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 700 }}>{manager.full_name}</div>
+                              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{manager.email}</div>
+                            </div>
                           </div>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 700 }}>{manager.full_name}</div>
-                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{manager.email}</div>
+                        </td>
+                      )}
+                      {managerColumns.isVisible("team") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{manager.team_name || "—"}</td>
+                      )}
+                      {managerColumns.isVisible("active") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 800, color: "#8b5cf6", fontSize: "1rem" }}>{active}</td>
+                      )}
+                      {managerColumns.isVisible("pending") && (
+                        <td style={WORKLOAD_CELL_STYLE}>
+                          {pending > 0 ? (
+                            <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{pending}</span>
+                          ) : (
+                            <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
+                          )}
+                        </td>
+                      )}
+                      {managerColumns.isVisible("completed") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--color-success)", fontWeight: 600 }}>{completed}</td>
+                      )}
+                      {managerColumns.isVisible("total") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 700 }}>{total}</td>
+                      )}
+                      {managerColumns.isVisible("hours") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
+                      )}
+                      {managerColumns.isVisible("enrollments") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
+                      )}
+                      {managerColumns.isVisible("load") && (
+                        <td style={WORKLOAD_CELL_STYLE}>
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                            <div style={{ height: 6, width: 72, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ width: `${load}%`, height: "100%", background: loadColor, borderRadius: 3, transition: "width 0.4s" }} />
+                            </div>
+                            <span style={{ fontSize: "0.68rem", fontWeight: 700, color: loadColor }}>{load}%</span>
                           </div>
-                        </div>
-                      </td>
-                    )}
-                    {managerColumns.isVisible("team") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{manager.team_name || "—"}</td>
-                    )}
-                    {managerColumns.isVisible("active") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 800, color: "#8b5cf6", fontSize: "1rem" }}>{active}</td>
-                    )}
-                    {managerColumns.isVisible("pending") && (
-                      <td style={WORKLOAD_CELL_STYLE}>
-                        {pending > 0 ? (
-                          <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{pending}</span>
-                        ) : (
-                          <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
-                        )}
-                      </td>
-                    )}
-                    {managerColumns.isVisible("completed") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--color-success)", fontWeight: 600 }}>{completed}</td>
-                    )}
-                    {managerColumns.isVisible("total") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 700 }}>{total}</td>
-                    )}
-                    {managerColumns.isVisible("hours") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
-                    )}
-                    {managerColumns.isVisible("enrollments") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
-                    )}
-                    {managerColumns.isVisible("load") && (
-                      <td style={WORKLOAD_CELL_STYLE}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                          <div style={{ height: 6, width: 72, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
-                            <div style={{ width: `${load}%`, height: "100%", background: loadColor, borderRadius: 3, transition: "width 0.4s" }} />
-                          </div>
-                          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: loadColor }}>{load}%</span>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </FullscreenTable>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </FullscreenTable>
+      )}
 
-      {/* Detailed Coordinator Workload Ledger Table */}
-      <FullscreenTable
-        stickyHeader
-        stickyTop={NAVBAR_HEIGHT}
-        title={
-          <PanelTitle
-            title="Coordinator Workload Ledger"
-            description="Operational capacity and batch tracking for each coordinator in scope."
-            meta={
-              <CountBadge
-                value={`${coordinatorLedgerRows.length} of ${coordinatorWorkload.length}`}
-                label={
-                  coordinatorLedgerRows.length === coordinatorWorkload.length
-                    ? "coordinators"
-                    : "coordinators match"
-                }
+      {workloadTab === "coordinators" && (
+        <FullscreenTable
+          stickyHeader
+          stickyTop={NAVBAR_HEIGHT}
+          title={
+            <PanelTitle
+              title="Coordinator Workload Ledger"
+              description="Operational capacity and batch tracking for each coordinator in scope."
+              meta={
+                <CountBadge
+                  value={`${coordinatorLedgerRows.length} of ${coordinatorWorkload.length}`}
+                  label={
+                    coordinatorLedgerRows.length === coordinatorWorkload.length
+                      ? "coordinators"
+                      : "coordinators match"
+                  }
+                />
+              }
+            />
+          }
+          toolbar={
+            <TableFilters
+              search={{
+                value: coordinatorFilters.search,
+                onChange: coordinatorFilters.setSearch,
+                placeholder: "Search coordinator, team...",
+              }}
+              selects={[
+                {
+                  key: "team",
+                  label: "Team",
+                  value: coordinatorFilters.getFilter("team"),
+                  onChange: (value) => coordinatorFilters.setFilter("team", value),
+                  options: coordinatorFilters.optionsFor("team"),
+                  allLabel: "All teams",
+                },
+              ]}
+              sort={{
+                options: COORDINATOR_LEDGER_SORT_OPTIONS,
+                sortKey: coordinatorSort.sortKey,
+                sortDir: coordinatorSort.sortDir,
+                onChange: coordinatorSort.applySort,
+              }}
+              onClear={coordinatorFilters.clearFilters}
+              hasActiveFilters={coordinatorFilters.hasActiveFilters}
+              activeFilterCount={coordinatorFilters.activeFilterCount}
+            />
+          }
+          actions={
+            <>
+              <ColumnsMenu
+                columns={COORDINATOR_LEDGER_COLUMN_KEYS}
+                hidden={coordinatorColumns.hidden}
+                onToggle={coordinatorColumns.toggle}
+                onShowAll={coordinatorColumns.showAll}
               />
-            }
-          />
-        }
-        toolbar={
-          <TableFilters
-            search={{
-              value: coordinatorFilters.search,
-              onChange: coordinatorFilters.setSearch,
-              placeholder: "Search coordinator, team...",
-            }}
-            selects={[
-              {
-                key: "team",
-                label: "Team",
-                value: coordinatorFilters.getFilter("team"),
-                onChange: (value) => coordinatorFilters.setFilter("team", value),
-                options: coordinatorFilters.optionsFor("team"),
-                allLabel: "All teams",
-              },
-            ]}
-            sort={{
-              options: COORDINATOR_LEDGER_SORT_OPTIONS,
-              sortKey: coordinatorSort.sortKey,
-              sortDir: coordinatorSort.sortDir,
-              onChange: coordinatorSort.applySort,
-            }}
-            onClear={coordinatorFilters.clearFilters}
-            hasActiveFilters={coordinatorFilters.hasActiveFilters}
-            activeFilterCount={coordinatorFilters.activeFilterCount}
-          />
-        }
-        actions={
-          <>
-            <ColumnsMenu
-              columns={COORDINATOR_LEDGER_COLUMN_KEYS}
-              hidden={coordinatorColumns.hidden}
-              onToggle={coordinatorColumns.toggle}
-              onShowAll={coordinatorColumns.showAll}
-            />
-            <ExportButton
-              filename="coordinator-workload-ledger"
-              columns={COORDINATOR_LEDGER_CSV}
-              rows={coordinatorLedgerRows}
-            />
-          </>
-        }
-        footer={
-          coordinatorWorkload.length > 0 ? (
-            <PaginationControls
-              label="Coordinator ledger pages"
-              currentPage={coordPage}
-              totalItems={coordinatorLedgerRows.length}
-              pageSize={coordPageSize}
-              onPageChange={setCoordPage}
-              onPageSizeChange={setCoordPageSize}
-              pageSizeOptions={[5, 10, 20, 50]}
-            />
-          ) : null
-        }
-      >
-        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 800 }}>
-          <TableCaption>
-            Coordinators with active, in-pipeline and completed batch counts, hours, enrollments and allocation
-          </TableCaption>
-          <thead>
-            <tr>
-              {COORDINATOR_LEDGER_COLUMNS.map((column) =>
-                coordinatorColumns.isVisible(column.key) ? (
-                  <SortableHeaderCell
-                    key={column.key}
-                    columnKey={column.key}
-                    label={column.label}
-                    sortKey={coordinatorSort.sortKey}
-                    sortDir={coordinatorSort.sortDir}
-                    onSort={coordinatorSort.toggleSort}
-                    style={WORKLOAD_TH_STYLE}
-                  />
-                ) : null
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {coordinatorLedgerRows.length === 0 ? (
-              <TableStateRow colSpan={coordinatorVisibleColumnCount}>
-                {coordinatorFilters.hasActiveFilters ? (
-                  <EmptyState
-                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
-                    title="No coordinators match your filters"
-                    description="Clear the search or team selection to see every coordinator in scope."
-                    action={
-                      <Button size="sm" variant="outline" onClick={coordinatorFilters.clearFilters}>
-                        Clear filters
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <EmptyState
-                    icon={<Users className="h-5 w-5" aria-hidden="true" />}
-                    title="No coordinators in scope"
-                    description="No coordinator workload data is available in your scope."
-                  />
+              <ExportButton
+                filename="coordinator-workload-ledger"
+                columns={COORDINATOR_LEDGER_CSV}
+                rows={coordinatorLedgerRows}
+              />
+            </>
+          }
+          footer={
+            coordinatorWorkload.length > 0 ? (
+              <PaginationControls
+                label="Coordinator ledger pages"
+                currentPage={coordPage}
+                totalItems={coordinatorLedgerRows.length}
+                pageSize={coordPageSize}
+                onPageChange={setCoordPage}
+                onPageSizeChange={setCoordPageSize}
+                pageSizeOptions={[5, 10, 20, 50]}
+              />
+            ) : null
+          }
+        >
+          <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 800 }}>
+            <TableCaption>
+              Coordinators with active, in-pipeline and completed batch counts, hours, enrollments and allocation
+            </TableCaption>
+            <thead>
+              <tr>
+                {COORDINATOR_LEDGER_COLUMNS.map((column) =>
+                  coordinatorColumns.isVisible(column.key) ? (
+                    <SortableHeaderCell
+                      key={column.key}
+                      columnKey={column.key}
+                      label={column.label}
+                      sortKey={coordinatorSort.sortKey}
+                      sortDir={coordinatorSort.sortDir}
+                      onSort={coordinatorSort.toggleSort}
+                      style={WORKLOAD_TH_STYLE}
+                    />
+                  ) : null
                 )}
-              </TableStateRow>
-            ) : (
-              paginatedCoordinatorLedger.map((row) => {
-                const { coordinator, total, active, pending, completed, totalHours, totalEnrollments } = row;
-                const capacity = loadPercent(active, total);
-                const capColor = capacity >= 80 ? "var(--color-destructive)" : capacity >= 45 ? "var(--color-warning)" : "var(--color-info)";
-                return (
-                  <tr key={coordinator.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
-                    {coordinatorColumns.isVisible("coordinator") && (
-                      <td style={WORKLOAD_CELL_STYLE}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
-                            {coordinator.full_name.charAt(0).toUpperCase()}
+              </tr>
+            </thead>
+            <tbody>
+              {coordinatorLedgerRows.length === 0 ? (
+                <TableStateRow colSpan={coordinatorVisibleColumnCount}>
+                  {coordinatorFilters.hasActiveFilters ? (
+                    <EmptyState
+                      icon={<Search className="h-5 w-5" aria-hidden="true" />}
+                      title="No coordinators match your filters"
+                      description="Clear the search or team selection to see every coordinator in scope."
+                      action={
+                        <Button size="sm" variant="outline" onClick={coordinatorFilters.clearFilters}>
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={<Users className="h-5 w-5" aria-hidden="true" />}
+                      title="No coordinators in scope"
+                      description="No coordinator workload data is available in your scope."
+                    />
+                  )}
+                </TableStateRow>
+              ) : (
+                paginatedCoordinatorLedger.map((row) => {
+                  const { coordinator, total, active, pending, completed, totalHours, totalEnrollments } = row;
+                  const capacity = loadPercent(active, total);
+                  const capColor = capacity >= 80 ? "var(--color-destructive)" : capacity >= 45 ? "var(--color-warning)" : "var(--color-info)";
+                  return (
+                    <tr key={coordinator.id} style={{ borderBottom: "1px solid var(--border-subtle)", fontSize: "0.83rem" }}>
+                      {coordinatorColumns.isVisible("coordinator") && (
+                        <td style={WORKLOAD_CELL_STYLE}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ width: 30, height: 30, borderRadius: "50%", background: "linear-gradient(135deg,#06b6d4,#0891b2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "0.7rem", fontWeight: 800, flexShrink: 0 }}>
+                              {coordinator.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 700 }}>{coordinator.full_name}</div>
+                              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{coordinator.email}</div>
+                            </div>
                           </div>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 700 }}>{coordinator.full_name}</div>
-                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{coordinator.email}</div>
+                        </td>
+                      )}
+                      {coordinatorColumns.isVisible("team") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{coordinator.team_name || "—"}</td>
+                      )}
+                      {coordinatorColumns.isVisible("active") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 800, color: "var(--color-info)", fontSize: "1rem" }}>{active}</td>
+                      )}
+                      {coordinatorColumns.isVisible("pipeline") && (
+                        <td style={WORKLOAD_CELL_STYLE}>
+                          {pending > 0 ? (
+                            <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{pending}</span>
+                          ) : (
+                            <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
+                          )}
+                        </td>
+                      )}
+                      {coordinatorColumns.isVisible("completed") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--color-success)", fontWeight: 600 }}>{completed}</td>
+                      )}
+                      {coordinatorColumns.isVisible("total") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 700 }}>{total}</td>
+                      )}
+                      {coordinatorColumns.isVisible("hours") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
+                      )}
+                      {coordinatorColumns.isVisible("learners") && (
+                        <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
+                      )}
+                      {coordinatorColumns.isVisible("capacity") && (
+                        <td style={WORKLOAD_CELL_STYLE}>
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                            <div style={{ height: 6, width: 72, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ width: `${capacity}%`, height: "100%", background: capColor, borderRadius: 3, transition: "width 0.4s" }} />
+                            </div>
+                            <span style={{ fontSize: "0.68rem", fontWeight: 700, color: capColor }}>{capacity}%</span>
                           </div>
-                        </div>
-                      </td>
-                    )}
-                    {coordinatorColumns.isVisible("team") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{coordinator.team_name || "—"}</td>
-                    )}
-                    {coordinatorColumns.isVisible("active") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 800, color: "var(--color-info)", fontSize: "1rem" }}>{active}</td>
-                    )}
-                    {coordinatorColumns.isVisible("pipeline") && (
-                      <td style={WORKLOAD_CELL_STYLE}>
-                        {pending > 0 ? (
-                          <span style={{ color: "var(--color-warning)", fontWeight: 700 }}>{pending}</span>
-                        ) : (
-                          <span style={{ color: "var(--color-muted-foreground)" }}>—</span>
-                        )}
-                      </td>
-                    )}
-                    {coordinatorColumns.isVisible("completed") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--color-success)", fontWeight: 600 }}>{completed}</td>
-                    )}
-                    {coordinatorColumns.isVisible("total") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, fontWeight: 700 }}>{total}</td>
-                    )}
-                    {coordinatorColumns.isVisible("hours") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{Math.round(totalHours)}h</td>
-                    )}
-                    {coordinatorColumns.isVisible("learners") && (
-                      <td style={{ ...WORKLOAD_CELL_STYLE, color: "var(--text-muted)" }}>{totalEnrollments.toLocaleString()}</td>
-                    )}
-                    {coordinatorColumns.isVisible("capacity") && (
-                      <td style={WORKLOAD_CELL_STYLE}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                          <div style={{ height: 6, width: 72, background: "var(--color-muted)", borderRadius: 3, overflow: "hidden" }}>
-                            <div style={{ width: `${capacity}%`, height: "100%", background: capColor, borderRadius: 3, transition: "width 0.4s" }} />
-                          </div>
-                          <span style={{ fontSize: "0.68rem", fontWeight: 700, color: capColor }}>{capacity}%</span>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </FullscreenTable>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </FullscreenTable>
+      )}
 
       {/* Client Portfolio + Executive Quality Panel */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1fr]">

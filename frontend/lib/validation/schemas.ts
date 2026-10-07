@@ -250,9 +250,9 @@ export const gate1Schema = z.object({
 // Gate 2 Closure Schema
 // ─────────────────────────────────────────────
 export const gate2Schema = z.object({
-  nps_score: z.coerce.number().min(-100).max(100),
-  average_feedback_score: z.coerce.number().min(1).max(5),
-  retrospective_notes: optionalString,
+  promoters_count: positiveInt,
+  passive_count: positiveInt,
+  detractors_count: positiveInt,
 });
 
 // Type exports - exact match to API payloads

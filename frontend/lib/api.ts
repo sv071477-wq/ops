@@ -193,7 +193,6 @@ export interface Batch {
   finance_status_check_date?: string | null;
   finance_check?: number | null;
   batch_avg_feedback?: number | null;
-  total_feedback_score?: number | null;
   batch_nps?: number | null;
   nps_total_responses?: number | null;
   nps_promoters?: number | null;
@@ -201,7 +200,6 @@ export interface Batch {
   nps_detractors?: number | null;
   nps_imported_at?: string | null;
   nps_source_filename?: string | null;
-  retrospective_notes?: string | null;
   remarks?: string | null;
   comments?: string | null;
   sessions_conducted?: number;
@@ -226,6 +224,8 @@ export interface ActiveBatchItem {
   training_days: number;
   sessions_conducted: number;
   progress: number;
+  batch_avg_feedback?: number | null;
+  batch_nps?: number | null;
 }
 
 export interface ActiveSessionItem {
@@ -397,20 +397,11 @@ export interface SessionFeedbackPayload {
 }
 
 export interface BatchNpsClosurePayload {
-  nps_score?: number; // Calculated percentage NPS, imported from final feedback
-  average_feedback_score?: number; // 1.0 - 5.0
-  retrospective_notes?: string;
-}
-
-export interface BatchFeedbackImportResponse {
-  batch_id: string;
-  source_filename: string;
-  total_responses: number;
+  // Only the category counts: the index, the total and the average feedback are
+  // derived server-side.
   promoters_count: number;
   passive_count: number;
   detractors_count: number;
-  nps_score: number;
-  average_feedback_score?: number | null;
 }
 
 export interface Gate1CompleteResponse {
@@ -449,32 +440,7 @@ export interface ManagerDashboardSummary {
   vertical_distribution: VerticalBreakdown[];
 }
 
-// Schedules & Conflict Engine Types
-export interface ScheduleValidationItem {
-  date_of_training: string;
-  no_of_hours: number;
-  faculty_name?: string;
-  topic?: string;
-  mode_of_delivery?: string;
-}
-
-export interface ConflictDetail {
-  conflict_type: string;
-  date: string;
-  faculty_name?: string;
-  reason: string;
-  existing_hours?: number;
-  requested_hours?: number;
-}
-
-export interface ScheduleValidationResponse {
-  is_valid: boolean;
-  total_slots: number;
-  valid_slots: number;
-  conflict_count: number;
-  conflicts: ConflictDetail[];
-}
-
+// Schedules Types
 export interface ExtractedScheduleRow {
   date_of_training: string;
   topic: string;
@@ -485,6 +451,13 @@ export interface ExtractedScheduleRow {
   venue?: string;
   location_city?: string;
   mode_of_delivery?: string;
+}
+
+export interface ConflictDetail {
+  row_index: number;
+  field: string;
+  message: string;
+  suggested_fix?: string;
 }
 
 export interface ScheduleIngestResponse {
@@ -1043,16 +1016,6 @@ class ApiService {
     });
   }
 
-  async importBatchFeedback(id: string, file: File): Promise<BatchFeedbackImportResponse> {
-    const formData = new FormData();
-    formData.append("file", file);
-    const response = await this.fetchWithAuth(`${API_BASE}/batches/${id}/feedback-import`, {
-      method: "POST",
-      body: formData,
-    });
-    return response.json();
-  }
-
   // Batch Options & Taxonomy APIs
   async getBatchOptions(type: "categories" | "delivery-modes" | "accommodations" | "entities" | string): Promise<BatchOption[]> {
     return this.request<BatchOption[]>(`/batch-options/${type}`);
@@ -1243,7 +1206,7 @@ class ApiService {
     });
   }
 
-  // Schedules Ingestion & Conflict Engine APIs
+  // Schedules Ingestion APIs
   async ingestScheduleFile(file: File, targetBatchId?: string): Promise<ScheduleIngestResponse> {
     const formData = new FormData();
     formData.append("file", file);
@@ -1259,10 +1222,13 @@ class ApiService {
     return response.json();
   }
 
-  async validateScheduleSlots(items: ScheduleValidationItem[]): Promise<ScheduleValidationResponse> {
-    return this.request<ScheduleValidationResponse>("/schedules/validate", {
+  async validateScheduleSlots(items: ExtractedScheduleRow[], targetBatchId: string): Promise<{ conflicts: ConflictDetail[] }> {
+    return this.request<{ conflicts: ConflictDetail[] }>("/schedules/validate", {
       method: "POST",
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({
+        target_batch_id: targetBatchId,
+        items,
+      }),
     });
   }
 

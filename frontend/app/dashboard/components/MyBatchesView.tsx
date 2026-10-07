@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
-import { Layers, CalendarClock, CalendarX2, Clock, Search, UserPlus } from "lucide-react";
+import { Layers, CalendarClock, CalendarX2, Clock, Search, UserPlus, Star, TrendingUp } from "lucide-react";
 import { Batch } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -75,6 +75,7 @@ function ScheduleBadge({ count }: { count: number }) {
 const VALUE = {
   program: (batch: Batch) => batch.program_name ?? "",
   category: (batch: Batch) => batch.category ?? "",
+  client: (batch: Batch) => batch.client_name ?? "",
   city: (batch: Batch) => batch.location_city ?? "",
 };
 
@@ -88,14 +89,16 @@ const BATCH_COLUMN_DEFS: readonly TableColumnDef<Batch>[] = [
   {
     key: "client",
     label: "Client",
-    accessor: (batch) => batch.client_name ?? "",
+    accessor: VALUE.client,
     search: [VALUE.category],
+    filterable: true,
   },
   {
     key: "deliveryMode",
     label: "Mode & Location",
     accessor: (batch) => batch.delivery_mode ?? "",
     search: [VALUE.city],
+    filterable: true,
   },
   { key: "startDate", label: "Start", accessor: (batch) => batch.start_date ?? "" },
   { key: "endDate", label: "End", accessor: (batch) => batch.end_date ?? "" },
@@ -107,10 +110,26 @@ const BATCH_COLUMN_DEFS: readonly TableColumnDef<Batch>[] = [
     align: "center",
   },
   { key: "schedule", label: "Schedule", accessor: (batch) => batch.scheduled_session_count ?? 0 },
+  {
+    key: "feedback",
+    label: "Avg Feedback",
+    accessor: (batch) => batch.batch_avg_feedback ?? null,
+    align: "center",
+    filterable: true,
+  },
+  {
+    key: "nps",
+    label: "NPS",
+    accessor: (batch) => batch.batch_nps ?? null,
+    align: "center",
+    filterable: true,
+  },
 ];
 
-// "Client" and "Category" are filterable without being separate columns, and
-// "Delivery Mode" already is one.
+// "Category" is filterable without being a column of its own. "Client" and
+// "Delivery Mode" are columns, so they carry `filterable` on the defs above --
+// a select whose key is missing from the filter fields renders but silently
+// filters nothing.
 const EXTRA_FILTER_FIELDS: readonly TableFilterField<Batch>[] = [
   { key: "category", accessor: VALUE.category },
 ];
@@ -142,6 +161,8 @@ const EXPORT_COLUMNS: readonly CsvColumn<Batch>[] = [
   { key: "status", label: "Status" },
   { key: "training_days", label: "Training Days" },
   { key: "scheduled_session_count", label: "Scheduled Days" },
+  { key: "batch_avg_feedback", label: "Avg Feedback" },
+  { key: "batch_nps", label: "NPS" },
 ];
 
 // BatchRow's cells use 14px vertical padding, so the headings must match.
@@ -225,6 +246,33 @@ function BatchRow({
           <ScheduleBadge count={batch.scheduled_session_count ?? 0} />
         </td>
       )}
+      {columns.isVisible("feedback") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
+          {batch.batch_avg_feedback !== null && batch.batch_avg_feedback !== undefined ? (
+            <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
+              {Number(batch.batch_avg_feedback).toFixed(1)} <Star className="h-3.5 w-3.5 inline ml-1 text-warning" aria-hidden="true" />
+            </span>
+          ) : (
+            <span style={{ color: "var(--text-dim)" }}>—</span>
+          )}
+        </td>
+      )}
+      {columns.isVisible("nps") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
+          {batch.batch_nps !== null && batch.batch_nps !== undefined ? (
+            <span
+              style={{
+                fontWeight: 600,
+                color: batch.batch_nps > 0 ? "var(--success)" : batch.batch_nps < 0 ? "var(--destructive)" : "var(--text-muted)",
+              }}
+            >
+              {batch.batch_nps > 0 ? "+" : ""}{Number(batch.batch_nps).toFixed(1)}
+            </span>
+          ) : (
+            <span style={{ color: "var(--text-dim)" }}>—</span>
+          )}
+        </td>
+      )}
       {columns.isVisible("action") && (
         <td style={{ ...CELL_STYLE, whiteSpace: "nowrap", textAlign: "right", ...ACTIONS_COLUMN_STYLE }}>
           <Button
@@ -258,7 +306,7 @@ export function MyBatchesView({
 }: MyBatchesViewProps) {
   const batches = useMemo(() => data ?? [], [data]);
 
-  const { sortKey, sortDir, sortedRows, toggleSort, applySort } = useTableSort(batches, BATCH_ACCESSORS, {
+  const { sortKey, sortDir, sortedRows, toggleSort, applySort, sortVersion } = useTableSort(batches, BATCH_ACCESSORS, {
     descFirstKeys: ["startDate", "endDate"],
   });
 
@@ -278,11 +326,12 @@ export function MyBatchesView({
   const columns = useColumnVisibility<ColumnKey>({
     columns: COLUMN_KEYS,
     storageKey: "ops.table.my-batches.columns",
+    defaultHidden: ["feedback", "nps"],
   });
 
   useEffect(() => {
     onPageChange(1);
-  }, [filtersVersion]);
+  }, [filtersVersion, sortVersion]);
 
   const start = (page - 1) * pageSize;
   const pagedBatches = useMemo(() => filteredRows.slice(start, start + pageSize), [filteredRows, start, pageSize]);

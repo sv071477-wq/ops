@@ -1,3 +1,3 @@
-from app.schemas.schedule import ScheduleIngestResponse, ScheduleValidationResponse
+from app.schemas.schedule import ScheduleIngestResponse
 
-__all__ = ["ScheduleValidationResponse", "ScheduleIngestResponse"]
+__all__ = ["ScheduleIngestResponse"]

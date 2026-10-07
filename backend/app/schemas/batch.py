@@ -88,15 +88,17 @@ class BatchCreateRequest(BaseModel):
         if self.start_date and self.start_date.date() < today:
             raise ValueError("Commencement date cannot be in the past")
 
-        # end_date must be > start_date
-        if self.start_date and self.end_date and self.end_date <= self.start_date:
-            raise ValueError("End date must be after start date")
+        # end_date must be >= start_date (same date allowed = 1 calendar day)
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("End date must be on or after start date")
 
         # training_days must be > 0 and <= calendar_days
         if self.training_days <= 0:
             raise ValueError("Training days must be greater than 0")
         if self.start_date and self.end_date:
             calendar_days = (self.end_date.date() - self.start_date.date()).days
+            if calendar_days == 0:
+                calendar_days = 1  # same start and end date = 1 calendar day
             if self.training_days > calendar_days:
                 raise ValueError("Training days must be between 1 and calendar days")
 
@@ -356,6 +358,8 @@ class ActiveBatchItem(BaseModel):
     training_days: int
     sessions_conducted: int
     progress: float  # computed: (sessions_conducted / training_days) * 100
+    batch_avg_feedback: Optional[Decimal] = None
+    batch_nps: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)
 

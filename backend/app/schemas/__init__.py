@@ -9,11 +9,8 @@ from app.schemas.client import ClientBase, ClientCreate, ClientUpdate, ClientRes
 from app.schemas.faculty import FacultyBase, FacultyCreate, FacultyUpdate, FacultyResponse, FacultyUtilizationSummary
 from app.schemas.batch import BatchCreateRequest, BatchUpdateRequest, BatchApprove, BatchResponse, BatchDetailResponse
 from app.schemas.session import SessionBase, SessionCreate, SessionUpdate, SessionResponse, SessionDetailResponse
-from app.schemas.feedback import SessionFeedbackCreate, SessionFeedbackResponse, BatchNpsClosureCreate, BatchNpsClosureResponse
-from app.schemas.schedule import (
-    ScheduleValidationItem, ScheduleValidationRequest, ConflictDetail,
-    ScheduleValidationResponse, ScheduleIngestResponse
-)
+from app.schemas.feedback import SessionFeedbackCreate, SessionFeedbackResponse, BatchNpsClosureCreate
+from app.schemas.schedule import ScheduleIngestResponse
 from app.schemas.analytics import ManagerDashboardSummary, MetricCard, VerticalBreakdown
 
 __all__ = [
@@ -24,8 +21,7 @@ __all__ = [
     "FacultyBase", "FacultyCreate", "FacultyUpdate", "FacultyResponse", "FacultyUtilizationSummary",
     "BatchCreateRequest", "BatchUpdateRequest", "BatchApprove", "BatchResponse", "BatchDetailResponse",
     "SessionBase", "SessionCreate", "SessionUpdate", "SessionResponse", "SessionDetailResponse",
-    "SessionFeedbackCreate", "SessionFeedbackResponse", "BatchNpsClosureCreate", "BatchNpsClosureResponse",
-    "ScheduleValidationItem", "ScheduleValidationRequest", "ConflictDetail",
-    "ScheduleValidationResponse", "ScheduleIngestResponse",
+    "SessionFeedbackCreate", "SessionFeedbackResponse", "BatchNpsClosureCreate",
+    "ScheduleIngestResponse",
     "ManagerDashboardSummary", "MetricCard", "VerticalBreakdown",
 ]

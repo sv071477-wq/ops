@@ -1,6 +1,4 @@
-from datetime import datetime
-from decimal import Decimal
-from typing import List, Optional, Sequence
+from typing import List, Optional
 from uuid import UUID
 from abc import ABC, abstractmethod
 
@@ -15,6 +13,11 @@ class ISessionRepository(ABC):
     # --- Batch context ---
     @abstractmethod
     def get_batch_by_id(self, batch_id: UUID) -> Optional[Batch]:
+        pass
+
+    @abstractmethod
+    def list_scoped_batch_ids(self, scope_user_ids: list[UUID], current_user_id: UUID) -> list[UUID]:
+        """Batch ids visible to the manager hierarchy, for scoping ledger queries."""
         pass
 
     @abstractmethod
@@ -44,6 +47,7 @@ class ISessionRepository(ABC):
     def list_utilizations(
         self,
         batch_id: Optional[UUID] = None,
+        batch_ids: Optional[list[UUID]] = None,
         faculty_name: Optional[str] = None,
         status_filter: Optional[str] = None,
     ) -> List[FacultyUtilization]:
@@ -65,38 +69,13 @@ class ISessionRepository(ABC):
     def get_training_session_by_id(self, session_id: UUID) -> Optional[TrainingSession]:
         pass
 
-    # --- Faculty resolution and daily capacity ---
+    # --- Faculty resolution ---
     @abstractmethod
     def get_active_user(self, user_id: UUID) -> Optional[User]:
         pass
 
     @abstractmethod
     def find_active_faculty_by_name(self, name: str, faculty_role_only: bool = False) -> Optional[User]:
-        pass
-
-    @abstractmethod
-    def list_daily_deliveries(
-        self,
-        faculty_name: str,
-        day_start: datetime,
-        day_end: datetime,
-        exclude_id: Optional[UUID] = None,
-        excluded_statuses: Sequence[str] = ("Cancelled",),
-    ) -> List[FacultyUtilization]:
-        """Deliveries for one faculty member within a day window, for capacity checks."""
-        pass
-
-    @abstractmethod
-    def list_conflict_window_deliveries(self, faculty_name: str, target_date) -> List[FacultyUtilization]:
-        """Non-cancelled deliveries on a date, skipping rows whose batch is cancelled.
-
-        Used for double-booking detection, which needs the stored start/end times
-        rather than just the summed hours.
-        """
-        pass
-
-    @abstractmethod
-    def sum_hours(self, rows: List[FacultyUtilization]) -> Decimal:
         pass
 
     # --- Mutations ---

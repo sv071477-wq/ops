@@ -1,6 +1,11 @@
 export { FullscreenTable } from "./FullscreenTable";
 export type { FullscreenTableProps } from "./FullscreenTable";
-export { TableFilters } from "./TableFilters";
+export {
+  TableFilters,
+  TABLE_CONTROL_HEIGHT,
+  TABLE_CONTROL_STYLE,
+  TABLE_LABEL_SLOT_STYLE,
+} from "./TableFilters";
 export type {
   TableFilterBespokeConfig,
   TableFilterSelectConfig,

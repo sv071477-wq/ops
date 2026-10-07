@@ -27,6 +27,7 @@ import {
   TableCaption,
   TableFilters,
   TableStateRow,
+  TABLE_CONTROL_STYLE,
 } from "@/components/table";
 import { Button } from "@/components/ui/button";
 import {
@@ -249,22 +250,6 @@ const FINANCE_EDITABLE_STYLE: React.CSSProperties = {
   fontWeight: 600,
   color: "var(--text-main)",
   outline: "none",
-};
-
-// Bespoke toolbar controls must match `TableFilters`' own control box exactly, or
-// the toolbar grid breaks alignment. It is not exported, so it is mirrored here
-// against the same tokens rather than keeping a drifting hardcoded copy.
-const FILTER_CONTROL_STYLE: React.CSSProperties = {
-  width: "100%",
-  height: 36,
-  boxSizing: "border-box",
-  padding: "0 10px",
-  borderRadius: 6,
-  border: "1px solid var(--color-input)",
-  background: "var(--color-card)",
-  fontSize: "0.8rem",
-  fontWeight: 600,
-  color: "var(--text-main)",
 };
 
 const FINANCE_WORKFLOW_FILTER_ID = "finance-filter-workflow";
@@ -696,6 +681,7 @@ export default function DashboardPage() {
     sortedRows: sortedApprovalQueue,
     toggleSort: toggleApprovalSort,
     applySort: applyApprovalSort,
+    sortVersion: approvalSortVersion,
   } = useTableSort<Batch>(filteredApprovalQueue, APPROVAL_ACCESSORS, {
     descFirstKeys: APPROVAL_DESC_FIRST_KEYS,
   });
@@ -765,6 +751,7 @@ export default function DashboardPage() {
     sortedRows: sortedFinanceBatches,
     toggleSort: toggleFinanceSort,
     applySort: applyFinanceSort,
+    sortVersion: financeSortVersion,
   } = useTableSort<Batch>(filteredFinanceBatches, financeSortAccessors);
 
   const financeColumnVisibility = useColumnVisibility<FinanceColumnKey>({
@@ -795,11 +782,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setApprovalPage(1);
-  }, [approvalQueue.length, approvalFiltersVersion]);
+  }, [approvalQueue.length, approvalFiltersVersion, approvalSortVersion]);
 
   useEffect(() => {
     setFinancePage(1);
-  }, [financeFiltersVersion, financeStatusFilter, financeStartDate, financeEndDate]);
+  }, [financeFiltersVersion, financeStatusFilter, financeStartDate, financeEndDate, financeSortVersion]);
 
   const paginatedApprovals = useMemo(() => {
     const start = (approvalPage - 1) * approvalPageSize;
@@ -849,23 +836,26 @@ export default function DashboardPage() {
   // sorted here, so the payload is built in the order the user is looking at.
   const exportFinanceSheet = () => {
     downloadCsv(
-      `finance-review-${new Date().toISOString().split("T")[0]}`,
+      `all-batches-${new Date().toISOString().split("T")[0]}`,
       FINANCE_EXPORT_COLUMNS,
       sortedFinanceBatches
     );
   };
 
   const isApprover = user?.is_configured_approver === true;
-  // Finance access is granted by team membership. `User.role` is a fixed union
-  // that does not include "finance", so testing it here was always false.
-  const isFinanceViewAvailable = user?.team_name?.trim().toLowerCase() === "finance";
+  // All Batches is open to Finance and to the configured approvers (approver 1
+  // and approver 2). Finance access is granted by team membership -- `User.role`
+  // is a fixed union that does not include "finance", so testing it there was
+  // always false -- and the approvers are reached through
+  // `is_configured_approver`, which is set from the approval configuration.
+  const canViewAllBatches = user?.team_name?.trim().toLowerCase() === "finance" || isApprover;
   const canCreateBatch = user?.role?.toLowerCase() !== "admin" && user?.team_name?.trim().toLowerCase() === "delivery";
 
   useEffect(() => {
-    if (!isFinanceViewAvailable && activeView === "finance") {
+    if (!canViewAllBatches && activeView === "finance") {
       setActiveView("active_batches");
     }
-  }, [isFinanceViewAvailable, activeView]);
+  }, [canViewAllBatches, activeView]);
 
   if (isAuthLoading || !user || user.role?.toLowerCase() === "admin") {
     return (
@@ -1192,7 +1182,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* VIEW 3: FINANCE REVIEW SHEET */}
+        {/* VIEW 3: ALL BATCHES */}
         {activeView === "finance" && (
           <div style={{
             display: "flex",
@@ -1232,8 +1222,8 @@ export default function DashboardPage() {
               stickyTop={NAVBAR_HEIGHT}
               title={
                 <PanelTitle
-                  title="Finance Review Sheet"
-                  description="Excel-style batch review for finance tracking, approval status, and operational checks."
+                  title="All Batches"
+                  description="Every batch on one sheet: finance tracking, approval status, and operational checks."
                   meta={
                     <CountBadge
                       value={`${filteredFinanceBatches.length} of ${batches.length}`}
@@ -1307,7 +1297,7 @@ export default function DashboardPage() {
                           value={financeStatusFilter}
                           onChange={(e) => setFinanceStatusFilter(e.target.value)}
                           className="glass-input"
-                          style={FILTER_CONTROL_STYLE}
+                          style={TABLE_CONTROL_STYLE}
                         >
                           <option value="ACTIVE">Active batches</option>
                           <option value="ALL">All workflow status</option>
@@ -1335,7 +1325,7 @@ export default function DashboardPage() {
                           className="glass-input"
                           title="Start date from"
                           aria-label="Start date from"
-                          style={FILTER_CONTROL_STYLE}
+                          style={TABLE_CONTROL_STYLE}
                         />
                       ),
                     },
@@ -1353,7 +1343,7 @@ export default function DashboardPage() {
                           className="glass-input"
                           title="Start date to"
                           aria-label="Start date to"
-                          style={FILTER_CONTROL_STYLE}
+                          style={TABLE_CONTROL_STYLE}
                         />
                       ),
                     },
@@ -1392,7 +1382,7 @@ export default function DashboardPage() {
                     title={
                       sortedFinanceBatches.length === 0
                         ? "Nothing to export with the current filters"
-                        : `Export the ${sortedFinanceBatches.length} finance row${sortedFinanceBatches.length === 1 ? "" : "s"} on screen, in the current sort order`
+                        : `Export the ${sortedFinanceBatches.length} batch row${sortedFinanceBatches.length === 1 ? "" : "s"} on screen, in the current sort order`
                     }
                   >
                     <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
@@ -1414,7 +1404,7 @@ export default function DashboardPage() {
               }
             >
               <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: "2200px" }}>
-                <TableCaption>Finance review sheet: batch identity, delivery facts and the finance fields to check</TableCaption>
+                <TableCaption>All batches: batch identity, delivery facts and the finance fields to check</TableCaption>
                 <thead>
                   <tr>
                     {financeColumns.map((column) => {
@@ -1454,7 +1444,7 @@ export default function DashboardPage() {
                     </TableStateRow>
                   ) : isLoading && filteredFinanceBatches.length === 0 ? (
                     <TableStateRow colSpan={visibleFinanceColumnCount}>
-                      <LoadingState label="Loading the finance review sheet..." />
+                      <LoadingState label="Loading all batches..." />
                     </TableStateRow>
                   ) : filteredFinanceBatches.length === 0 ? (
                     <TableStateRow colSpan={visibleFinanceColumnCount}>
@@ -1462,7 +1452,7 @@ export default function DashboardPage() {
                         <EmptyState
                           icon={<Search className="h-5 w-5" aria-hidden="true" />}
                           title="No batches match your filters"
-                          description="Clear the search or filter selections to see every batch available for finance review."
+                          description="Clear the search or filter selections to see every batch."
                           action={
                             <Button size="sm" variant="outline" onClick={clearFinanceFilters}>
                               Clear filters
@@ -1472,7 +1462,7 @@ export default function DashboardPage() {
                       ) : (
                         <EmptyState
                           icon={<FileSpreadsheet className="h-5 w-5" aria-hidden="true" />}
-                          title="No batch data available for finance review"
+                          title="No batch data available"
                           description="Batches will appear here once they have been created."
                         />
                       )}
@@ -1662,18 +1652,20 @@ export default function DashboardPage() {
         canApprove={!!selectedBatchForApproval && approvalQueue.some((batch) => batch.id === selectedBatchForApproval.id)}
       />
 
-      <BatchDetailDrawer
-        batch={selectedBatchForDetail}
-        isOpen={!!selectedBatchForDetail}
-        onClose={() => setSelectedBatchForDetail(null)}
-        onOpenApprove={(b) => setSelectedBatchForApproval(b)}
-        canApprove={!!selectedBatchForDetail && approvalQueue.some((batch) => batch.id === selectedBatchForDetail.id)}
-        onBatchUpdated={() => {
-          fetchBatches();
-          if (activeView === "my_batches") fetchMyBatches();
-        }}
-        initialTab={detailDrawerTab}
-      />
+      {selectedBatchForDetail && (
+        <BatchDetailDrawer
+          batch={selectedBatchForDetail}
+          isOpen={true}
+          onClose={() => setSelectedBatchForDetail(null)}
+          onOpenApprove={(b) => setSelectedBatchForApproval(b)}
+          canApprove={!!selectedBatchForDetail && approvalQueue.some((batch) => batch.id === selectedBatchForDetail.id)}
+          onBatchUpdated={() => {
+            fetchBatches();
+            if (activeView === "my_batches") fetchMyBatches();
+          }}
+          initialTab={detailDrawerTab}
+        />
+      )}
     </div>
   );
 }

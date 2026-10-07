@@ -65,6 +65,10 @@ class IAnalyticsRepository(ABC):
     def list_all_batches(self) -> List[Batch]:
         pass
 
+    @abstractmethod
+    def list_batches_by_ids(self, batch_ids: Sequence[UUID]) -> List[Batch]:
+        pass
+
     # --- Session aggregates ---
     @abstractmethod
     def count_ongoing_sessions(self, batch_ids: Optional[Sequence[UUID]], today: date) -> int:

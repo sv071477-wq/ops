@@ -157,6 +157,105 @@ describe('useTableSort', () => {
     expect(screen.getByRole('columnheader')).toHaveAttribute('aria-sort', 'descending');
     expect(screen.getAllByRole('row').slice(1).map((row) => row.textContent)).toEqual(['Beta', 'Alpha']);
   });
+
+  it('changes sortVersion on every sort change so pagination can reset', async () => {
+    const states: string[] = [];
+
+    function Harness() {
+      const { sortKey, sortDir, sortVersion, toggleSort } = useTableSort(ROWS, ACCESSORS);
+      states.push(`${sortKey}:${sortDir}`);
+      return (
+        <>
+          <button type="button" onClick={() => toggleSort('name')}>
+            toggle
+          </button>
+          <span data-testid="version">{sortVersion}</span>
+        </>
+      );
+    }
+
+    const { rerender } = render(<Harness />);
+    const version = () => Number(screen.getByTestId('version').textContent);
+
+    const v0 = version();
+
+    await userEvent.click(screen.getByRole('button'));
+    const v1 = version();
+    expect(v1).not.toBe(v0);
+
+    await userEvent.click(screen.getByRole('button'));
+    const v2 = version();
+    expect(v2).not.toBe(v1);
+
+    await userEvent.click(screen.getByRole('button'));
+    const v3 = version();
+    expect(v3).not.toBe(v2);
+
+    // unsorted -> asc -> desc -> unsorted
+    expect(states).toEqual(['null:null', 'name:asc', 'name:desc', 'null:null']);
+    rerender(<Harness />);
+  });
+
+  it('changes sortVersion when a different column is sorted the same way', async () => {
+    function Harness() {
+      const { sortKey, sortDir, sortVersion, toggleSort } = useTableSort(ROWS, ACCESSORS);
+      return (
+        <>
+          <button type="button" onClick={() => toggleSort('name')}>
+            name
+          </button>
+          <button type="button" onClick={() => toggleSort('team')}>
+            team
+          </button>
+          <span data-testid="sort">{`${sortKey}:${sortDir}`}</span>
+          <span data-testid="version">{sortVersion}</span>
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const version = () => Number(screen.getByTestId('version').textContent);
+    const sort = () => screen.getByTestId('sort').textContent;
+
+    // Both columns default to ascending, so the direction alone cannot tell
+    // these two sorts apart even though the row order is completely different.
+    await userEvent.click(screen.getByRole('button', { name: 'name' }));
+    expect(sort()).toBe('name:asc');
+    const afterName = version();
+
+    await userEvent.click(screen.getByRole('button', { name: 'team' }));
+    expect(sort()).toBe('team:asc');
+    expect(version()).not.toBe(afterName);
+
+    // ...and back again, which is the same trap in reverse.
+    const afterTeam = version();
+    await userEvent.click(screen.getByRole('button', { name: 'name' }));
+    expect(version()).not.toBe(afterTeam);
+  });
+
+  it('leaves sortVersion alone when the sort does not actually change', async () => {
+    function Harness() {
+      const { sortVersion, applySort } = useTableSort(ROWS, ACCESSORS);
+      return (
+        <>
+          <button type="button" onClick={() => applySort('name', 'asc')}>
+            apply
+          </button>
+          <span data-testid="version">{sortVersion}</span>
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const version = () => Number(screen.getByTestId('version').textContent);
+
+    await userEvent.click(screen.getByRole('button'));
+    const afterFirst = version();
+
+    // Re-applying the identical sort is a no-op, not a reordering.
+    await userEvent.click(screen.getByRole('button'));
+    expect(version()).toBe(afterFirst);
+  });
 });
 
 describe('TableFilters', () => {
@@ -197,6 +296,53 @@ describe('TableFilters', () => {
 
     await userEvent.click(clear);
     expect(screen.getByLabelText('Team')).toHaveValue('');
+  });
+
+  it('orders the toolbar search, dropdowns, bespoke filters, then sort', () => {
+    // The order is a shared contract across every table: the controls that
+    // narrow the rows come first, then the one that reshapes their order.
+    render(
+      <TableFilters
+        search={{ value: '', onChange: () => {} }}
+        selects={[
+          { key: 'team', label: 'Team', value: '', onChange: () => {}, options: ['Delivery'] },
+        ]}
+        bespoke={[
+          { key: 'from', label: 'From', content: <input aria-label="From" /> },
+          { key: 'to', label: 'To', content: <input aria-label="To" /> },
+        ]}
+        sort={{
+          options: [{ key: 'name', label: 'Name' }],
+          sortKey: null,
+          sortDir: null,
+          onChange: () => {},
+        }}
+        onClear={() => {}}
+        hasActiveFilters
+      />,
+    );
+
+    // DOM order of the form controls, left to right.
+    const order = Array.from(document.querySelectorAll('input, select')).map(
+      (el) => el.getAttribute('aria-label') ?? el.getAttribute('type') ?? '',
+    );
+
+    const search = order.indexOf('search');
+    const team = screen.getByLabelText('Team');
+    const from = screen.getByLabelText('From');
+    const to = screen.getByLabelText('To');
+    const sortBy = screen.getByLabelText('Sort by');
+
+    const indexOf = (el: Element) => Array.from(document.querySelectorAll('input, select')).indexOf(el);
+
+    expect(indexOf(team)).toBeGreaterThan(search);
+    expect(indexOf(from)).toBeGreaterThan(indexOf(team));
+    expect(indexOf(to)).toBeGreaterThan(indexOf(from));
+    expect(indexOf(sortBy)).toBeGreaterThan(indexOf(to));
+
+    // The clear action is a button, so it is checked separately at the end.
+    const clear = screen.getByRole('button', { name: /Clear/ });
+    expect(clear.compareDocumentPosition(sortBy) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   });
 });
 

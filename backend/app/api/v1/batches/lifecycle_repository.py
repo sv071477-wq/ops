@@ -33,6 +33,9 @@ class BatchLifecycleRepository(IBatchLifecycleRepository):
     def list_batches_with_status(self, status: str) -> List[Batch]:
         return self.db.query(Batch).filter(Batch.status == status).all()
 
+    def list_batches_missing_avg_feedback(self) -> List[Batch]:
+        return self.db.query(Batch).filter(Batch.batch_avg_feedback.is_(None)).all()
+
     def list_completed_utilizations_with_session(self) -> List[FacultyUtilization]:
         return self.db.query(FacultyUtilization).filter(
             FacultyUtilization.training_session_id.isnot(None),
@@ -51,10 +54,17 @@ class BatchLifecycleRepository(IBatchLifecycleRepository):
             TrainingSession.status != "Cancelled",
         ).all()
 
+    def list_utilizations_for_batch(self, batch_id: UUID) -> List[FacultyUtilization]:
+        return self.db.query(FacultyUtilization).filter(
+            FacultyUtilization.batch_id == batch_id,
+        ).all()
+
     def list_completed_feedback_ratings(self, batch_id: UUID) -> List[Decimal]:
         # Feedback is captured on the delivery ledger, not on the planned timetable:
         # `training_sessions` has no feedback columns, so reading them off the
         # TrainingSession rows raised AttributeError on every fully-delivered batch.
+        # Unlinked rows are included: a delivery logged without a planned day is
+        # still a real delivery that faculty rated.
         return [
             row.feedback_rating
             for row in self.db.query(FacultyUtilization).filter(

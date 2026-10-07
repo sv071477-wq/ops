@@ -3,6 +3,7 @@
 import React, { useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { TABLE_CONTROL_HEIGHT } from "@/components/table/TableFilters";
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -19,7 +20,7 @@ interface PaginationControlsProps {
 
 // Toolbar metrics shared with `TableFilters` so the footer sits on the same grid
 // as the header controls.
-const CONTROL_HEIGHT = 36;
+const CONTROL_HEIGHT = TABLE_CONTROL_HEIGHT;
 const CONTROL_CLASS =
   "h-9 rounded-md border border-input bg-background text-[0.8rem] font-semibold text-foreground hover:bg-accent hover:text-accent-foreground";
 
@@ -35,6 +36,12 @@ export function PaginationControls({
 }: PaginationControlsProps) {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const validPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  // Several tables can share one view, and `label` is not guaranteed to be
+  // unique, so the control ids come from useId rather than from the label. A
+  // duplicate id silently breaks the "Rows" label/select association.
+  const instanceId = React.useId();
+  const pageSizeId = `${instanceId}-page-size`;
 
   // Clamping happens in an effect: doing it during render schedules a state
   // update from inside the render pass.
@@ -76,11 +83,11 @@ export function PaginationControls({
 
         {onPageSizeChange && (
           <div className="flex items-center gap-1.5">
-            <label htmlFor={`${label}-page-size`} className="text-xs">
+            <label htmlFor={pageSizeId} className="text-xs">
               Rows
             </label>
             <select
-              id={`${label}-page-size`}
+              id={pageSizeId}
               value={pageSize}
               onChange={(event) => {
                 onPageSizeChange(Number(event.target.value));

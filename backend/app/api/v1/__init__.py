@@ -18,7 +18,7 @@ api_router.include_router(roles_router, prefix="/roles", tags=["Role & Position 
 api_router.include_router(teams_router, prefix="/teams", tags=["Teams & Department Management"])
 api_router.include_router(batch_options_router, prefix="/batch-options", tags=["Batch Configuration Options"])
 api_router.include_router(batches_router, prefix="/batches", tags=["Workflow 1: Batch Lifecycle"])
-api_router.include_router(schedules_router, prefix="/schedules", tags=["Workflow 2: Schedule Ingestion & Conflict Engine"])
+api_router.include_router(schedules_router, prefix="/schedules", tags=["Workflow 2: Schedule Ingestion"])
 api_router.include_router(sessions_router, prefix="/sessions", tags=["Workflow 3: Sessions & Gate 1"])
 api_router.include_router(faculty_router, prefix="/faculty", tags=["Faculty Directory & Utilization"])
 api_router.include_router(fms_sync_router, prefix="/integrations/fms", tags=["Optional FMS Integration"])

@@ -11,6 +11,17 @@ def _lifecycle_service(db_session):
     return BatchLifecycleService(BatchLifecycleRepository(db_session))
 
 
+def _get_batch(db_session):
+    return db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+
+
+def _reset_avg_feedback(db_session, batch):
+    """The fixture seeds 4.50; the write-once guard would block every
+    calculation, so tests that exercise the write path clear it first."""
+    batch.batch_avg_feedback = None
+    db_session.commit()
+
+
 def _seed_batch_with_sessions(db_session, batch, count=2):
     """Create `count` TrainingSession days for the batch and return them."""
     sessions = []
@@ -33,7 +44,9 @@ def _seed_batch_with_sessions(db_session, batch, count=2):
 
 
 def _seed_utilization(db_session, batch, training_session, rating="4.0", status="Completed"):
-    """Create a FacultyUtilization record linked to a TrainingSession."""
+    """Create a FacultyUtilization record linked to a TrainingSession.
+
+    `rating=None` records a Completed delivery that was never rated."""
     fu = FacultyUtilization(
         batch_id=batch.id,
         training_session_id=training_session.id,
@@ -44,7 +57,7 @@ def _seed_utilization(db_session, batch, training_session, rating="4.0", status=
         mode_of_delivery="Online",
         status=status,
         feedback_submitted=status == "Completed",
-        feedback_rating=Decimal(str(rating)) if status == "Completed" else None,
+        feedback_rating=Decimal(str(rating)) if (status == "Completed" and rating is not None) else None,
         feedback_notes="Great session" if status == "Completed" else None,
     )
     db_session.add(fu)
@@ -53,9 +66,10 @@ def _seed_utilization(db_session, batch, training_session, rating="4.0", status=
 
 
 def test_feedback_not_calculated_when_not_all_sessions_completed(db_session):
-    """batch_avg_feedback must NOT be recalculated until every non-cancelled
-    session for the batch is Completed."""
-    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    """batch_avg_feedback must NOT be written until every non-cancelled
+    planned day has a logged delivery."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
 
     ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
     _seed_utilization(db_session, batch, ts1, rating="4.0")
@@ -65,13 +79,14 @@ def test_feedback_not_calculated_when_not_all_sessions_completed(db_session):
 
     assert result is None
     batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
-    assert batch.batch_avg_feedback == Decimal("4.50")
+    assert batch.batch_avg_feedback is None
 
 
 def test_feedback_calculated_when_all_sessions_completed(db_session):
-    """Once every non-cancelled session is Completed and logged, the average
-    feedback is calculated and persisted on the batch."""
-    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    """Once every non-cancelled planned day has a logged, terminal
+    delivery, the average feedback is calculated and persisted."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
 
     ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
     _seed_utilization(db_session, batch, ts1, rating="4.0")
@@ -84,7 +99,7 @@ def test_feedback_calculated_when_all_sessions_completed(db_session):
     service = _lifecycle_service(db_session)
     result = service.calculate_batch_avg_feedback(batch.id)
 
-    assert result == 4.5
+    assert result == Decimal("4.5")
     batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
     assert float(batch.batch_avg_feedback) == 4.5
 
@@ -92,7 +107,8 @@ def test_feedback_calculated_when_all_sessions_completed(db_session):
 def test_feedback_excludes_cancelled_sessions(db_session):
     """A cancelled session is excluded from the average but does not block
     feedback calculation for the remaining completed sessions."""
-    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
 
     ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
     _seed_utilization(db_session, batch, ts1, rating="3.0")
@@ -105,15 +121,157 @@ def test_feedback_excludes_cancelled_sessions(db_session):
     service = _lifecycle_service(db_session)
     result = service.calculate_batch_avg_feedback(batch.id)
 
-    assert result == 3.0
+    assert result == Decimal("3.0")
     batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
     assert float(batch.batch_avg_feedback) == 3.0
+
+
+def test_feedback_not_calculated_when_planned_day_has_no_delivery(db_session):
+    """A planned day with no linked ledger row is a coverage gap: the
+    average would otherwise be taken over a subset of the curriculum."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
+
+    ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
+    # Only ts1 is delivered; ts2 has no ledger row at all.
+    _seed_utilization(db_session, batch, ts1, rating="4.0")
+    ts1.status = "Completed"
+    db_session.commit()
+
+    service = _lifecycle_service(db_session)
+    result = service.calculate_batch_avg_feedback(batch.id)
+
+    assert result is None
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert batch.batch_avg_feedback is None
+
+
+def test_feedback_calculated_with_not_conducted_day(db_session):
+    """A `Not Conducted` day is terminal, so it unblocks the average
+    instead of blocking it forever; the mean comes from Completed rows."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
+
+    ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
+    _seed_utilization(db_session, batch, ts1, rating="4.0")
+    _seed_utilization(db_session, batch, ts2, rating=None, status="Not Conducted")
+
+    ts1.status = "Completed"
+    ts2.status = "Not Conducted"
+    db_session.commit()
+
+    service = _lifecycle_service(db_session)
+    result = service.calculate_batch_avg_feedback(batch.id)
+
+    assert result == Decimal("4.0")
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert float(batch.batch_avg_feedback) == 4.0
+
+
+def test_feedback_not_blocked_by_unrated_completed_delivery(db_session):
+    """A Completed delivery with no rating is excluded from the mean and
+    never blocks it."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
+
+    ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
+    _seed_utilization(db_session, batch, ts1, rating="4.0")
+    # Completed but never rated.
+    _seed_utilization(db_session, batch, ts2, rating=None)
+
+    ts1.status = "Completed"
+    ts2.status = "Completed"
+    db_session.commit()
+
+    service = _lifecycle_service(db_session)
+    result = service.calculate_batch_avg_feedback(batch.id)
+
+    assert result == Decimal("4.0")
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert float(batch.batch_avg_feedback) == 4.0
+
+
+def test_feedback_not_calculated_when_no_rated_deliveries(db_session):
+    """Every delivery closed but none rated leaves the column NULL: a
+    zero-rated batch can satisfy delivery closure yet has no average."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
+
+    ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
+    _seed_utilization(db_session, batch, ts1, rating=None)
+    _seed_utilization(db_session, batch, ts2, rating=None)
+
+    ts1.status = "Completed"
+    ts2.status = "Completed"
+    db_session.commit()
+
+    service = _lifecycle_service(db_session)
+    result = service.calculate_batch_avg_feedback(batch.id)
+
+    assert result is None
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert batch.batch_avg_feedback is None
+
+
+def test_feedback_recalculates_on_rating_change(db_session):
+    """The average feedback recalculates when a rating is updated or
+    a new rated delivery is added, provided all preconditions still hold."""
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
+
+    ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
+    _seed_utilization(db_session, batch, ts1, rating="4.0")
+    _seed_utilization(db_session, batch, ts2, rating="5.0")
+
+    ts1.status = "Completed"
+    ts2.status = "Completed"
+    db_session.commit()
+
+    service = _lifecycle_service(db_session)
+    assert service.calculate_batch_avg_feedback(batch.id) == Decimal("4.5")
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert float(batch.batch_avg_feedback) == 4.5
+
+    # Update the first rating from 4.0 to 1.0
+    fu1 = db_session.query(FacultyUtilization).filter(
+        FacultyUtilization.training_session_id == ts1.id
+    ).first()
+    fu1.feedback_rating = Decimal("1.0")
+    db_session.commit()
+
+    # Recalculate - average should now be (1.0 + 5.0) / 2 = 3.0
+    result = service.calculate_batch_avg_feedback(batch.id)
+    assert result == Decimal("3.0")
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert float(batch.batch_avg_feedback) == 3.0
+
+    # Add a third planned session with a new rated delivery
+    ts3 = TrainingSession(
+        batch_id=batch.id,
+        sequence_number=3,
+        session_date=date(2026, 1, 12),
+        day_name="Wednesday",
+        module="Module 3",
+        trainer_name="Test Faculty",
+        status="Completed",
+    )
+    db_session.add(ts3)
+    db_session.commit()
+    _seed_utilization(db_session, batch, ts3, rating="5.0")
+    db_session.commit()
+
+    # Recalculate - average should now be (1.0 + 5.0 + 5.0) / 3 = 3.67
+    result = service.calculate_batch_avg_feedback(batch.id)
+    assert result == Decimal("3.67")
+    batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
+    assert float(batch.batch_avg_feedback) == 3.67
 
 
 def test_gate1_does_not_prematurely_calculate_feedback(db_session, coord_token_headers, client):
     """Completing one session via Gate 1 must NOT write batch_avg_feedback when
     other sessions remain uncompleted."""
-    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
     ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
 
     # Session 1: scheduled utilization that we will complete via Gate 1
@@ -130,15 +288,16 @@ def test_gate1_does_not_prematurely_calculate_feedback(db_session, coord_token_h
     )
     assert response.status_code == 200
 
-    # ts2 is still Scheduled → batch_avg_feedback must NOT have been recalculated
+    # ts2 is still Scheduled → batch_avg_feedback must NOT have been written
     batch = db_session.query(Batch).filter(Batch.id == batch.id).first()
-    assert batch.batch_avg_feedback == Decimal("4.50")
+    assert batch.batch_avg_feedback is None
 
 
 def test_gate1_calculates_feedback_when_all_sessions_completed(db_session, coord_token_headers, client):
     """When the last session is completed via Gate 1, the batch average feedback
     is calculated and persisted."""
-    batch = db_session.query(Batch).filter(Batch.batch_id == "TEST_BATCH_PYTHON_001").first()
+    batch = _get_batch(db_session)
+    _reset_avg_feedback(db_session, batch)
     ts1, ts2 = _seed_batch_with_sessions(db_session, batch, count=2)
 
     _seed_utilization(db_session, batch, ts1, rating="3.0")

@@ -47,7 +47,7 @@ class AnalyticsService:
 
         scoped_ids = self.analytics_repo.list_scoped_batch_ids(list(scope_user_ids), current_user.id)
         if not scoped_ids:
-            return None
+            return []
         return scoped_ids
 
     def manager_dashboard(self, current_user: Optional[User] = None) -> ManagerDashboardSummary:
@@ -119,7 +119,14 @@ class AnalyticsService:
             vertical_distribution=verticals,
         )
 
-    def export_mbr(self) -> StreamingResponse:
+    def export_mbr(self, current_user: Optional[User] = None) -> StreamingResponse:
+        scoped_ids = self._get_scoped_batch_ids(current_user)
+        if scoped_ids is None:
+            batches = self.analytics_repo.list_all_batches()
+        elif len(scoped_ids) == 0:
+            batches = []
+        else:
+            batches = self.analytics_repo.list_batches_by_ids(scoped_ids)
         data = [{
             "Batch ID": batch.batch_id,
             "Approval ID": batch.approval_id,
@@ -135,7 +142,7 @@ class AnalyticsService:
             "Batch NPS": float(batch.batch_nps) if batch.batch_nps else None,
             "Batch Avg Feedback": float(batch.batch_avg_feedback) if batch.batch_avg_feedback else None,
             "Schema Locked": "Yes" if batch.is_schema_locked else "No",
-        } for batch in self.analytics_repo.list_all_batches()]
+        } for batch in batches]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             pd.DataFrame(data).to_excel(writer, index=False, sheet_name="Active Batches")

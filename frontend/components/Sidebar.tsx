@@ -176,6 +176,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isTablet = useMediaQueryStore(TABLET_MEDIA_QUERY);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
+  const workspaceTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const workspacePopoverRef = useRef<HTMLDivElement | null>(null);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -191,6 +193,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // My Batches is the landing view for Delivery staff, which is exactly the
   // audience that creates batches and needs the schedule UI.
   const canSeeMyBatches = !isFinance && !isAdmin;
+  // All Batches is the every-batch sheet. It is not Finance-exclusive any more:
+  // the configured approvers (approver 1 and approver 2) work from the same
+  // rows, so they get the sheet too, alongside the Finance team.
+  const canSeeAllBatches = isFinance || isApprover;
 
   // `Ctrl+3` is deliberately ambiguous: it lands on whichever queue this role is
   // expected to work from, so it can never point at a view the user cannot open.
@@ -210,9 +216,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const roleLabel = user?.role_detail?.name || user?.role || "Staff";
 
   const navItems: NavItem[] = [
-    ...(isFinance ? [{
+    ...(canSeeAllBatches ? [{
       id: "finance" as const,
-      label: "Finance Review",
+      label: "All Batches",
       icon: Layers,
       badge: null,
     }] : []),
@@ -275,22 +281,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
     writeViewToLocation(view, basePath, "push");
   };
 
-  // An explicit, permitted `?view=` wins on load and on Back/Forward, so a
-  // shared or bookmarked link reproduces the same screen.
-  useEffect(() => {
-    if (isRequestedViewAllowed && requestedView !== activeView) {
-      setActiveView(requestedView);
-    }
-  }, [isRequestedViewAllowed, requestedView, activeView, setActiveView]);
+  // The URL and `activeView` have to be reconciled in one effect, not two. As
+  // separate effects they read each other's value from the render that is
+  // already stale: the first pushed the URL into state, the second pushed state
+  // back into the URL, and neither ever observed its own write land. That trades
+  // the view back and forth every render until React aborts the commit with
+  // "Maximum update depth exceeded". One direction is decided per disagreement
+  // by asking which of the two actually moved.
+  const previousActiveViewRef = useRef(activeView);
 
-  // ...and the address bar follows the view actually on screen, so a refresh
-  // never falls back to the default. `replaceState` keeps the role-based landing
-  // redirect out of the history stack.
   useEffect(() => {
-    if (requestedView !== activeView) {
-      writeViewToLocation(activeView, basePath, "replace");
+    const activeViewMoved = previousActiveViewRef.current !== activeView;
+    previousActiveViewRef.current = activeView;
+
+    if (requestedView === activeView) return;
+
+    // `activeView` held still while the URL moved under it, so this is a real
+    // Back/Forward navigation and the URL wins.
+    if (!activeViewMoved && isRequestedViewAllowed) {
+      setActiveView(requestedView);
+      return;
     }
-  }, [requestedView, activeView, basePath]);
+
+    // Either `activeView` moved (the role-based landing redirect, or a view the
+    // role is not entitled to request), so the address bar follows what is
+    // actually on screen and a refresh never falls back to the default.
+    // `replaceState` keeps that redirect out of the history stack.
+    writeViewToLocation(activeView, basePath, "replace");
+  }, [isRequestedViewAllowed, requestedView, activeView, basePath]);
 
   // Keyboard shortcut listener
   useEffect(() => {
@@ -320,11 +338,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
         setIsWorkspaceMenuOpen(false);
+        workspaceTriggerRef.current?.focus();
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!isWorkspaceMenuOpen) return;
+
+    const firstMenuItem = workspacePopoverRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+    firstMenuItem?.focus();
+
+    const handleMenuKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsWorkspaceMenuOpen(false);
+        workspaceTriggerRef.current?.focus();
+        return;
+      }
+
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const items = workspacePopoverRef.current
+        ? Array.from(workspacePopoverRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        : [];
+      if (!items.length) return;
+      event.preventDefault();
+      const current = items.indexOf(document.activeElement as HTMLElement);
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      items[(current + direction + items.length) % items.length].focus();
+    };
+
+    document.addEventListener("keydown", handleMenuKeyDown);
+    return () => document.removeEventListener("keydown", handleMenuKeyDown);
+  }, [isWorkspaceMenuOpen]);
 
   return (
     <>
@@ -354,6 +402,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Top Header: Brand / Team Selector */}
         <div ref={workspaceMenuRef} className="relative">
           <Button
+            ref={workspaceTriggerRef}
             variant="ghost"
             className={cn(
               "w-full gap-3 rounded-xl p-2.5 font-medium transition-all duration-200",
@@ -399,6 +448,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               included, so the admin destination is never unreachable. */}
           {isWorkspaceMenuOpen && (
             <div
+              ref={workspacePopoverRef}
               id={WORKSPACE_POPOVER_ID}
               className={cn(
                 "absolute top-full z-50 mt-2 rounded-xl border border-border bg-popover p-2 shadow-lg animate-fade-in",

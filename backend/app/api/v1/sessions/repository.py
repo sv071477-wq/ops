@@ -1,8 +1,7 @@
-from datetime import datetime, time, timedelta
-from decimal import Decimal
-from typing import List, Optional, Sequence
+from typing import List, Optional
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.batch import Batch
@@ -18,6 +17,13 @@ class SessionRepository(ISessionRepository):
     # --- Batch context ---
     def get_batch_by_id(self, batch_id: UUID) -> Optional[Batch]:
         return self.db.query(Batch).filter(Batch.id == batch_id).first()
+
+    def list_scoped_batch_ids(self, scope_user_ids: list[UUID], current_user_id: UUID) -> list[UUID]:
+        rows = self.db.query(Batch.id).filter(or_(
+            Batch.primary_manager_id == current_user_id,
+            Batch.coordinator_id.in_(list(scope_user_ids)),
+        )).all()
+        return [row[0] for row in rows]
 
     def list_all_sessions_for_batch(self, batch_id: UUID) -> List[object]:
         scheduled = self.db.query(TrainingSession).filter(TrainingSession.batch_id == batch_id).all()
@@ -49,6 +55,7 @@ class SessionRepository(ISessionRepository):
     def list_utilizations(
         self,
         batch_id: Optional[UUID] = None,
+        batch_ids: Optional[list[UUID]] = None,
         faculty_name: Optional[str] = None,
         status_filter: Optional[str] = None,
     ) -> List[FacultyUtilization]:
@@ -56,7 +63,9 @@ class SessionRepository(ISessionRepository):
             joinedload(FacultyUtilization.batch).joinedload(Batch.entity),
             joinedload(FacultyUtilization.batch).joinedload(Batch.coordinator)
         ).join(Batch, FacultyUtilization.batch_id == Batch.id)
-        if batch_id:
+        if batch_ids is not None:
+            query = query.filter(FacultyUtilization.batch_id.in_(list(batch_ids)))
+        elif batch_id:
             query = query.filter(FacultyUtilization.batch_id == batch_id)
         if faculty_name:
             query = query.filter(FacultyUtilization.faculty_name.ilike(f"%{faculty_name}%"))
@@ -81,7 +90,7 @@ class SessionRepository(ISessionRepository):
     def get_training_session_by_id(self, session_id: UUID) -> Optional[TrainingSession]:
         return self.db.query(TrainingSession).filter(TrainingSession.id == session_id).first()
 
-    # --- Faculty resolution and daily capacity ---
+    # --- Faculty resolution ---
     def get_active_user(self, user_id: UUID) -> Optional[User]:
         return self.db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
 
@@ -93,43 +102,6 @@ class SessionRepository(ISessionRepository):
         if faculty_role_only:
             query = query.filter(User.role.ilike("faculty"))
         return query.first()
-
-    def list_daily_deliveries(
-        self,
-        faculty_name: str,
-        day_start: datetime,
-        day_end: datetime,
-        exclude_id: Optional[UUID] = None,
-        excluded_statuses: Sequence[str] = ("Cancelled",),
-    ) -> List[FacultyUtilization]:
-        query = self.db.query(FacultyUtilization).filter(
-            FacultyUtilization.faculty_name.ilike(faculty_name),
-            FacultyUtilization.date_of_training >= day_start,
-            FacultyUtilization.date_of_training < day_end,
-            FacultyUtilization.status.notin_(list(excluded_statuses)),
-        )
-        if exclude_id:
-            query = query.filter(FacultyUtilization.id != exclude_id)
-        return query.all()
-
-    def list_conflict_window_deliveries(self, faculty_name: str, target_date) -> List[FacultyUtilization]:
-        # Use date() for comparison to avoid timezone/DST issues
-        start_of_day = datetime.combine(target_date, time.min)
-        end_of_day = start_of_day + timedelta(days=1)
-        query = self.db.query(FacultyUtilization).join(
-            Batch, Batch.id == FacultyUtilization.batch_id
-        ).filter(
-            FacultyUtilization.date_of_training >= start_of_day,
-            FacultyUtilization.date_of_training < end_of_day,
-            FacultyUtilization.status.notin_(["Cancelled"]),
-            Batch.status != "Cancelled",
-        )
-        if faculty_name and faculty_name.strip():
-            query = query.filter(FacultyUtilization.faculty_name.ilike(faculty_name.strip()))
-        return query.all()
-
-    def sum_hours(self, rows: List[FacultyUtilization]) -> Decimal:
-        return sum((row.no_of_hours for row in rows), Decimal("0"))
 
     # --- Mutations ---
     def commit(self) -> None:

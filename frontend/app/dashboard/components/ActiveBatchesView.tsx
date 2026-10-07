@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
-import { Calendar, Layers, Clock, Search, Timer, Users, RefreshCw } from "lucide-react";
+import { Calendar, Layers, Clock, Search, Timer, Users, RefreshCw, Star, TrendingUp } from "lucide-react";
 import { ActiveBatchItem, ActiveBatchesResponse, ActiveSessionItem } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -22,7 +22,6 @@ import {
   EmptyState,
   ErrorBanner,
   LoadingState,
-  NAVBAR_HEIGHT,
   PanelTitle,
   StatCard,
   TABLE_TH_STYLE,
@@ -129,6 +128,20 @@ const BATCH_COLUMN_DEFS = [
     search: [(batch: ActiveBatchItem) => batch.training_days ?? 0],
   },
   { key: "progress", label: "Progress", accessor: (batch: ActiveBatchItem) => batch.progress ?? 0 },
+  {
+    key: "feedback",
+    label: "Avg Feedback",
+    accessor: (batch: ActiveBatchItem) => batch.batch_avg_feedback ?? null,
+    align: "center",
+    filterable: true,
+  },
+  {
+    key: "nps",
+    label: "NPS",
+    accessor: (batch: ActiveBatchItem) => batch.batch_nps ?? null,
+    align: "center",
+    filterable: true,
+  },
 ] as const satisfies readonly TableColumnDef<ActiveBatchItem>[];
 
 type BatchColumnKey = (typeof BATCH_COLUMN_DEFS)[number]["key"];
@@ -167,6 +180,8 @@ const BATCH_EXPORT_COLUMNS: readonly CsvColumn<ActiveBatchItem>[] = [
   { key: "training_days", label: "Training Days" },
   { key: "sessions_conducted", label: "Sessions Conducted" },
   { key: "progress", label: "Progress" },
+  { key: "batch_avg_feedback", label: "Avg Feedback" },
+  { key: "batch_nps", label: "NPS" },
 ];
 
 const SESSION_COLUMN_DEFS = [
@@ -380,6 +395,33 @@ function BatchRow({
           </div>
         </td>
       )}
+      {columns.isVisible("feedback") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
+          {batch.batch_avg_feedback !== null && batch.batch_avg_feedback !== undefined ? (
+            <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
+              {Number(batch.batch_avg_feedback).toFixed(1)} <Star className="h-3.5 w-3.5 inline ml-1 text-warning" aria-hidden="true" />
+            </span>
+          ) : (
+            <span style={{ color: "var(--text-dim)" }}>—</span>
+          )}
+        </td>
+      )}
+      {columns.isVisible("nps") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
+          {batch.batch_nps !== null && batch.batch_nps !== undefined ? (
+            <span
+              style={{
+                fontWeight: 600,
+                color: batch.batch_nps > 0 ? "var(--success)" : batch.batch_nps < 0 ? "var(--destructive)" : "var(--text-muted)",
+              }}
+            >
+              {batch.batch_nps > 0 ? "+" : ""}{Number(batch.batch_nps).toFixed(1)}
+            </span>
+          ) : (
+            <span style={{ color: "var(--text-dim)" }}>—</span>
+          )}
+        </td>
+      )}
     </tr>
   );
 }
@@ -481,7 +523,7 @@ export function ActiveBatchesView({
 
   const batchColumns = useColumnVisibility<BatchColumnKey>({
     columns: BATCH_COLUMN_KEYS,
-    defaultHidden: ["sessionsConducted"],
+    defaultHidden: ["sessionsConducted", "feedback", "nps"],
     storageKey: "ops.table.active-batches.columns",
   });
   const sessionColumns = useColumnVisibility<SessionColumnKey>({
@@ -490,14 +532,15 @@ export function ActiveBatchesView({
     storageKey: "ops.table.active-sessions.columns",
   });
 
-  // A new date is a new result set, so the current page offset is meaningless.
+  // A new date is a new result set, and re-sorting reorders the current one, so
+  // either way the current page offset is meaningless.
   useEffect(() => {
     onBatchPageChange(1);
-  }, [batchesFilters.filtersVersion, filterDate]);
+  }, [batchesFilters.filtersVersion, filterDate, batchSort.sortVersion]);
 
   useEffect(() => {
     onSessionPageChange(1);
-  }, [sessionsFilters.filtersVersion, filterDate]);
+  }, [sessionsFilters.filtersVersion, filterDate, sessionSort.sortVersion]);
 
   const filteredBatches = batchesFilters.filteredRows;
   const filteredSessions = sessionsFilters.filteredRows;
@@ -623,8 +666,6 @@ export function ActiveBatchesView({
       </div>
 
       <FullscreenTable
-        stickyHeader
-        stickyTop={NAVBAR_HEIGHT}
         title={
           <PanelTitle
             title="Ongoing Batches"
@@ -783,8 +824,6 @@ export function ActiveBatchesView({
       </FullscreenTable>
 
       <FullscreenTable
-        stickyHeader
-        stickyTop={NAVBAR_HEIGHT}
         title={
           <PanelTitle
             title="Ongoing Sessions"

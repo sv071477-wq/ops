@@ -13,11 +13,15 @@ export const SORTABLE_TH_STYLE: React.CSSProperties = {
   textAlign: "left",
   verticalAlign: "middle",
   whiteSpace: "nowrap",
-  fontSize: "0.78rem",
-  color: "var(--text-dim)",
+  // 0.975rem, not 0.78rem: the app renders at 80% scale, so this holds the
+  // physical size these headings had before. This is the only heading size the
+  // drawer's local `TIMETABLE_TH_STYLE` inherits, since it does not spread
+  // `TABLE_TH_STYLE`.
+  fontSize: "0.975rem",
+  color: "#111827",
   textTransform: "uppercase",
   letterSpacing: "0.04em",
-  fontWeight: 700,
+  fontWeight: 800,
 };
 
 const TRIGGER_STYLE: React.CSSProperties = {

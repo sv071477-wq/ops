@@ -1,3 +1,3 @@
-from app.schemas.feedback import BatchNpsClosureResponse, SessionFeedbackResponse
+from app.schemas.feedback import SessionFeedbackResponse
 
-__all__ = ["BatchNpsClosureResponse", "SessionFeedbackResponse"]
+__all__ = ["SessionFeedbackResponse"]

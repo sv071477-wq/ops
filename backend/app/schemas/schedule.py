@@ -5,60 +5,6 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, model_validator
 
 
-class ScheduleValidationItem(BaseModel):
-    batch_id: Optional[str] = None  # Batch identifier string or UUID string
-    date_of_training: datetime
-    start_time: Optional[time] = None
-    end_time: Optional[time] = None
-    topic: str
-    faculty_id: Optional[UUID] = None
-    faculty_name: Optional[str] = None
-    no_of_hours: Decimal = Decimal("8.0")
-    venue: Optional[str] = None
-    location_city: Optional[str] = None
-    mode_of_delivery: str = "Online"
-
-
-class ScheduleValidationRequest(BaseModel):
-    items: List[ScheduleValidationItem]
-
-
-class ConflictDetail(BaseModel):
-    faculty_id: Optional[UUID] = None
-    faculty_name: str
-    date_of_training: str
-    date: Optional[str] = None
-    conflict_type: str  # "DOUBLE_BOOKING", "DAILY_HOURS_EXCEEDED", "FACULTY_BLOCKED"
-    message: str
-    reason: Optional[str] = None
-    existing_batch_id: Optional[str] = None
-    existing_session_id: Optional[UUID] = None
-    requested_hours: Decimal
-    existing_hours: Decimal
-
-    @model_validator(mode="before")
-    @classmethod
-    def sync_aliases(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            if "date_of_training" in data and not data.get("date"):
-                data["date"] = str(data["date_of_training"])
-            elif "date" in data and not data.get("date_of_training"):
-                data["date_of_training"] = str(data["date"])
-            if "message" in data and not data.get("reason"):
-                data["reason"] = str(data["message"])
-            elif "reason" in data and not data.get("message"):
-                data["message"] = str(data["reason"])
-        return data
-
-
-class ScheduleValidationResponse(BaseModel):
-    is_valid: bool
-    total_slots: int
-    valid_slots: int
-    conflict_count: int
-    conflicts: List[ConflictDetail] = []
-
-
 class ExtractedScheduleItem(BaseModel):
     source_sheet: str
     source_row: int

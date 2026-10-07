@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { PaginationControls } from "@/components/PaginationControls";
 import {
-  Batch, TrainingSession, ExtractedScheduleRow, ConflictDetail, CreateSessionPayload,
+  Batch, TrainingSession, ExtractedScheduleRow, CreateSessionPayload,
   api, BatchOption, ScheduledSession, FacultyType, Vertical
 } from "@/lib/api";
 import { formatDate as formatDateDMY } from "@/lib/dateUtils";
@@ -56,132 +56,17 @@ const UTIL_HINT: React.CSSProperties = {
   display: "block",
 };
 
-/** Matches the ledger's `<th>` look so the shared sortable cells keep this table's density. */
-const LEDGER_TH_STYLE: React.CSSProperties = {
-  padding: "8px 10px",
-  fontWeight: 600,
-  fontSize: "0.675rem",
-};
-
-const LEDGER_TD_STYLE: React.CSSProperties = { padding: "8px 10px", color: "var(--text-main)" };
-
-/** The row buttons collapsed to a primary action plus an overflow menu. */
-const LEDGER_ACTIONS_TH_STYLE: React.CSSProperties = { ...ACTIONS_COLUMN_STYLE, width: 104, minWidth: 104 };
-
 const TIMETABLE_TH_STYLE: React.CSSProperties = {
   padding: "8px 12px",
 };
 
 const TIMETABLE_TD_STYLE: React.CSSProperties = { padding: "8px 12px" };
 
-/** Flattened row for the "Faculty Utilization & Delivery Ledger" table. */
-interface UtilizationLedgerRow {
-  id: string;
-  seq: number;
-  session: TrainingSession;
-  entity: string;
-  category: string;
-  vertical: string;
-  client: string;
-  program: string;
-  batchId: string;
-  dateOfTraining: string;
-  topic: string;
-  facultyName: string;
-  facultyType: string;
-  hours: number | null;
-  moduleFeedback: string;
-  venue: string;
-  locationCity: string;
-  modeOfDelivery: string;
-  coordinator: string;
-  status: string;
-}
-
 /** Keeps the original index so inline row editing never follows a re-sorted row. */
 interface ExtractedTimetableRowView {
   row: ExtractedScheduleRow;
   index: number;
 }
-
-const resolveFacultyType = (vertical?: string | null): string =>
-  vertical?.includes("Internal") && !vertical?.includes("External")
-    ? "Internal"
-    : vertical?.includes("External") && !vertical?.includes("Internal")
-      ? "External"
-      : vertical?.includes("HOP")
-        ? "HOP"
-        : "Mixed";
-
-// The single source of truth for the ledger: headings, sort accessors, sort
-// options, filter dropdowns, the search haystack and the CSV export all come
-// from this list. "Session Status" used to be a sort/filter option with no
-// column behind it, and "Faculty Vertical" duplicated "Vertical" — declaring the
-// columns once is what keeps that from happening again.
-const LEDGER_COLUMN_DEFS: readonly TableColumnDef<UtilizationLedgerRow>[] = [
-  { key: "seq", label: "#", accessor: (row) => row.seq, align: "center" },
-  { key: "entity", label: "Entity", accessor: (row) => row.entity },
-  { key: "category", label: "Category", accessor: (row) => row.category, filterable: true },
-  { key: "vertical", label: "Vertical", accessor: (row) => row.vertical, filterable: true },
-  { key: "client", label: "Client", accessor: (row) => row.client },
-  { key: "program", label: "Program", accessor: (row) => row.program },
-  { key: "batchId", label: "Batch ID", accessor: (row) => row.batchId },
-  { key: "date", label: "Date of Training", accessor: (row) => row.dateOfTraining },
-  { key: "topic", label: "Topic", accessor: (row) => row.topic },
-  { key: "faculty", label: "Faculty Full Name", accessor: (row) => row.facultyName },
-  { key: "facultyType", label: "Internal/External", accessor: (row) => row.facultyType, align: "center", filterable: true },
-  { key: "hours", label: "No. of Hours", accessor: (row) => row.hours, align: "center" },
-  { key: "moduleFeedback", label: "Module Feedback", accessor: (row) => row.moduleFeedback, filterable: true },
-  { key: "venue", label: "Venue", accessor: (row) => row.venue },
-  { key: "city", label: "Location/City", accessor: (row) => row.locationCity },
-  { key: "mode", label: "Mode of Delivery", accessor: (row) => row.modeOfDelivery, filterable: true },
-  { key: "coordinator", label: "Coordinator", accessor: (row) => row.coordinator },
-  { key: "status", label: "Session Status", accessor: (row) => row.status, align: "center", filterable: true },
-  { key: "actions", label: "Actions", accessor: (row) => row.id, sortable: false },
-];
-
-const LEDGER_ACCESSORS = buildSortAccessors(LEDGER_COLUMN_DEFS);
-const LEDGER_SORT_OPTIONS = buildSortOptions(LEDGER_COLUMN_DEFS);
-const LEDGER_FILTER_FIELDS = buildFilterFields(LEDGER_COLUMN_DEFS);
-const LEDGER_SEARCH_ACCESSOR = buildSearchAccessor(LEDGER_COLUMN_DEFS);
-
-const LEDGER_COLUMN_KEYS = LEDGER_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label }));
-type LedgerColumnKey = (typeof LEDGER_COLUMN_KEYS)[number]["key"];
-
-/** Batch context repeats on every ledger row, so it is off by default. */
-const LEDGER_DEFAULT_HIDDEN: readonly LedgerColumnKey[] = [
-  "seq",
-  "entity",
-  "category",
-  "program",
-  "moduleFeedback",
-  "venue",
-  "city",
-  "coordinator",
-];
-
-const LEDGER_EXPORT_COLUMNS: readonly CsvColumn<UtilizationLedgerRow>[] = [
-  { key: "batchId", label: "Batch ID", value: (row) => row.batchId },
-  { key: "entity", label: "Entity", value: (row) => row.entity },
-  { key: "client", label: "Client", value: (row) => row.client },
-  { key: "category", label: "Category", value: (row) => row.category },
-  { key: "program", label: "Program", value: (row) => row.program },
-  { key: "seq", label: "#", value: (row) => row.seq },
-  { key: "date", label: "Date of Training", value: (row) => row.dateOfTraining },
-  { key: "topic", label: "Topic", value: (row) => row.topic },
-  { key: "facultyName", label: "Faculty Full Name", value: (row) => row.facultyName },
-  { key: "vertical", label: "Vertical", value: (row) => row.vertical },
-  { key: "facultyType", label: "Internal/External", value: (row) => row.facultyType },
-  { key: "hours", label: "No. of Hours", value: (row) => row.hours },
-  { key: "moduleFeedback", label: "Module Feedback", value: (row) => row.moduleFeedback },
-  { key: "venue", label: "Venue", value: (row) => row.venue },
-  { key: "locationCity", label: "Location/City", value: (row) => row.locationCity },
-  { key: "modeOfDelivery", label: "Mode of Delivery", value: (row) => row.modeOfDelivery },
-  { key: "coordinator", label: "Coordinator", value: (row) => row.coordinator },
-  { key: "status", label: "Session Status", value: (row) => row.status },
-];
-
-const LEDGER_DESC_FIRST_KEYS = ["date", "hours", "seq"];
 
 const TIMETABLE_COLUMN_DEFS: readonly TableColumnDef<ExtractedTimetableRowView>[] = [
   { key: "date", label: "Date", accessor: (view) => view.row.date_of_training || "" },
@@ -298,6 +183,13 @@ const parseRemarksList = (rawRemarks?: string | null): ParsedRemarkItem[] => {
   });
 };
 
+interface ConflictDetail {
+  row_index: number;
+  field: string;
+  message: string;
+  suggested_fix?: string;
+}
+
 export type BatchDetailTab = "overview" | "sessions" | "quality_gates";
 
 const DRAWER_TABS: { id: BatchDetailTab; label: string; icon?: React.ReactNode }[] = [
@@ -325,7 +217,14 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   onBatchUpdated,
   initialTab = "overview",
 }) => {
-const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
+  // Guard before any hooks: when the drawer is closed or has no batch, render
+  // nothing without running hooks so the closed -> open transition never
+  // triggers React's "Rendered more hooks than during the previous render"
+  // error. The closed/unmounted UX is preserved — callers keep the drawer
+  // permanently mounted and only flip `batch`/`isOpen`.
+  if (!isOpen || !batch) return null;
+
+  const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
   // Every read and every write in this drawer goes through this one value, so an
   // in-drawer mutation (which only calls `setCurrentBatch`) is reflected
   // everywhere instead of half the tabs reading a stale `batch` prop.
@@ -403,6 +302,7 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
       training_days: target.training_days,
       total_hours: target.total_hours,
       total_enrollments: target.total_enrollments,
+      non_residential_enrollments: target.non_residential_enrollments,
       faculty_assigned_text: target.faculty_assigned_text,
       remarks: target.remarks,
     });
@@ -425,7 +325,7 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
         training_days: Number(editForm.training_days) || 0,
         total_hours: Number(editForm.total_hours) || 0,
         total_enrollments: Number(editForm.total_enrollments) || 0,
-        non_residential_enrollments: Number(editForm.total_enrollments) || 0,
+        non_residential_enrollments: Number(editForm.non_residential_enrollments) || 0,
       };
       const updated = await api.updateBatch(target.id, payload);
       setCurrentBatch(updated);
@@ -505,60 +405,18 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
   const completedSessions = sessions.filter((s) => s.status === "Completed").length;
   const allSessionsCompleted = sessions.length > 0 && completedSessions === sessions.length;
 
-  // Ledger rows carry the raw values (ISO dates, numeric hours, enum strings) so
-  // sorting and filtering never run on the DD-MM-YYYY / badge rendering.
-  const ledgerRows = useMemo<UtilizationLedgerRow[]>(() => {
-    const source = activeBatch;
-    return sessions.map((s, idx) => ({
-      id: s.id,
-      seq: idx + 1,
-      session: s,
-      entity: source?.entity?.name || source?.entity_id || "",
-      category: source?.category || "",
-      vertical: s.vertical || "",
-      client: source?.client_name || "",
-      program: source?.program_name || "",
-      batchId: source?.batch_id || "",
-      dateOfTraining: s.date_of_training || "",
-      topic: s.topic || "",
-      facultyName: s.faculty_name || "",
-      facultyType: resolveFacultyType(s.vertical),
-      hours: typeof s.no_of_hours === "number" && !Number.isNaN(s.no_of_hours) ? s.no_of_hours : null,
-      moduleFeedback: s.feedback_notes || s.topic_feedback || (s.feedback_submitted ? "Submitted" : ""),
-      venue: s.venue || "",
-      locationCity: s.location_city || source?.location_city || "",
-      modeOfDelivery: s.mode_of_delivery || "",
-      coordinator: source?.coordinator?.full_name || source?.coordinator_id || "",
-      status: s.status || "",
-    }));
-  }, [sessions, activeBatch]);
-
-  const ledgerSort = useTableSort(ledgerRows, LEDGER_ACCESSORS, { descFirstKeys: LEDGER_DESC_FIRST_KEYS });
-  const ledgerFilters = useTableFilters(ledgerSort.sortedRows, LEDGER_FILTER_FIELDS, LEDGER_SEARCH_ACCESSOR);
-
-  const ledgerColumns = useColumnVisibility<LedgerColumnKey>({
-    columns: LEDGER_COLUMN_KEYS,
-    defaultHidden: LEDGER_DEFAULT_HIDDEN,
-    storageKey: "ops.table.delivery-ledger.columns",
-  });
-  const [ledgerPage, setLedgerPage] = useState(1);
-  const [ledgerPageSize, setLedgerPageSize] = usePersistentState("ops.table.delivery-ledger.page-size", 10, reviveNumber);
-  const ledgerVisibleColumnCount = LEDGER_COLUMN_KEYS.filter((column) => ledgerColumns.isVisible(column.key)).length;
-
-  useEffect(() => {
-    setLedgerPage(1);
-  }, [ledgerFilters.filtersVersion]);
-
-  useEffect(() => {
-    // A shorter page size can strand the user on a page that no longer exists.
-    const totalPages = Math.max(1, Math.ceil(ledgerFilters.filteredRows.length / ledgerPageSize));
-    if (ledgerPage > totalPages) setLedgerPage(totalPages);
-  }, [ledgerFilters.filteredRows.length, ledgerPage, ledgerPageSize]);
-
-  const ledgerPagedRows = useMemo(() => {
-    const start = (ledgerPage - 1) * ledgerPageSize;
-    return ledgerFilters.filteredRows.slice(start, start + ledgerPageSize);
-  }, [ledgerFilters.filteredRows, ledgerPage, ledgerPageSize]);
+  // Checkpoint 1 progress is derived from the two datasets the drawer already
+  // loads: `scheduledSessions` is the planned curriculum, `sessions` the actual
+  // delivery ledger. The batch average itself is never recomputed here — the
+  // backend writes it once and is the authority.
+  const TERMINAL_DELIVERY_STATUSES = ["Completed", "Cancelled", "Not Conducted"];
+  const checkpoint1Progress = useMemo(() => {
+    const plannedDays = scheduledSessions.filter((s) => s.status !== "Cancelled");
+    const planned = plannedDays.length;
+    const logged = plannedDays.filter((s) => s.utilization_logged).length;
+    const closed = plannedDays.filter((s) => TERMINAL_DELIVERY_STATUSES.includes(s.status)).length;
+    return { planned, logged, closed };
+  }, [scheduledSessions]);
 
   // Log Faculty Utilization on Session Day Modal
   const [isLogUtilizationOpen, setIsLogUtilizationOpen] = useState(false);
@@ -799,14 +657,20 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
 
   // Gate 2 Closure Modal
   const [isGate2ModalOpen, setIsGate2ModalOpen] = useState(false);
-  const [gate2Nps, setGate2Nps] = useState<number>(9);
-  const [gate2AvgFeedback, setGate2AvgFeedback] = useState<number>(4.8);
-  const [gate2RetroNotes, setGate2RetroNotes] = useState("");
+  const [gate2Promoters, setGate2Promoters] = useState<number>(0);
+  const [gate2Passives, setGate2Passives] = useState<number>(0);
+  const [gate2Detractors, setGate2Detractors] = useState<number>(0);
   const [isSubmittingGate2, setIsSubmittingGate2] = useState(false);
   const [gate2Error, setGate2Error] = useState<string | null>(null);
-  const [feedbackFile, setFeedbackFile] = useState<File | null>(null);
-  const [isImportingFeedback, setIsImportingFeedback] = useState(false);
-  const [feedbackImportMessage, setFeedbackImportMessage] = useState<string | null>(null);
+
+  // The index is only ever computed, never entered. These are for the live
+  // preview in the modal; the server recomputes and stores the authoritative
+  // value on submit.
+  const gate2ResponseTotal = gate2Promoters + gate2Passives + gate2Detractors;
+  const gate2PromoterPct = gate2ResponseTotal ? (gate2Promoters / gate2ResponseTotal) * 100 : 0;
+  const gate2PassivePct = gate2ResponseTotal ? (gate2Passives / gate2ResponseTotal) * 100 : 0;
+  const gate2DetractorPct = gate2ResponseTotal ? (gate2Detractors / gate2ResponseTotal) * 100 : 0;
+  const gate2NpsPreview = gate2PromoterPct - gate2DetractorPct;
 
   // Timetable Ingestion Modal
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
@@ -954,8 +818,6 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
       loadSessions();
     }
   }, [isOpen, batchId]);
-
-  if (!isOpen || !batch) return null;
 
   const formatDate = (dStr?: string | null) => {
     return formatDateDMY(dStr, "Not set");
@@ -1133,21 +995,6 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
     }
   };
 
-  const handleImportFeedback = async () => {
-    if (!feedbackFile) return;
-    setIsImportingFeedback(true);
-    setFeedbackImportMessage(null);
-    try {
-      const result = await api.importBatchFeedback(activeBatch.id, feedbackFile);
-      setFeedbackImportMessage(`Imported ${result.total_responses} responses. Calculated NPS: ${result.nps_score}.`);
-      if (onBatchUpdated) onBatchUpdated();
-    } catch (err: any) {
-      setFeedbackImportMessage(err.message || "Failed to import final feedback");
-    } finally {
-      setIsImportingFeedback(false);
-    }
-  };
-
   // Handle Gate 2 Batch Closure
   const handleCloseBatchGate2 = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1156,9 +1003,9 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
 
     try {
       await api.closeBatchGate2(activeBatch.id, {
-        nps_score: Number(gate2Nps),
-        average_feedback_score: Number(gate2AvgFeedback),
-        retrospective_notes: gate2RetroNotes.trim() || undefined,
+        promoters_count: gate2Promoters,
+        passive_count: gate2Passives,
+        detractors_count: gate2Detractors,
       });
 
       setIsGate2ModalOpen(false);
@@ -1219,7 +1066,7 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
         mode_of_delivery: r.mode_of_delivery,
       }));
 
-      const res = await api.validateScheduleSlots(validationPayload);
+      const res = await api.validateScheduleSlots(validationPayload, activeBatch.batch_id);
       setValidationConflicts(res.conflicts || []);
       setHasValidated(true);
     } catch (err: any) {
@@ -2138,326 +1985,44 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
                     </div>
                   )}
 
-                  {/* SECTION 2: FACULTY UTILIZATION / DELIVERY LEDGER */}
+                  {/* SECTION 2: SESSION LEDGER — actual delivery records with status */}
                   {sessions.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: scheduledSessions.length > 0 ? 8 : 0 }}>
-                      <FullscreenTable
-                        panelClassName=""
-                        strategy="absolute"
-                        stickyThead
-                        style={{ border: "1px solid var(--border-subtle)", borderRadius: 8, background: "#ffffff" }}
-                        title={
-                          <PanelTitle
-                            title="Faculty Utilization & Delivery Ledger"
-                            description="Every delivery day logged against this batch — the faculty timesheet."
-                            meta={
-                              <CountBadge
-                                value={ledgerFilters.filteredRows.length}
-                                label={`of ${sessions.length} ${sessions.length === 1 ? "session" : "sessions"}`}
-                              />
-                            }
-                          />
-                        }
-                        toolbar={
-                          <TableFilters
-                            search={{
-                              value: ledgerFilters.search,
-                              onChange: ledgerFilters.setSearch,
-                              placeholder: "Search faculty, topic, venue...",
-                              width: 230,
-                            }}
-                            selects={[
-                              {
-                                key: "category",
-                                label: "Category",
-                                value: ledgerFilters.getFilter("category"),
-                                onChange: (value) => ledgerFilters.setFilter("category", value),
-                                options: ledgerFilters.optionsFor("category"),
-                                width: 145,
-                              },
-                              {
-                                key: "vertical",
-                                label: "Vertical",
-                                value: ledgerFilters.getFilter("vertical"),
-                                onChange: (value) => ledgerFilters.setFilter("vertical", value),
-                                options: ledgerFilters.optionsFor("vertical"),
-                                width: 150,
-                              },
-                              {
-                                key: "facultyType",
-                                label: "Faculty Type",
-                                value: ledgerFilters.getFilter("facultyType"),
-                                onChange: (value) => ledgerFilters.setFilter("facultyType", value),
-                                options: ledgerFilters.optionsFor("facultyType"),
-                                width: 150,
-                              },
-                              {
-                                key: "mode",
-                                label: "Mode of Delivery",
-                                value: ledgerFilters.getFilter("mode"),
-                                onChange: (value) => ledgerFilters.setFilter("mode", value),
-                                options: ledgerFilters.optionsFor("mode"),
-                                width: 165,
-                              },
-                              {
-                                key: "moduleFeedback",
-                                label: "Module Feedback",
-                                value: ledgerFilters.getFilter("moduleFeedback"),
-                                onChange: (value) => ledgerFilters.setFilter("moduleFeedback", value),
-                                options: ledgerFilters.optionsFor("moduleFeedback"),
-                                width: 170,
-                              },
-                              {
-                                key: "status",
-                                label: "Status",
-                                value: ledgerFilters.getFilter("status"),
-                                onChange: (value) => ledgerFilters.setFilter("status", value),
-                                options: ledgerFilters.optionsFor("status"),
-                                width: 150,
-                              },
-                            ]}
-                            sort={{
-                              options: LEDGER_SORT_OPTIONS,
-                              sortKey: ledgerSort.sortKey,
-                              sortDir: ledgerSort.sortDir,
-                              onChange: ledgerSort.applySort,
-                            }}
-                            onClear={ledgerFilters.clearFilters}
-                            hasActiveFilters={ledgerFilters.hasActiveFilters}
-                            activeFilterCount={ledgerFilters.activeFilterCount}
-                          />
-                        }
-                        actions={
-                          <>
-                            <ColumnsMenu
-                              columns={LEDGER_COLUMN_KEYS}
-                              hidden={ledgerColumns.hidden}
-                              onToggle={ledgerColumns.toggle}
-                              onShowAll={ledgerColumns.showAll}
-                            />
-                            <ExportButton
-                              filename={`delivery-ledger-${activeBatch.batch_id}`}
-                              columns={LEDGER_EXPORT_COLUMNS}
-                              rows={ledgerFilters.filteredRows}
-                            />
-                          </>
-                        }
-                        footer={
-                          <PaginationControls
-                            label="Delivery ledger pages"
-                            currentPage={ledgerPage}
-                            totalItems={ledgerFilters.filteredRows.length}
-                            pageSize={ledgerPageSize}
-                            pageSizeOptions={[10, 25, 50, 100]}
-                            onPageChange={setLedgerPage}
-                            onPageSizeChange={setLedgerPageSize}
-                          />
-                        }
-                      >
-                        <table
-                          className="glass-table table-pin-first-col w-full border-collapse"
-                          style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.775rem", minWidth: 960 }}
-                        >
-                          <TableCaption>
-                            Faculty utilization and delivery ledger for batch {activeBatch.batch_id}
-                          </TableCaption>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
+                        <PanelTitle
+                          title={`Session Ledger (${sessions.length} ${sessions.length === 1 ? "Record" : "Records"})`}
+                          description="Actual delivery logs from the utilization ledger, keyed by the batch session id."
+                        />
+                      </div>
+                      <div style={{ overflow: "auto", border: "1px solid var(--border-subtle)", borderRadius: 6, background: "#ffffff" }}>
+                        <table className="glass-table w-full border-collapse" style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
                           <thead>
                             <tr>
-                              {LEDGER_COLUMN_DEFS.map((column) =>
-                                column.key === "actions" ? null : ledgerColumns.isVisible(column.key as LedgerColumnKey) ? (
-                                  <SortableHeaderCell
-                                    key={column.key}
-                                    columnKey={column.key}
-                                    label={column.label}
-                                    style={{ ...LEDGER_TH_STYLE, textAlign: column.align ?? "left" }}
-                                    sortKey={ledgerSort.sortKey}
-                                    sortDir={ledgerSort.sortDir}
-                                    onSort={ledgerSort.toggleSort}
-                                  />
-                                ) : null
-                              )}
-                              {ledgerColumns.isVisible("actions") && (
-                                <PlainHeaderCell style={LEDGER_ACTIONS_TH_STYLE}>Actions</PlainHeaderCell>
-                              )}
+                              <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Date</PlainHeaderCell>
+                              <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Topic</PlainHeaderCell>
+                              <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Faculty</PlainHeaderCell>
+                              <PlainHeaderCell style={{ ...TIMETABLE_TH_STYLE, textAlign: "center" }}>Hours</PlainHeaderCell>
+                              <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Mode</PlainHeaderCell>
+                              <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Session Status</PlainHeaderCell>
                             </tr>
                           </thead>
                           <tbody>
-                            {ledgerPagedRows.length === 0 ? (
-                              <TableStateRow colSpan={ledgerVisibleColumnCount}>
-                                {sessionsError ? (
-                                  <ErrorBanner message={sessionsError} className="mx-auto my-6 max-w-lg" />
-                                ) : ledgerFilters.hasActiveFilters ? (
-                                  <EmptyState
-                                    icon={<Search className="h-5 w-5" aria-hidden="true" />}
-                                    title="No sessions match your filters"
-                                    description="Clear the search or filter selections to see every logged session."
-                                    action={
-                                      <Button size="sm" variant="outline" onClick={ledgerFilters.clearFilters}>
-                                        Clear filters
-                                      </Button>
-                                    }
-                                  />
-                                ) : (
-                                  <EmptyState
-                                    icon={<Users className="h-5 w-5" aria-hidden="true" />}
-                                    title="No sessions recorded yet"
-                                    description="Log utilization against a scheduled day to build the faculty timesheet."
-                                  />
-                                )}
-                              </TableStateRow>
-                            ) : (
-                              ledgerPagedRows.map((row) => {
-                                const s = row.session;
-                                const isOpenSession = !["Completed", "Cancelled", "Not Conducted"].includes(s.status);
-                                const facultyType = resolveFacultyType(s.vertical);
-                                const menuItems: MenuItem[] = isOpenSession
-                                  ? [
-                                      {
-                                        key: "edit",
-                                        label: "Edit session topic",
-                                        icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
-                                        onSelect: () => handleEditSession(s),
-                                      },
-                                      {
-                                        key: "not-conducted",
-                                        label: "Mark not conducted",
-                                        icon: <Ban className="h-4 w-4" aria-hidden="true" />,
-                                        onSelect: () => handleSessionOutcome(s, "not-conducted"),
-                                      },
-                                      {
-                                        key: "cancel",
-                                        label: "Cancel session",
-                                        icon: <AlertTriangle className="h-4 w-4" aria-hidden="true" />,
-                                        onSelect: () => handleSessionOutcome(s, "cancel"),
-                                        tone: "destructive",
-                                      },
-                                    ]
-                                  : [];
-
-                                return (
-                                  <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                                    {ledgerColumns.isVisible("seq") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, fontWeight: 600 }}>{row.seq}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("entity") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.entity || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("category") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.category || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("vertical") && (
-                                      <td style={LEDGER_TD_STYLE}>
-                                        <Badge variant={row.vertical ? "info" : "secondary"} size="sm" className="normal-case tracking-normal">
-                                          {row.vertical || "—"}
-                                        </Badge>
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("client") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.client || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("program") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.program || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("batchId") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, fontWeight: 600, color: "#0b5cab", fontFamily: "monospace", fontSize: "0.75rem" }}>
-                                        {row.batchId}
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("date") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, whiteSpace: "nowrap" }}>{formatDate(row.dateOfTraining)}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("topic") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                                        {row.topic}
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("faculty") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, fontWeight: 600 }}>{row.facultyName || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("facultyType") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, textAlign: "center" }}>
-                                        <Badge
-                                          variant={facultyType === "External" ? "destructive" : "success"}
-                                          size="sm"
-                                          className="normal-case tracking-normal"
-                                        >
-                                          {facultyType}
-                                        </Badge>
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("hours") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, textAlign: "center", fontWeight: 600 }}>
-                                        {row.hours === null ? "—" : `${row.hours} hrs`}
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("moduleFeedback") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, maxWidth: 200, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                                        {row.moduleFeedback || "—"}
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("venue") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.venue || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("city") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.locationCity || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("mode") && (
-                                      <td style={LEDGER_TD_STYLE}>
-                                        <Badge variant="secondary" size="sm" className="normal-case tracking-normal">
-                                          {row.modeOfDelivery || "—"}
-                                        </Badge>
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("coordinator") && (
-                                      <td style={LEDGER_TD_STYLE}>{row.coordinator || "—"}</td>
-                                    )}
-                                    {ledgerColumns.isVisible("status") && (
-                                      <td style={{ ...LEDGER_TD_STYLE, textAlign: "center" }}>
-                                        <StatusBadge status={row.status} />
-                                      </td>
-                                    )}
-                                    {ledgerColumns.isVisible("actions") && (
-                                      <td style={{ ...LEDGER_ACTIONS_TH_STYLE, textAlign: "right", background: "#ffffff" }}>
-                                        <RowActions>
-                                          {isOpenSession ? (
-                                            <button
-                                              type="button"
-                                              onClick={() => handleEditSession(s)}
-                                              className={ROW_ACTION_BUTTON}
-                                              aria-label={`Edit topic for session ${row.seq}`}
-                                              title="Edit session topic"
-                                            >
-                                              <Edit3 className="h-4 w-4" aria-hidden="true" />
-                                            </button>
-                                          ) : s.status === "Completed" ? null : (
-                                            <button
-                                              type="button"
-                                              onClick={() => openGate1Modal(s)}
-                                              className={ROW_ACTION_BUTTON}
-                                              aria-label={`Submit Gate 1 feedback for session ${row.seq}`}
-                                              title="Submit Gate 1 feedback"
-                                            >
-                                              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                                            </button>
-                                          )}
-                                          {menuItems.length > 0 && (
-                                            <TableMenu
-                                              items={menuItems}
-                                              label={`More actions for session ${row.seq}`}
-                                            />
-                                          )}
-                                        </RowActions>
-                                      </td>
-                                    )}
-                                  </tr>
-                                );
-                              })
-                            )}
+                            {sessions.map((s) => (
+                              <tr key={s.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                                <td style={{ ...TIMETABLE_TD_STYLE, fontWeight: 600 }}>{formatDate(s.date_of_training)}</td>
+                                <td style={TIMETABLE_TD_STYLE}>{s.topic}</td>
+                                <td style={TIMETABLE_TD_STYLE}>{s.faculty_name}</td>
+                                <td style={{ ...TIMETABLE_TD_STYLE, textAlign: "center" }}>{s.no_of_hours}h</td>
+                                <td style={TIMETABLE_TD_STYLE}>{s.mode_of_delivery}</td>
+                                <td style={TIMETABLE_TD_STYLE}>{s.status}</td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
-                      </FullscreenTable>
+                      </div>
                     </div>
                   )}
+
                 </div>
               )}
             </div>
@@ -2495,22 +2060,32 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
                   <div>
                     <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Average Batch Feedback Rating</div>
                     <div style={{ fontSize: "1.3rem", fontWeight: 800, marginTop: 2 }}>
-                      {allSessionsCompleted
-                        ? (activeBatch.batch_avg_feedback ? (
-                            <span style={{ color: "#b45309" }}>{activeBatch.batch_avg_feedback} / 5.0</span>
-                          ) : (
-                            <span style={{ color: "var(--text-dim)" }}>No feedback submitted</span>
-                          ))
-                        : (
-                          <span style={{ color: "#0b5cab" }}>Awaiting all sessions to complete</span>
-                        )}
+                      {activeBatch.batch_avg_feedback != null ? (
+                        <span style={{ color: "#b45309" }}>{activeBatch.batch_avg_feedback} / 5.0</span>
+                      ) : (
+                        <span style={{ color: "var(--text-dim)" }}>No feedback submitted</span>
+                      )}
                     </div>
                   </div>
                   <div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Completed Sessions</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: allSessionsCompleted ? "#16a34a" : "#0b5cab", marginTop: 2 }}>
-                      {completedSessions} / {sessions.length}
-                      {allSessionsCompleted && <span style={{ fontSize: "0.7rem", marginLeft: 6, color: "#16a34a", fontWeight: 700 }}>✓ All Complete</span>}
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Delivery Progress</div>
+                    <div style={{ fontSize: "1.3rem", fontWeight: 800, color: checkpoint1Progress.logged === checkpoint1Progress.planned ? "#16a34a" : "#0b5cab", marginTop: 2 }}>
+                      {checkpoint1Progress.closed} / {checkpoint1Progress.planned}
+                      {checkpoint1Progress.logged === checkpoint1Progress.planned && (
+                        <span style={{ fontSize: "0.7rem", marginLeft: 6, color: "#16a34a", fontWeight: 700 }}>✓ All Logged</span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Status</div>
+                    <div style={{ fontSize: "0.825rem", fontWeight: 600, marginTop: 6, color: "var(--text-muted)" }}>
+                      {activeBatch.batch_avg_feedback != null
+                        ? `All ${checkpoint1Progress.planned} deliveries logged and closed`
+                        : checkpoint1Progress.logged < checkpoint1Progress.planned
+                          ? `${checkpoint1Progress.logged} of ${checkpoint1Progress.planned} deliveries logged · ${checkpoint1Progress.planned - checkpoint1Progress.logged} session(s) still to log`
+                          : checkpoint1Progress.closed < checkpoint1Progress.planned
+                            ? `All ${checkpoint1Progress.planned} deliveries logged · ${checkpoint1Progress.planned - checkpoint1Progress.closed} awaiting outcome`
+                            : "No feedback submitted"}
                     </div>
                   </div>
                 </div>
@@ -2538,101 +2113,82 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
                   </h4>
                 </div>
                 <p style={{ fontSize: "0.825rem", color: "var(--text-muted)", margin: "0 0 14px 0" }}>
-                  Import the final feedback workbook first. The system calculates NPS from promoters, passive responses, and detractors before closure.
+                  Enter the final promoter, passive and detractor response counts. The system calculates the NPS index and closes the batch.
                 </p>
 
-                {activeBatch.status !== "Completed" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-                    <label style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "12px 14px",
-                      border: "1px dashed #9bb9d8",
-                      borderRadius: 8,
-                      background: "#f8fbff",
-                      cursor: "pointer",
-                    }}>
-                      <Upload size={18} color="#0b5cab" />
-                      <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: "block", fontSize: "0.82rem", fontWeight: 700, color: "var(--text-main)" }}>
-                          {feedbackFile ? feedbackFile.name : "Choose feedback workbook"}
-                        </span>
-                        <span style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
-                          {feedbackFile ? `${(feedbackFile.size / 1024 / 1024).toFixed(2)} MB selected` : "Excel or CSV, up to 10 MB"}
-                        </span>
-                      </span>
-                      <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "#0b5cab" }}>Browse</span>
-                      <input
-                        type="file"
-                        accept=".xlsx,.xls,.csv"
-                        onChange={(event) => {
-                          const selected = event.target.files?.[0] || null;
-                          if (selected && selected.size > 10 * 1024 * 1024) {
-                            setFeedbackFile(null);
-                            setFeedbackImportMessage("File is too large. Choose a file smaller than 10 MB.");
-                            return;
-                          }
-                          setFeedbackFile(selected);
-                          setFeedbackImportMessage(null);
-                        }}
-                        style={{ display: "none" }}
-                      />
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <button onClick={handleImportFeedback} disabled={!feedbackFile || isImportingFeedback} className="btn btn-secondary" style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-                        {isImportingFeedback && <RefreshCw size={14} className="animate-spin" />}
-                        {isImportingFeedback ? "Importing workbook..." : "Import final feedback"}
-                      </button>
-                      {feedbackImportMessage && (
-                        <span style={{ fontSize: "0.78rem", color: feedbackImportMessage.startsWith("Imported") ? "#15803d" : "#b91c1c", fontWeight: 600 }}>
-                          {feedbackImportMessage}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {activeBatch.status === "Completed" ? (
-                  <div style={{
-                    background: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    borderRadius: 6,
-                    padding: "14px 16px"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#16a34a", fontWeight: 700 }}>
-                      <CheckCircle2 size={16} />
-                      <span>NPS Closure Completed & Batch Formally Closed</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 24, marginTop: 10 }}>
-                      <div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Final Batch NPS</div>
-                        <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#16a34a" }}>
-                          {activeBatch.batch_nps}
-                        </div>
-                      </div>
-                      {activeBatch.retrospective_notes && (
-                        <div>
-                          <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Retrospective Notes</div>
-                          <div style={{ fontSize: "0.825rem", color: "var(--text-main)", marginTop: 2 }}>
-                            {activeBatch.retrospective_notes}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <button
-                      onClick={() => setIsGate2ModalOpen(true)}
-                      className="btn btn-primary"
-                      style={{ display: "flex", alignItems: "center", gap: 6 }}
-                    >
-                      <Sparkles size={16} />
-                      <span>Execute NPS Closure (Close Batch)</span>
-                    </button>
-                  </div>
-                )}
+                 {activeBatch.status === "Completed" ? (
+                   <div style={{
+                     background: "#f0fdf4",
+                     border: "1px solid #bbf7d0",
+                     borderRadius: 6,
+                     padding: "14px 16px"
+                   }}>
+                     <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#16a34a", fontWeight: 700 }}>
+                       <CheckCircle2 size={16} />
+                       <span>NPS Closure Completed & Batch Formally Closed</span>
+                     </div>
+                     <div style={{ display: "flex", gap: 24, marginTop: 10, flexWrap: "wrap" }}>
+                       <div>
+                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Final Batch NPS</div>
+                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#16a34a" }}>
+                           {activeBatch.batch_nps != null ? `${activeBatch.batch_nps > 0 ? "+" : ""}${activeBatch.batch_nps}` : "—"}
+                         </div>
+                       </div>
+                       <div>
+                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Total Responses</div>
+                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--text-main)" }}>
+                           {activeBatch.nps_total_responses ?? 0}
+                         </div>
+                       </div>
+                       <div>
+                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Promoters (9-10)</div>
+                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#16a34a" }}>
+                           {activeBatch.nps_promoters ?? 0}
+                         </div>
+                       </div>
+                       <div>
+                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Passives (7-8)</div>
+                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--text-main)" }}>
+                           {activeBatch.nps_passives ?? 0}
+                         </div>
+                       </div>
+                       <div>
+                         <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Detractors (0-6)</div>
+                         <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#b91c1c" }}>
+                           {activeBatch.nps_detractors ?? 0}
+                         </div>
+                       </div>
+                     </div>
+                   </div>
+                 ) : (
+                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                     {activeBatch.batch_avg_feedback == null && (
+                       <div style={{
+                         background: "#fffbeb",
+                         border: "1px solid #fde68a",
+                         borderRadius: 6,
+                         padding: "12px 14px",
+                         display: "flex",
+                         alignItems: "center",
+                         gap: 8,
+                         color: "#b45309",
+                         fontSize: "0.82rem",
+                         fontWeight: 600,
+                       }}>
+                         <Lock size={15} />
+                         <span>Quality Checkpoint 1 must be completed first — the average batch feedback is written once every delivery is logged.</span>
+                       </div>
+                     )}
+                     <button
+                       onClick={() => setIsGate2ModalOpen(true)}
+                       className="btn btn-primary"
+                       style={{ display: "flex", alignItems: "center", gap: 6 }}
+                     >
+                       <Sparkles size={16} />
+                       <span>Execute NPS Closure (Close Batch)</span>
+                     </button>
+                   </div>
+                 )}
               </div>
             </div>
           )}
@@ -2991,57 +2547,86 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
           {gate2Error && <ErrorBanner message={gate2Error} className="mb-3.5" />}
 
           <form onSubmit={handleCloseBatchGate2} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Official Batch NPS Score (0 to 10) *
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="10"
-                  value={gate2Nps}
-                  onChange={(e) => setGate2Nps(Number(e.target.value))}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                  required
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Promoters (9-10)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={gate2Promoters}
+                    onChange={(e) => setGate2Promoters(Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  />
+                  <p style={{ fontSize: "0.7rem", color: "var(--text-dim)", margin: "4px 0 0 0" }}>
+                    Loyal brand advocates who are likely to recommend your product or service. Votes from 9-10.
+                  </p>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Passives (7-8)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={gate2Passives}
+                    onChange={(e) => setGate2Passives(Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  />
+                  <p style={{ fontSize: "0.7rem", color: "var(--text-dim)", margin: "4px 0 0 0" }}>
+                    Satisfied but unenthusiastic customers who are vulnerable to competitive offerings. Votes from 7-8.
+                  </p>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                    Detractors (0-6)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={gate2Detractors}
+                    onChange={(e) => setGate2Detractors(Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
+                    className="glass-input"
+                    style={{ width: "100%" }}
+                    required
+                  />
+                  <p style={{ fontSize: "0.7rem", color: "var(--text-dim)", margin: "4px 0 0 0" }}>
+                    Unhappy customers who can damage your brand and impede growth through negative word-of-mouth. Votes from 0-6.
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Overall Batch Average Feedback (1.0 to 5.0)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="1.0"
-                  max="5.0"
-                  value={gate2AvgFeedback}
-                  onChange={(e) => setGate2AvgFeedback(Number(e.target.value))}
-                  className="glass-input"
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Retrospective & Delivery Closure Notes
-                </label>
-                <textarea
-                  value={gate2RetroNotes}
-                  onChange={(e) => setGate2RetroNotes(e.target.value)}
-                  placeholder="Key milestones achieved, client sign-off status, lessons learned..."
-                  className="glass-input"
-                  style={{ width: "100%", minHeight: 80, resize: "vertical" }}
-                />
+              <div style={{ background: "#f8fafc", border: "1px solid var(--border-subtle)", borderRadius: 6, padding: "10px 12px", fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                {gate2ResponseTotal === 0 ? (
+                  <span style={{ color: "#b45309", fontWeight: 600 }}>
+                    Enter at least one response to calculate the NPS.
+                  </span>
+                ) : (
+                  <span>
+                    Total responses <strong style={{ color: "var(--text-main)" }}>{gate2ResponseTotal}</strong>
+                    {"  ·  "}Promoters <strong style={{ color: "var(--text-main)" }}>{gate2PromoterPct.toFixed(1)}%</strong>
+                    {"  ·  "}Passives <strong style={{ color: "var(--text-main)" }}>{gate2PassivePct.toFixed(1)}%</strong>
+                    {"  ·  "}Detractors <strong style={{ color: "var(--text-main)" }}>{gate2DetractorPct.toFixed(1)}%</strong>
+                    {"  ·  "}NPS = promoters% − detractors% = <strong style={{ color: gate2NpsPreview >= 0 ? "#16a34a" : "#b91c1c" }}>{gate2NpsPreview > 0 ? "+" : ""}{gate2NpsPreview.toFixed(2)}</strong>
+                  </span>
+                )}
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 10 }}>
                 <button type="button" onClick={() => setIsGate2ModalOpen(false)} className="btn btn-secondary" style={{ padding: "8px 14px" }}>
                   Cancel
                 </button>
-                <button type="submit" disabled={isSubmittingGate2} className="btn btn-primary" style={{ padding: "8px 14px", background: "#16a34a" }}>
+                <button type="submit" disabled={isSubmittingGate2 || gate2ResponseTotal === 0} className="btn btn-primary" style={{ padding: "8px 14px", background: "#16a34a" }}>
                   {isSubmittingGate2 ? "Closing Batch..." : "Formally Close Batch (NPS Closure)"}
                 </button>
               </div>
@@ -3053,7 +2638,7 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
       <Dialog open={isIngestModalOpen} onOpenChange={(next) => { if (!next) setIsIngestModalOpen(false); }}>
         <DialogContent
           className="glass-panel flex max-h-[calc(100vh-32px)] flex-col gap-0 overflow-hidden p-6 [&>button]:hidden"
-          style={{ width: "100%", maxWidth: 760, background: "#ffffff", borderRadius: 16, position: "relative" }}
+          style={{ width: "100%", maxWidth: 760, background: "#ffffff", borderRadius: 16 }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
             <DialogHeader className="block space-y-0 border-b-0 p-0">
@@ -3173,199 +2758,63 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", gap: 12 }}>
-          {/* Validation Status Banner */}
-                {hasValidated && (
-                  validationConflicts.length === 0 ? (
-                    <div style={{
-                      background: "#f0fdf4",
-                      border: "1px solid #bbf7d0",
-                      color: "#16a34a",
-                      padding: "10px 14px",
-                      borderRadius: 6,
-                      fontSize: "0.85rem",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8
-                    }}>
-                      <CheckCircle2 size={16} />
-                      <span><strong>All Clear:</strong> Zero faculty capacity conflicts detected! Ready to apply schedule.</span>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      <ErrorBanner
-                        message={`${validationConflicts.length} conflict(s) flagged by the conflict engine:`}
-                      />
-                      <ul className="ml-6 list-disc text-xs text-destructive" style={{ padding: 0 }}>
-                        {validationConflicts.map((c, i) => (
-                          <li key={i}>{c.reason} on {c.date} ({c.faculty_name})</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )
-                )}
+                {/* Extracted preview — a focused row-review table with no search,
+                    filter, sort, column-visibility, export, or conflict-check chrome. */}
+                <div style={{ padding: "14px 16px", background: "#f8fafc", border: "1px solid var(--border-subtle)", borderRadius: 8 }}>
+                  <PanelTitle
+                    title={`Extracted ${extractedRows.length} Delivery Slot${extractedRows.length === 1 ? "" : "s"}`}
+                    description="Review every parsed row before scheduling. Correct any errors below before applying."
+                  />
+                </div>
 
-          {/* Extracted preview */}
-                <FullscreenTable
-                  panelClassName=""
-                  strategy="absolute"
-                  stickyThead
-                  style={{ flex: 1, minHeight: 0, border: "1px solid var(--border-subtle)", borderRadius: 6, background: "#ffffff" }}
-                  contentStyle={{ flex: 1, overflowY: "auto", minHeight: 0 }}
-                  title={
-                    <PanelTitle
-                      title={`Extracted ${extractedRows.length} Delivery Slot${extractedRows.length === 1 ? "" : "s"}`}
-                      description="Review every parsed row before scheduling. Editing a row re-runs no checks until you validate again."
-                    />
-                  }
-                  actions={
-                    <>
-                      <button
-                        onClick={handleValidateSchedule}
-                        disabled={isValidating}
-                        className="btn btn-secondary"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem", padding: "5px 12px" }}
-                      >
-                        <ShieldAlert size={14} color="#0b5cab" />
-                        <span>{isValidating ? "Validating..." : "Run Conflict Engine Check"}</span>
-                      </button>
-                      <ColumnsMenu
-                        columns={TIMETABLE_COLUMN_KEYS}
-                        hidden={timetableColumns.hidden}
-                        onToggle={timetableColumns.toggle}
-                        onShowAll={timetableColumns.showAll}
-                      />
-                      <ExportButton
-                        filename={`timetable-preview-${activeBatch.batch_id}`}
-                        columns={TIMETABLE_EXPORT_COLUMNS}
-                        rows={timetableFilters.filteredRows}
-                      />
-                    </>
-                  }
-                  footer={
-                    <PaginationControls
-                      label="Timetable preview pages"
-                      currentPage={timetablePage}
-                      totalItems={timetableVisibleRows.length}
-                      pageSize={timetablePageSize}
-                      pageSizeOptions={[10, 25, 50, 100]}
-                      onPageChange={setTimetablePage}
-                      onPageSizeChange={setTimetablePageSize}
-                    />
-                  }
-                  toolbar={
-                    <TableFilters
-                      search={{
-                        value: timetableFilters.search,
-                        onChange: timetableFilters.setSearch,
-                        placeholder: "Search topic or faculty...",
-                        width: 210,
-                      }}
-                      selects={[
-                        {
-                          key: "faculty",
-                          label: "Faculty",
-                          value: timetableFilters.getFilter("faculty"),
-                          onChange: (value) => timetableFilters.setFilter("faculty", value),
-                          options: timetableFilters.optionsFor("faculty"),
-                          width: 170,
-                        },
-                      ]}
-                      sort={{
-                        options: TIMETABLE_SORT_OPTIONS,
-                        sortKey: timetableSort.sortKey,
-                        sortDir: timetableSort.sortDir,
-                        onChange: timetableSort.applySort,
-                      }}
-                      onClear={timetableFilters.clearFilters}
-                      hasActiveFilters={timetableFilters.hasActiveFilters}
-                      activeFilterCount={timetableFilters.activeFilterCount}
-                    />
-                  }
-                >
-                  <table
-                  className="glass-table table-pin-first-col w-full border-collapse"
-                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}
-                >
+                <div style={{ flex: 1, overflow: "auto", minHeight: 0, border: "1px solid var(--border-subtle)", borderRadius: 6, background: "#ffffff" }}>
+                  <table className="glass-table w-full border-collapse" style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
                     <TableCaption>Rows parsed from the uploaded timetable file</TableCaption>
                     <thead>
                       <tr>
-                        {TIMETABLE_COLUMN_DEFS.map((column) =>
-                          column.key === "action" ? null : timetableColumns.isVisible(column.key as TimetableColumnKey) ? (
-                            <SortableHeaderCell
-                              key={column.key}
-                              columnKey={column.key}
-                              label={column.label}
-                              style={{ ...TIMETABLE_TH_STYLE, textAlign: column.align ?? "left" }}
-                              sortKey={timetableSort.sortKey}
-                              sortDir={timetableSort.sortDir}
-                              onSort={timetableSort.toggleSort}
-                            />
-                          ) : null
-                        )}
-                        {timetableColumns.isVisible("action") && (
-                          <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Action</PlainHeaderCell>
-                        )}
+                        <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Date</PlainHeaderCell>
+                        <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Topic</PlainHeaderCell>
+                        <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Faculty</PlainHeaderCell>
+                        <PlainHeaderCell style={{ ...TIMETABLE_TH_STYLE, textAlign: "center" }}>Hours</PlainHeaderCell>
+                        <PlainHeaderCell style={TIMETABLE_TH_STYLE}>Action</PlainHeaderCell>
                       </tr>
                     </thead>
                     <tbody>
-                      {timetablePagedRows.length === 0 ? (
-                        <TableStateRow colSpan={timetableVisibleColumnCount}>
-                          {timetableFilters.hasActiveFilters ? (
-                            <EmptyState
-                              icon={<Search className="h-5 w-5" aria-hidden="true" />}
-                              title="No rows match your filters"
-                              description="Clear the search or filter selections to see every parsed slot."
-                              action={
-                                <Button size="sm" variant="outline" onClick={timetableFilters.clearFilters}>
-                                  Clear filters
-                                </Button>
-                              }
-                            />
-                          ) : (
-                            <EmptyState
-                              icon={<FileSpreadsheet className="h-5 w-5" aria-hidden="true" />}
-                              title="No schedule rows were extracted"
-                              description="Check the column names and date values, then parse the file again."
-                            />
-                          )}
+                      {timetableRows.length === 0 ? (
+                        <TableStateRow colSpan={5}>
+                          <EmptyState
+                            icon={<FileSpreadsheet className="h-5 w-5" aria-hidden="true" />}
+                            title="No schedule rows were extracted"
+                            description="Check the column names and date values, then parse the file again."
+                          />
                         </TableStateRow>
                       ) : (
-                        timetablePagedRows.map(({ row: r, index: i }) => (
+                        timetableRows.map(({ row: r, index: i }) => (
                           <tr key={i} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                            {timetableColumns.isVisible("date") && (
-                              <td style={{ ...TIMETABLE_TD_STYLE, fontWeight: 600 }}>
-                                {editingParsedRow === i ? <input type="date" aria-label={`Date of training for parsed row ${i + 1}`} value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
-                              </td>
-                            )}
-                            {timetableColumns.isVisible("topic") && (
-                              <td style={TIMETABLE_TD_STYLE}>
-                                {editingParsedRow === i ? <input aria-label={`Topic for parsed row ${i + 1}`} value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
-                              </td>
-                            )}
-                            {timetableColumns.isVisible("faculty") && (
-                              <td style={TIMETABLE_TD_STYLE}>
-                                {editingParsedRow === i ? <input aria-label={`Faculty for parsed row ${i + 1}`} value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
-                              </td>
-                            )}
-                            {timetableColumns.isVisible("hours") && (
-                              <td style={TIMETABLE_TD_STYLE}>
-                                {editingParsedRow === i ? <input aria-label={`Hours for parsed row ${i + 1}`} type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
-                              </td>
-                            )}
-                            {timetableColumns.isVisible("action") && (
-                              <td style={TIMETABLE_TD_STYLE}>
-                                <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
-                                  {editingParsedRow === i ? <Check size={13} aria-hidden="true" /> : <Edit3 size={13} aria-hidden="true" />}
-                                  {editingParsedRow === i ? "Done" : "Edit"}
-                                </button>
-                              </td>
-                            )}
+                            <td style={{ ...TIMETABLE_TD_STYLE, fontWeight: 600 }}>
+                              {editingParsedRow === i ? <input type="date" aria-label={`Date of training for parsed row ${i + 1}`} value={r.date_of_training.slice(0, 10)} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, date_of_training: e.target.value } : row))} /> : formatDate(r.date_of_training)}
+                            </td>
+                            <td style={TIMETABLE_TD_STYLE}>
+                              {editingParsedRow === i ? <input aria-label={`Topic for parsed row ${i + 1}`} value={r.topic} className="glass-input" style={{ minWidth: 220 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, topic: e.target.value } : row))} /> : r.topic}
+                            </td>
+                            <td style={TIMETABLE_TD_STYLE}>
+                              {editingParsedRow === i ? <input aria-label={`Faculty for parsed row ${i + 1}`} value={r.faculty_name || ""} className="glass-input" onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, faculty_name: e.target.value } : row))} /> : r.faculty_name || "—"}
+                            </td>
+                            <td style={{ ...TIMETABLE_TD_STYLE, textAlign: "center" }}>
+                              {editingParsedRow === i ? <input aria-label={`Hours for parsed row ${i + 1}`} type="number" min={1} max={24} value={r.no_of_hours} className="glass-input" style={{ width: 72 }} onChange={(e) => setExtractedRows(rows => rows.map((row, index) => index === i ? { ...row, no_of_hours: Number(e.target.value) } : row))} /> : `${r.no_of_hours}h`}
+                            </td>
+                            <td style={TIMETABLE_TD_STYLE}>
+                              <button type="button" className="btn btn-secondary" style={{ padding: "5px 9px", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => { setEditingParsedRow(editingParsedRow === i ? null : i); setHasValidated(false); setValidationConflicts([]); }}>
+                                {editingParsedRow === i ? <Check size={13} aria-hidden="true" /> : <Edit3 size={13} aria-hidden="true" />}
+                                {editingParsedRow === i ? "Done" : "Edit"}
+                              </button>
+                            </td>
                           </tr>
                         ))
                       )}
                     </tbody>
                   </table>
-                </FullscreenTable>
+                </div>
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
                   <button
@@ -3590,6 +3039,19 @@ const [currentBatch, setCurrentBatch] = useState<Batch | null>(batch);
                   onChange={(e) => setEditForm((prev) => ({ ...prev, total_enrollments: Number(e.target.value) }))}
                   className="glass-input"
                   min={1}
+                />
+              </div>
+
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Non-Residential Enrollments
+                </label>
+                <input
+                  type="number"
+                  value={editForm.non_residential_enrollments ?? 0}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, non_residential_enrollments: Number(e.target.value) }))}
+                  className="glass-input"
+                  min={0}
                 />
               </div>
 

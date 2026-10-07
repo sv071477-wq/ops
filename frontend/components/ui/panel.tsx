@@ -27,9 +27,13 @@ export const TD = "px-5 py-3.5 text-sm align-middle";
 
 export const TABLE_TH_STYLE: React.CSSProperties = {
   padding: "14px 20px",
-  fontSize: "0.75rem",
-  fontWeight: 600,
-  color: "var(--color-muted-foreground)",
+  // 0.9375rem, not 0.75rem: the app renders at 80% scale, so this holds the
+  // physical size these headings had before. Compensate alongside
+  // `SORTABLE_TH_STYLE` -- callers spread their own `style` last, so these two
+  // constants between them set every heading size in the app.
+  fontSize: "0.9375rem",
+  fontWeight: 800,
+  color: "#111827",
   textAlign: "left",
   whiteSpace: "nowrap",
 };

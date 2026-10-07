@@ -1,12 +1,11 @@
-from datetime import datetime, timedelta, timezone, time
-from decimal import Decimal
+from datetime import datetime, timezone, time
 from typing import Optional, List
 from uuid import UUID
 
 from fastapi import HTTPException
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, TrainingSession
+from app.models.session import FacultyUtilization, TERMINAL_UTILIZATION_STATUSES, TrainingSession
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
@@ -17,11 +16,7 @@ from app.schemas.session import (
 from app.api.v1.auth.repository_interfaces import IUserRepository
 from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.gates.service import GatekeeperService
-from app.api.v1.schedules.conflict_engine import ConflictEngine
 from app.api.v1.sessions.repository_interfaces import ISessionRepository
-
-
-_TERMINAL_STATUSES = {"Completed", "Cancelled", "Not Conducted"}
 
 
 class SessionService:
@@ -42,7 +37,7 @@ class SessionService:
         all_sessions = self.session_repo.list_all_sessions_for_batch(batch_id)
         if not all_sessions:
             return
-        if not all(session.status in _TERMINAL_STATUSES for session in all_sessions):
+        if not all(session.status in TERMINAL_UTILIZATION_STATUSES for session in all_sessions):
             return
 
         batch = self.session_repo.get_batch_by_id(batch_id)
@@ -53,10 +48,25 @@ class SessionService:
 
     def list(self, batch_id: Optional[UUID], faculty_name: Optional[str], status_filter: Optional[str], user_id: Optional[UUID] = None) -> List[FacultyUtilization]:
         """Lists actual faculty delivery records (utilization ledger)."""
-        if batch_id and user_id:
-            batch = self.session_repo.get_batch_by_id(batch_id)
-            if batch:
-                self._require_batch_scope(batch, user_id)
+        if user_id:
+            if batch_id:
+                batch = self.session_repo.get_batch_by_id(batch_id)
+                if batch:
+                    self._require_batch_scope(batch, user_id)
+            else:
+                user = self.session_repo.get_active_user(user_id)
+                if user and (user.role or "").lower() != "admin":
+                    scope_ids = set(self.user_repo.get_manager_scope_user_ids(user))
+                    if not scope_ids:
+                        return []
+                    scoped_batch_ids = self.session_repo.list_scoped_batch_ids(list(scope_ids), user_id)
+                    if not scoped_batch_ids:
+                        return []
+                    return self.session_repo.list_utilizations(
+                        batch_ids=scoped_batch_ids,
+                        faculty_name=faculty_name,
+                        status_filter=status_filter,
+                    )
         return self.session_repo.list_utilizations(
             batch_id=batch_id,
             faculty_name=faculty_name,
@@ -93,7 +103,9 @@ class SessionService:
                 "duration_hours": s.duration_hours,
                 "module": s.module,
                 "trainer_name": s.trainer_name,
-                "status": "Completed" if util else s.status,
+                # The ledger row is the delivery of record: report its own status so a
+                # merely `Scheduled` log does not read as a completed delivery.
+                "status": util.status if util else s.status,
                 "created_at": s.created_at,
                 "updated_at": s.updated_at,
                 "utilization_logged": util is not None,
@@ -146,9 +158,9 @@ class SessionService:
         foreign key, and the write path prefills it from `training_sessions.trainer_name`
         (also free text, and editable or imported from Excel). Requiring a matching
         `users` row therefore rejected every delivery log for a trainer who is not on
-        the roster. Resolution is still preferred, so the stored name is canonical and
-        the conflict engine gets a real `faculty_id`, but an unresolved name now falls
-        back to the value the caller supplied instead of failing the request.
+        the roster. Resolution is still preferred, so the stored name is canonical, but an
+        unresolved name now falls back to the value the caller supplied instead of
+        failing the request.
         """
         if faculty_id:
             faculty = self.session_repo.get_active_user(faculty_id)
@@ -175,20 +187,14 @@ class SessionService:
     def _validate_time_window(start_time: Optional[time], end_time: Optional[time]) -> None:
         """Reject inverted or zero-length delivery windows.
 
-        The conflict engine only tests intervals for overlap, so an end time at or
-        before the start time used to persist a nonsensical row and then match it
-        against every other booking that day.
+        An end time at or before the start time is a nonsensical row, so it is
+        rejected here rather than stored.
         """
         if start_time and end_time and end_time <= start_time:
             raise HTTPException(
                 status_code=422,
                 detail=f"End time must be after start time (got {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}).",
             )
-
-    @staticmethod
-    def _day_bounds(target: datetime) -> tuple[datetime, datetime]:
-        day_start = target.replace(hour=0, minute=0, second=0, microsecond=0)
-        return day_start, day_start + timedelta(days=1)
 
     def create(self, session_in: SessionCreate, user_id: Optional[UUID] = None) -> FacultyUtilization:
         """Logs a faculty utilization delivery record, optionally linking to a scheduled session day."""
@@ -213,24 +219,6 @@ class SessionService:
             session_dict["outcome_by"] = user_id
             if not session_dict.get("outcome_at"):
                 session_dict["outcome_at"] = datetime.now(timezone.utc)
-
-        day_start, day_end = self._day_bounds(session_in.date_of_training)
-        daily_hours = self.session_repo.list_daily_deliveries(
-            faculty_name, day_start, day_end, excluded_statuses=("Cancelled",)
-        )
-        existing_hours = self.session_repo.sum_hours(daily_hours)
-        conflicts = ConflictEngine.check_session_conflict(
-            session_repo=self.session_repo,
-            faculty_name=faculty_name,
-            date_of_training=session_in.date_of_training,
-            requested_hours=session_in.no_of_hours,
-            existing_hours=existing_hours,
-            start_time=session_in.start_time,
-            end_time=session_in.end_time,
-            faculty_id=faculty.id if faculty else None,
-        )
-        if conflicts:
-            raise HTTPException(status_code=409, detail=[conflict.model_dump() for conflict in conflicts])
 
         session = self.session_repo.create_utilization(FacultyUtilization(**session_dict))
 
@@ -268,18 +256,6 @@ class SessionService:
             raise HTTPException(status_code=422, detail="Session date is before the batch start date")
         if batch and batch.end_date and target_date.date() > batch.end_date.date():
             raise HTTPException(status_code=422, detail="Session date is after the batch end date")
-        if "faculty_name" in update_dict or "date_of_training" in update_dict or "no_of_hours" in update_dict:
-            faculty_name = update_dict.get("faculty_name", session.faculty_name)
-            requested_hours = update_dict.get("no_of_hours", session.no_of_hours)
-            day_start, day_end = self._day_bounds(target_date)
-            existing = self.session_repo.list_daily_deliveries(
-                faculty_name, day_start, day_end,
-                exclude_id=session.id,
-                excluded_statuses=("Cancelled", "Not Conducted"),
-            )
-            existing_hours = self.session_repo.sum_hours(existing)
-            if existing_hours + requested_hours > ConflictEngine.MAX_DAILY_FACULTY_HOURS:
-                raise HTTPException(status_code=409, detail="Faculty daily capacity would be exceeded")
 
         # Require outcome_reason when status is changed to Cancelled or Not Conducted
         new_status = update_dict.get("status", session.status)

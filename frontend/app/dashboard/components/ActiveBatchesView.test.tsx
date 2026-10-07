@@ -211,6 +211,47 @@ describe("ActiveBatchesView header controls", () => {
     expect(onBatchPageChange).toHaveBeenCalledWith(1);
     expect(onSessionPageChange).toHaveBeenCalledWith(1);
   });
+
+  it("resets both tables when the sort column changes at the same direction", async () => {
+    const user = userEvent.setup();
+    const onBatchPageChange = vi.fn();
+    const onSessionPageChange = vi.fn();
+    render(
+      <ActiveBatchesView
+        filterDate="2026-09-20"
+        onFilterDateChange={vi.fn()}
+        data={makeResponse()}
+        isLoading={false}
+        // Both tables sit on a later page, so a missed reset is visible.
+        batchPage={2}
+        batchPageSize={10}
+        onBatchPageChange={onBatchPageChange}
+        onBatchPageSizeChange={vi.fn()}
+        sessionPage={2}
+        sessionPageSize={10}
+        onSessionPageChange={onSessionPageChange}
+        onSessionPageSizeChange={vi.fn()}
+      />
+    );
+
+    onBatchPageChange.mockClear();
+    onSessionPageChange.mockClear();
+
+    const [batchSort, sessionSort] = screen.getAllByLabelText("Sort by") as unknown as HTMLSelectElement[];
+
+    // Both "Program" and "Client" default to ascending. The sort still fully
+    // reorders the rows, so the page offset has to reset with it.
+    await user.selectOptions(batchSort, "program");
+    expect(onBatchPageChange).toHaveBeenCalledWith(1);
+
+    onBatchPageChange.mockClear();
+    await user.selectOptions(batchSort, "client");
+    expect(onBatchPageChange).toHaveBeenCalledWith(1);
+
+    await user.selectOptions(sessionSort, "module");
+    await user.selectOptions(sessionSort, "person");
+    expect(onSessionPageChange).toHaveBeenCalledWith(1);
+  });
 });
 
 describe("ActiveBatchesView column visibility", () => {

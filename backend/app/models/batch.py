@@ -101,7 +101,6 @@ class Batch(Base):
     delivery_mode_detail = relationship("DeliveryMode", foreign_keys=[delivery_mode_id], lazy="joined")
     scheduled_sessions = relationship("TrainingSession", back_populates="batch", cascade="all, delete-orphan")
     faculty_utilizations = relationship("FacultyUtilization", back_populates="batch", cascade="all, delete-orphan")
-    sessions = relationship("FacultyUtilization", back_populates="batch", overlaps="faculty_utilizations")
 
     @property
     def delivery_mode(self) -> str:

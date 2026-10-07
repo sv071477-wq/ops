@@ -68,6 +68,11 @@
   --border-subtle: var(--color-border);
   --primary: var(--color-primary);
   --accent-primary: var(--color-primary);
+  /* UI scale factor. 0.8 renders the app at the size it has at 80% browser zoom.
+     Consumed by the `zoom` rule below; the micro-label sizes in `TableFilters`,
+     `panel` and `SortableHeaderCell` are divided by it to hold their current
+     physical size. */
+  --app-scale: 0.8;
 }
 
 @layer base {
@@ -86,14 +91,31 @@
   }
 }
 
+@media (min-width: 1024px) {
+  /* UI scale. 0.8 renders the app at the size it has at 80% browser zoom, as CSS,
+     so the browser stays at 100%. On `html` rather than an inner wrapper so Radix
+     portals -- the drawer, all 8 modals, selects, dropdowns -- stay inside the
+     scaled box. Desktop only: at phone widths this would put body text at ~11.2
+     physical px. */
+  html {
+    zoom: var(--app-scale);
+  }
+}
+
 @layer utilities {
   .glass-panel {
     @apply bg-white/90 border border-border/80 rounded-2xl shadow-sm transition-all duration-200 p-6;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
   }
 
+  /* Hover feedback is border + shadow only. This used to include
+     `-translate-y-0.5`, which lifted the whole panel 2px on hover and so moved
+     every click target inside it -- table rows, row buttons, "Manage Schedule"
+     -- out from under the cursor as it arrived, and made the panel jitter
+     whenever the cursor sat near its top edge. A container must not move its
+     own hit targets. */
   .glass-panel:hover {
-    @apply border-primary/40 shadow-md -translate-y-0.5;
+    @apply border-primary/40 shadow-md;
   }
 
   .glass-input {
@@ -280,7 +302,7 @@
 
   /* Table scroll wrapper */
   .table-scroll-wrapper {
-    @apply overflow-x-auto overflow-y-hidden scrollbar-thin;
+    @apply overflow-x-auto overflow-y-auto scrollbar-thin;
   }
 
   .table-scroll-wrapper::-webkit-scrollbar {

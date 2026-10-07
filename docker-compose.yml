@@ -21,6 +21,29 @@ services:
     networks:
       - ops_network
 
+  redis:
+    image: redis:7-alpine
+    container_name: ops_redis
+    restart: unless-stopped
+    command: >-
+      sh -c 'exec redis-server --appendonly yes
+      $${REDIS_PASSWORD:+--requirepass "$${REDIS_PASSWORD}"}'
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli $${REDIS_PASSWORD:+-a "$${REDIS_PASSWORD}"} ping | grep PONG
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ops_network
+
   backend:
     build:
       context: ./backend
@@ -43,9 +66,15 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-ops_db}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=${REDIS_DB:-0}
       - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://localhost:8000","http://127.0.0.1:8000","http://frontend:3000","http://0.0.0.0:3000"]
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -72,14 +101,29 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
     depends_on:
       backend:
-        condition: service_started # 1. Changed from service_healthy to avoid startup deadlocks
+        condition: service_started
     healthcheck:
-      # 2. Replaced wget with a node network socket check to avoid 404/500 HTTP failures blocking container startup
-      test: ["CMD", "node", "-e", "require('net').connect(3000, '127.0.0.1')"]
+      test: ["CMD", "node", "-e", "const net=require('net'); const s=net.connect(3000,'127.0.0.1'); s.on('connect',()=>{s.destroy();process.exit(0)}); s.on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 15s
+    networks:
+      - ops_network
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ops_nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     networks:
       - ops_network
 
@@ -125,7 +169,7 @@ services:
       backend:
         condition: service_started
     healthcheck:
-      test: ["CMD", "node", "-e", "require('net').connect(3000, '127.0.0.1')"]
+      test: ["CMD", "node", "-e", "const net=require('net'); const s=net.connect(3000,'127.0.0.1'); s.on('connect',()=>{s.destroy();process.exit(0)}); s.on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -136,6 +180,8 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  redisdata:
     driver: local
   frontend_dev_node_modules:
     driver: local

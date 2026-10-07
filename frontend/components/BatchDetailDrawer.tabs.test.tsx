@@ -251,4 +251,26 @@ describe("BatchDetailDrawer shell", () => {
     });
     expect(screen.getByText(/ledger unavailable/i)).toBeTruthy();
   });
+
+  it("opens without a hooks-order error when mounted closed first", async () => {
+    // page.tsx mounts the drawer permanently and only flips `batch`/`isOpen`, so
+    // the closed -> open transition is the shape that actually crashes. A hook
+    // below the `!isOpen` guard runs once more on the open render and React
+    // throws #310, which this transition now exercises for the first time.
+    const { rerender } = render(
+      <ConfirmProvider>
+        <BatchDetailDrawer batch={null} isOpen={false} onClose={() => {}} initialTab="sessions" />
+      </ConfirmProvider>
+    );
+    expect(screen.queryByText(/Sessions & Timetable/i)).toBeNull();
+
+    rerender(
+      <ConfirmProvider>
+        <BatchDetailDrawer batch={batch} isOpen onClose={() => {}} initialTab="sessions" />
+      </ConfirmProvider>
+    );
+
+    await waitFor(() => expect(getSessions).toHaveBeenCalled());
+    expect(screen.getAllByText(/Sessions & Timetable/i).length).toBeGreaterThan(0);
+  });
 });

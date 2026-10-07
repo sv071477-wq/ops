@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z, ZodTypeAny } from "zod";
@@ -48,6 +48,21 @@ export function FormModal<T extends ZodTypeAny>({
     defaultValues: initialData as any,
     mode: "onBlur",
   });
+
+  const initialDataKey = JSON.stringify(initialData ?? null);
+  const wasOpenRef = useRef(false);
+  const previousInitialDataKeyRef = useRef(initialDataKey);
+
+  useEffect(() => {
+    const opened = isOpen && !wasOpenRef.current;
+    const initialDataChanged = previousInitialDataKeyRef.current !== initialDataKey;
+    if (isOpen && (opened || initialDataChanged)) {
+      form.reset(initialData as InferSchema<T>);
+      setSubmitError(null);
+    }
+    wasOpenRef.current = isOpen;
+    previousInitialDataKeyRef.current = initialDataKey;
+  }, [form, initialData, initialDataKey, isOpen]);
 
   const handleSubmit = async (data: InferSchema<T>) => {
     setIsSubmitting(true);

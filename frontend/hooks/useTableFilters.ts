@@ -105,7 +105,19 @@ export function useTableFilters<T>(
 
       for (const [key, value] of activeSelects) {
         const field = fieldsByKey.get(key);
-        if (!field) continue;
+        // A select whose key has no field still renders, and silently filtering
+        // nothing is the worst possible failure mode for a table filter. Warn in
+        // development so a `TableFilters` select is never wired to a missing key.
+        if (!field) {
+          if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[useTableFilters] ignoring filter "${key}": no field with that key was passed. ` +
+                `Add it to the column defs with \`filterable: true\`, or to the extra filter fields.`
+            );
+          }
+          continue;
+        }
         const raw = field.accessor(row);
         if (isBlankTableValue(raw) || String(raw).trim() !== value) return false;
       }

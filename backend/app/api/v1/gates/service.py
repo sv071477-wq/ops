@@ -6,13 +6,10 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization
+from app.models.session import FacultyUtilization, TERMINAL_UTILIZATION_STATUSES
 from app.schemas.feedback import SessionFeedbackCreate, BatchNpsClosureCreate
 from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.gates.repository_interfaces import IGateRepository
-
-
-_TERMINAL_SESSION_STATUSES = {"Completed", "Cancelled", "Not Conducted"}
 
 
 class GatekeeperService:
@@ -62,7 +59,7 @@ class GatekeeperService:
                     "submitted_by": str(user_id)
                 }
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        if session_obj.status in {"Cancelled", "Not Conducted", "Completed"}:
+        if session_obj.status in TERMINAL_UTILIZATION_STATUSES:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not available for Gate 1 completion")
 
         session_obj.status = "Completed"
@@ -84,8 +81,9 @@ class GatekeeperService:
         self.gate_repo.commit()
 
         # Delegate batch-level feedback calculation to the lifecycle service.
-        # It only writes batch_avg_feedback once every non-cancelled session for
-        # the batch is Completed, so callers never see a partial average.
+        # It only writes batch_avg_feedback once every non-cancelled planned day
+        # has a logged delivery whose outcome is terminal, so callers never see
+        # a partial average.
         if self.lifecycle_service:
             self.lifecycle_service.check_and_update_batch_feedback(session_obj.batch_id)
 
@@ -110,8 +108,11 @@ class GatekeeperService:
     ) -> Batch:
         """
         Quality Checkpoint 2:
-        Closing a batch is BLOCKED unless final Batch NPS (0 - 10 score) and retrospective notes
-        are submitted. Upon valid submission, the batch is closed and schema is locked.
+        Closing a batch is BLOCKED until Quality Checkpoint 1 has written the batch
+        average feedback, and until the final NPS breakdown is supplied. The NPS
+        index is derived here from the three category counts; the client never
+        supplies it. Gate 2 is sequenced after Gate 1 but never reads or writes
+        ``batch_avg_feedback``.
         """
         batch = self.gate_repo.get_batch_by_id(batch_id)
         if not batch:
@@ -126,23 +127,35 @@ class GatekeeperService:
                 detail="Batch has already completed Gate 2 and is Closed."
             )
 
+        if batch.batch_avg_feedback is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Quality Checkpoint 1 must be completed before batch closure",
+            )
+
         all_sessions = [
             session
             for group in self.gate_repo.list_all_sessions_for_batch(batch.id)
             for session in group
         ]
-        if all_sessions and any(s.status not in _TERMINAL_SESSION_STATUSES for s in all_sessions):
+        if all_sessions and any(s.status not in TERMINAL_UTILIZATION_STATUSES for s in all_sessions):
             raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
 
-        # Update batch NPS and closure metrics
-        batch.batch_nps = closure_data.nps_score
-        batch.nps_total_responses = closure_data.total_responses
-        batch.nps_promoters = closure_data.promoters_count
-        batch.nps_passives = closure_data.passive_count
-        batch.nps_detractors = closure_data.detractors_count
-        if closure_data.average_feedback_score is not None:
-            batch.batch_avg_feedback = closure_data.average_feedback_score
-        batch.retrospective_notes = closure_data.retrospective_notes
+        promoters = closure_data.promoters_count
+        passives = closure_data.passive_count
+        detractors = closure_data.detractors_count
+        total = promoters + passives + detractors
+        if total == 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="NPS closure requires at least one response",
+            )
+
+        batch.batch_nps = Decimal(str(round(((promoters - detractors) / total) * 100, 2)))
+        batch.nps_total_responses = total
+        batch.nps_promoters = promoters
+        batch.nps_passives = passives
+        batch.nps_detractors = detractors
 
         batch.status = "Completed"
         batch.is_schema_locked = True

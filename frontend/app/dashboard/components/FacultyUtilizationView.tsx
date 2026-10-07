@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Search, Users } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, Users } from "lucide-react";
 import { TrainingSession } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -15,6 +15,9 @@ import {
   TableCaption,
   TableFilters,
   TableStateRow,
+  TABLE_CONTROL_HEIGHT,
+  TABLE_CONTROL_STYLE,
+  TABLE_LABEL_SLOT_STYLE,
 } from "@/components/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,14 +42,19 @@ import {
   isSortable,
   type TableColumnDef,
 } from "@/lib/tableColumns";
-import { ALL_FILTER_VALUE } from "@/lib/tableUtils";
+import { ALL_FILTER_VALUE, isBlankTableValue } from "@/lib/tableUtils";
 import type { CsvColumn } from "@/lib/csv";
 
 const FEEDBACK_FILTER_ID = "faculty-utilization-feedback-filter";
 const START_DATE_FILTER_ID = "faculty-utilization-start-date";
 const END_DATE_FILTER_ID = "faculty-utilization-end-date";
+const MORE_FILTERS_ID = "faculty-utilization-more-filters";
+const MORE_FILTERS_PANEL_ID = "faculty-utilization-more-filters-panel";
 
-const COLUMN_STORAGE_KEY = "ops.table.faculty-utilization.columns";
+// Bumped to v2 with the 12-column default. A stored layout deliberately wins
+// over `DEFAULT_HIDDEN`, so without a new key anyone who has opened this view
+// keeps the old 15-column layout and never sees the fix.
+const COLUMN_STORAGE_KEY = "ops.table.faculty-utilization.columns.v2";
 const PAGE_SIZE_STORAGE_KEY = "ops.table.faculty-utilization.pageSize";
 const DEFAULT_PAGE_SIZE = 15;
 
@@ -61,31 +69,111 @@ const TD_STYLE: React.CSSProperties = {
 
 const MONO_STYLE: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: "0.75rem" };
 
-// Bespoke toolbar controls have to occupy exactly the box `TableFilters` gives
-// its own controls (36px, same radius, border and padding) or the toolbar grid
-// breaks alignment. `CONTROL_STYLE` is not exported, so it is mirrored here
-// against the same tokens instead of a drifting hardcoded copy.
-const BESPOKE_CONTROL_STYLE: React.CSSProperties = {
-  width: "100%",
-  height: 36,
-  boxSizing: "border-box",
-  padding: "0 10px",
-  borderRadius: 6,
-  border: "1px solid var(--color-input)",
-  background: "var(--color-card)",
-  fontSize: "0.8rem",
-  fontWeight: 600,
-  color: "var(--text-main)",
+/**
+ * Label-over-control pair for the expanded filter row. Same tokens as
+ * `TableFilters` so the secondary filters sit on the primary row's grid rather
+ * than reading as a second, differently-built toolbar.
+ */
+function FilterField({
+  label,
+  htmlFor,
+  width,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  width: number | string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, width, minWidth: 0 }}>
+      <label htmlFor={htmlFor} style={TABLE_LABEL_SLOT_STYLE}>
+        {label}
+      </label>
+      <div style={{ display: "flex", alignItems: "center", minHeight: TABLE_CONTROL_HEIGHT }}>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Bordered panel that holds the filters too many to keep on the primary
+ * toolbar row. Rendered only while the toggle is open, so the collapsed state is
+ * a plain button rather than an empty bordered box.
+ */
+const EXPANDED_FILTERS_STYLE: React.CSSProperties = {
+  flex: "1 1 100%",
+  minWidth: 0,
+  marginTop: 2,
+  padding: "12px 14px 14px",
+  border: "1px solid var(--border-subtle)",
+  borderRadius: 10,
+  background: "var(--color-background)",
 };
 
-const WRAP_STYLE: React.CSSProperties = { maxWidth: 160, whiteSpace: "normal" };
-const LONG_WRAP_STYLE: React.CSSProperties = { maxWidth: 240, whiteSpace: "normal" };
+const EXPANDED_FILTERS_GRID_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "flex-end",
+  gap: "10px 10px",
+};
+
+/**
+ * `TableFilters` hands its `children` slot a plain non-wrapping flex row, so two
+ * children would sit side by side. This wrapper wraps instead, and the toggle
+ * claims a full basis so the button takes its own line above the panel rather
+ * than sharing one.
+ */
+const MORE_FILTERS_WRAP_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "flex-start",
+  gap: "8px 10px",
+  width: "100%",
+  minWidth: 0,
+};
+
+const MORE_FILTERS_TOGGLE_STYLE: React.CSSProperties = {
+  flexBasis: "100%",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  width: "fit-content",
+  height: TABLE_CONTROL_HEIGHT,
+  padding: "0 12px",
+  borderRadius: 6,
+  border: "1px solid var(--color-input)",
+  fontSize: "0.8rem",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const MORE_FILTERS_BADGE_STYLE: React.CSSProperties = {
+  minWidth: 18,
+  padding: "0 5px",
+  borderRadius: 999,
+  background: "var(--color-primary)",
+  color: "var(--color-card)",
+  fontSize: "0.7rem",
+  lineHeight: "18px",
+  textAlign: "center",
+};
+
+const ELLIPSIS_STYLE: React.CSSProperties = {
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  maxWidth: 240,
+};
+const SHORT_ELLIPSIS_STYLE: React.CSSProperties = { ...ELLIPSIS_STYLE, maxWidth: 160 };
 const MUTED_STYLE: React.CSSProperties = { color: "var(--text-muted)" };
 const BOLD_NOWRAP_STYLE: React.CSSProperties = { fontWeight: 600, whiteSpace: "nowrap" };
 
 interface UtilizationColumnDef extends TableColumnDef<TrainingSession> {
   minWidth?: number;
 }
+
+/** Floor for a visible column with no declared width, so it cannot collapse. */
+const DEFAULT_COLUMN_MIN_WIDTH = 120;
 
 type UtilizationColumn = TableColumnDef<TrainingSession, ColumnKey> & { minWidth?: number };
 
@@ -94,48 +182,33 @@ type UtilizationColumn = TableColumnDef<TrainingSession, ColumnKey> & { minWidth
  * sort options, filter fields, the search haystack, the ColumnsMenu list and
  * the header/body cell order all come from here, so a column cannot be visible
  * without being sortable, or hidden from the filters but on screen.
+ *
+ * Order is the order a reader scans a delivery ledger: when, who, which batch,
+ * what, how long, how it went, and only then the batch attributes. It also
+ * decides which column the sticky first-column slot is spent on, so the
+ * highest-value anchor (the training date) has to lead. The 12 default-visible
+ * columns come first and the plumbing that `DEFAULT_HIDDEN` switches off
+ * follows.
  */
 const UTILIZATION_COLUMN_DEFS = [
-  { key: "vertical", label: "Vertical", accessor: (row: TrainingSession) => row.vertical || "", filterable: true },
-  { key: "client", label: "Client", accessor: (row: TrainingSession) => row.client || "", filterable: true, minWidth: 150 },
-  { key: "category", label: "Category", accessor: (row: TrainingSession) => row.category || "", filterable: true },
-  {
-    key: "batchCode",
-    label: "Batch ID",
-    accessor: (row: TrainingSession) => row.batch_code || "",
-    search: [(row: TrainingSession) => row.batch_id || ""],
-    minWidth: 170,
-  },
-  { key: "dateOfTraining", label: "Date of Training", accessor: (row: TrainingSession) => row.date_of_training || "" },
-  { key: "topic", label: "Topic", accessor: (row: TrainingSession) => row.topic || "", minWidth: 220 },
+  { key: "dateOfTraining", label: "Date of Training", accessor: (row: TrainingSession) => row.date_of_training || "", minWidth: 150 },
   {
     key: "facultyName",
     label: "Faculty Full Name",
     accessor: (row: TrainingSession) => row.faculty_name || "",
     filterable: true,
-    minWidth: 160,
+    minWidth: 170,
   },
   {
-    key: "facultyTypeName",
-    label: "Faculty Type",
-    accessor: (row: TrainingSession) => row.faculty_type_name || "",
-    minWidth: 150,
+    key: "batchCode",
+    label: "Batch ID",
+    accessor: (row: TrainingSession) => row.batch_code || "",
+    search: [(row: TrainingSession) => row.batch_id || ""],
+    minWidth: 180,
   },
+  { key: "topic", label: "Topic", accessor: (row: TrainingSession) => row.topic || "", minWidth: 240 },
   { key: "noOfHours", label: "No. of Hours", accessor: (row: TrainingSession) => row.no_of_hours ?? null, align: "right" },
-  {
-    key: "moduleFeedback",
-    label: "Module Feedback",
-    accessor: (row: TrainingSession) => row.module_feedback || "",
-    sortable: false,
-  },
-  { key: "venue", label: "Venue", accessor: (row: TrainingSession) => row.venue || "", minWidth: 150 },
-  {
-    key: "locationCity",
-    label: "Location/City",
-    accessor: (row: TrainingSession) => row.location_city || "",
-    filterable: true,
-    minWidth: 140,
-  },
+  { key: "status", label: "Status", accessor: (row: TrainingSession) => row.status || "", filterable: true },
   {
     key: "modeOfDelivery",
     label: "Mode of Delivery",
@@ -143,13 +216,48 @@ const UTILIZATION_COLUMN_DEFS = [
     filterable: true,
   },
   {
+    key: "feedbackRating",
+    label: "Feedback Rating",
+    accessor: (row: TrainingSession) => row.feedback_rating ?? null,
+    align: "right",
+  },
+  { key: "client", label: "Client", accessor: (row: TrainingSession) => row.client || "", filterable: true, minWidth: 150 },
+  { key: "category", label: "Category", accessor: (row: TrainingSession) => row.category || "", filterable: true },
+  {
     key: "coordinator",
     label: "Coordinator",
     accessor: (row: TrainingSession) => row.coordinator || "",
     filterable: true,
     minWidth: 150,
   },
-  { key: "status", label: "Status", accessor: (row: TrainingSession) => row.status || "", filterable: true },
+  {
+    key: "locationCity",
+    label: "Location/City",
+    accessor: (row: TrainingSession) => row.location_city || "",
+    filterable: true,
+    minWidth: 140,
+  },
+  { key: "venue", label: "Venue", accessor: (row: TrainingSession) => row.venue || "", minWidth: 150 },
+  {
+    key: "moduleFeedback",
+    label: "Module Feedback",
+    accessor: (row: TrainingSession) => row.module_feedback || "",
+    sortable: false,
+  },
+  {
+    key: "facultyTypeName",
+    label: "Faculty Type",
+    accessor: (row: TrainingSession) => row.faculty_type_name || "",
+    filterable: true,
+    minWidth: 150,
+  },
+  {
+    key: "vertical",
+    label: "Vertical",
+    accessor: (row: TrainingSession) => row.vertical || "",
+    filterable: true,
+    minWidth: 140,
+  },
   { key: "startTime", label: "Start Time", accessor: (row: TrainingSession) => row.start_time || "", sortable: false },
   { key: "endTime", label: "End Time", accessor: (row: TrainingSession) => row.end_time || "", sortable: false },
   {
@@ -159,12 +267,6 @@ const UTILIZATION_COLUMN_DEFS = [
     sortable: false,
   },
   {
-    key: "feedbackRating",
-    label: "Feedback Rating",
-    accessor: (row: TrainingSession) => row.feedback_rating ?? null,
-    align: "right",
-  },
-  {
     key: "outcomeReason",
     label: "Outcome Reason",
     accessor: (row: TrainingSession) => row.outcome_reason || "",
@@ -172,6 +274,8 @@ const UTILIZATION_COLUMN_DEFS = [
   },
   { key: "outcomeAt", label: "Outcome At", accessor: (row: TrainingSession) => row.outcome_at || "", sortable: false },
   { key: "outcomeBy", label: "Outcome By", accessor: (row: TrainingSession) => row.outcome_by || "", sortable: false },
+  { key: "createdAt", label: "Created At", accessor: (row: TrainingSession) => row.created_at || "" },
+  { key: "updatedAt", label: "Updated At", accessor: (row: TrainingSession) => row.updated_at || "", sortable: false },
   { key: "id", label: "ID", accessor: (row: TrainingSession) => row.id || "", sortable: false },
   {
     key: "trainingSessionId",
@@ -185,8 +289,6 @@ const UTILIZATION_COLUMN_DEFS = [
     accessor: (row: TrainingSession) => row.program_type_id || "",
     sortable: false,
   },
-  { key: "createdAt", label: "Created At", accessor: (row: TrainingSession) => row.created_at || "" },
-  { key: "updatedAt", label: "Updated At", accessor: (row: TrainingSession) => row.updated_at || "", sortable: false },
 ] as const satisfies readonly UtilizationColumnDef[];
 
 type ColumnKey = (typeof UTILIZATION_COLUMN_DEFS)[number]["key"];
@@ -208,46 +310,53 @@ const UTILIZATION_SEARCH_ACCESSOR = buildSearchAccessor(UTILIZATION_COLUMN_DEFS)
 const UTILIZATION_DESC_FIRST_KEYS = ["dateOfTraining", "createdAt"] as const;
 
 /**
- * Raw database ids, audit stamps and the outcome/feedback trail are the ledger's
- * plumbing: 15 readable columns ship visible and the rest are one click away.
+ * Raw database ids, audit stamps, the outcome trail and the two columns no
+ * seeder ever populates (`vertical`, `faculty_type_name`) are one click away
+ * rather than shipped visible: a column that renders an em-dash in every row
+ * costs horizontal space and says nothing. 12 columns ship visible, which is
+ * also what keeps the table inside a wide screen's width.
  */
 const DEFAULT_HIDDEN: readonly ColumnKey[] = [
+  "venue",
+  "moduleFeedback",
+  "facultyTypeName",
+  "vertical",
+  "startTime",
+  "endTime",
+  "feedbackSubmitted",
+  "outcomeReason",
+  "outcomeAt",
+  "outcomeBy",
+  "createdAt",
+  "updatedAt",
   "id",
   "trainingSessionId",
   "programTypeId",
-  "createdAt",
-  "updatedAt",
-  "feedbackSubmitted",
-  "outcomeAt",
-  "outcomeBy",
-  "startTime",
-  "endTime",
-  "feedbackRating",
-  "outcomeReason",
 ];
 
-// Every meaningful column, then the raw ids last so a spreadsheet keeps the
-// join keys without pushing the readable fields off the row.
+// Mirrors the on-screen column order so the file reads the same way as the
+// table, then the raw ids last so a spreadsheet keeps the join keys without
+// pushing the readable fields off the row.
 const EXPORT_COLUMNS: readonly CsvColumn<TrainingSession>[] = [
-  { key: "vertical", label: "Vertical" },
+  { key: "date_of_training", label: "Date of Training" },
+  { key: "faculty_name", label: "Faculty Full Name" },
+  { key: "batch_code", label: "Batch ID" },
+  { key: "topic", label: "Topic" },
+  { key: "no_of_hours", label: "No. of Hours" },
+  { key: "status", label: "Status" },
+  { key: "mode_of_delivery", label: "Mode of Delivery" },
+  { key: "feedback_rating", label: "Feedback Rating" },
   { key: "client", label: "Client" },
   { key: "category", label: "Category" },
-  { key: "batch_code", label: "Batch ID" },
-  { key: "date_of_training", label: "Date of Training" },
-  { key: "topic", label: "Topic" },
-  { key: "faculty_name", label: "Faculty Full Name" },
-  { key: "faculty_type_name", label: "Faculty Type" },
-  { key: "no_of_hours", label: "No. of Hours" },
-  { key: "module_feedback", label: "Module Feedback" },
-  { key: "venue", label: "Venue" },
-  { key: "location_city", label: "Location/City" },
-  { key: "mode_of_delivery", label: "Mode of Delivery" },
   { key: "coordinator", label: "Coordinator" },
-  { key: "status", label: "Status" },
+  { key: "location_city", label: "Location/City" },
+  { key: "venue", label: "Venue" },
+  { key: "module_feedback", label: "Module Feedback" },
+  { key: "faculty_type_name", label: "Faculty Type" },
+  { key: "vertical", label: "Vertical" },
   { key: "start_time", label: "Start Time" },
   { key: "end_time", label: "End Time" },
   { key: "feedback_submitted", label: "Feedback Submitted" },
-  { key: "feedback_rating", label: "Feedback Rating" },
   { key: "outcome_reason", label: "Outcome Reason" },
   { key: "outcome_at", label: "Outcome At" },
   { key: "outcome_by", label: "Outcome By" },
@@ -265,31 +374,118 @@ interface FacultyUtilizationViewProps {
   onRefresh?: () => void;
 }
 
+interface FilterConfig {
+  key: string;
+  label: string;
+  allLabel: string;
+  width: number;
+}
+
+/**
+ * Nine option-list filters plus a feedback bucket and a date range is twelve
+ * controls: laid end to end they need roughly 2,300px, so on any normal screen
+ * they wrapped into three ragged rows. The four that answer "which delivery, and
+ * who ran it" stay on the primary row with the search box; the batch attributes
+ * and the predicates move into the expanded panel, where they are still one
+ * click away and still counted by the toolbar's Clear action.
+ */
+const PRIMARY_FILTERS: readonly FilterConfig[] = [
+  { key: "facultyName", label: "Faculty", allLabel: "All faculty", width: 165 },
+  { key: "status", label: "Status", allLabel: "All statuses", width: 140 },
+  { key: "modeOfDelivery", label: "Mode", allLabel: "All modes", width: 140 },
+  { key: "client", label: "Client", allLabel: "All clients", width: 150 },
+];
+
+const SECONDARY_FILTERS: readonly FilterConfig[] = [
+  // `vertical` is deliberately absent: neither seeder ever populates it, so a
+  // dropdown over it would be a dead control. `facultyTypeName` is the same
+  // story today, but it is one populated value away from being useful, and
+  // `TableFilters` hides any option-list filter with no options on its own.
+  { key: "facultyTypeName", label: "Faculty Type", allLabel: "All faculty types", width: 170 },
+  { key: "coordinator", label: "Coordinator", allLabel: "All coordinators", width: 170 },
+  { key: "category", label: "Category", allLabel: "All categories", width: 160 },
+  { key: "locationCity", label: "City", allLabel: "All cities", width: 160 },
+];
+
 interface CellDef {
   style?: React.CSSProperties;
   title?: string;
   content: React.ReactNode;
 }
 
+/** Shown wherever the ledger has no value, always in `MUTED_STYLE`. */
+const EMPTY_PLACEHOLDER = "—";
+
+/**
+ * Placeholder for a cell the ledger has no value for. Muted, because a column
+ * that is empty everywhere is background noise: an em-dash at full text weight
+ * draws as much attention as real data. `isBlankTableValue` rather than a falsy
+ * check so `0` and `false` still render as themselves.
+ */
+function empty(): CellDef {
+  return { style: MUTED_STYLE, content: EMPTY_PLACEHOLDER };
+}
+
 function text(value?: string | null): CellDef {
-  return { content: value || "—" };
+  return isBlankTableValue(value) ? empty() : { content: value as string };
+}
+
+/** Emphasis cell for the identifying columns; blank falls back to the muted placeholder. */
+function boldText(value?: string | null): CellDef {
+  return isBlankTableValue(value)
+    ? { ...empty(), style: { ...BOLD_NOWRAP_STYLE, ...MUTED_STYLE } }
+    : { style: BOLD_NOWRAP_STYLE, content: value as string };
+}
+
+/** Numeric cell. `isBlankTableValue` keeps `0` rendering as `0`, not as blank. */
+function numberCell(value: number | null | undefined, align: "left" | "right" = "right"): CellDef {
+  return isBlankTableValue(value)
+    ? { style: { textAlign: align, ...MUTED_STYLE }, content: EMPTY_PLACEHOLDER }
+    : { style: { textAlign: align }, content: value };
+}
+
+/**
+ * Single-line cell that truncates with an ellipsis and carries the full text in
+ * `title`. Free-wrapping these columns made row heights swing from one to four
+ * lines, so a column's height stopped being comparable across rows; the tooltip
+ * keeps the full value reachable.
+ */
+function ellipsis(
+  value: string | null | undefined,
+  style: React.CSSProperties,
+  muted = false
+): CellDef {
+  if (isBlankTableValue(value)) return empty();
+  return {
+    style: muted ? { ...style, ...MUTED_STYLE } : style,
+    title: value as string,
+    content: value,
+  };
 }
 
 function shortId(value?: string | null): string {
-  if (!value) return "—";
-  return value.length > 8 ? `${value.slice(0, 8)}…` : value;
+  if (isBlankTableValue(value)) return EMPTY_PLACEHOLDER;
+  const raw = value as string;
+  return raw.length > 8 ? `${raw.slice(0, 8)}…` : raw;
 }
 
-function formatTime(value?: string | null, fallback: string = "—"): string {
-  if (!value) return fallback;
+/** Raw-uuid column: monospace, truncated, full value in the tooltip. */
+function monoId(value?: string | null): CellDef {
+  if (isBlankTableValue(value)) return { ...empty(), style: { ...MONO_STYLE, ...MUTED_STYLE } };
+  return { style: MONO_STYLE, title: value as string, content: shortId(value) };
+}
+
+/** `HH:MM` for a timestamp, or `null` when the ledger has no usable time. */
+function formatTime(value?: string | null): string | null {
+  if (!value) return null;
   const trimmed = String(value).trim();
-  if (!trimmed) return fallback;
+  if (!trimmed) return null;
   const timeMatch = trimmed.match(/T(\d{2}):(\d{2})/);
   if (timeMatch) return `${timeMatch[1]}:${timeMatch[2]}`;
   const plainMatch = trimmed.match(/^(\d{2}):(\d{2})/);
   if (plainMatch) return `${plainMatch[1]}:${plainMatch[2]}`;
   const parsed = new Date(trimmed);
-  if (isNaN(parsed.getTime())) return fallback;
+  if (isNaN(parsed.getTime())) return null;
   return `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
 }
 
@@ -306,53 +502,51 @@ function YesNo({ value }: { value?: boolean | null }) {
  */
 const CELL_DEFS: Record<ColumnKey, (row: TrainingSession) => CellDef> = {
   vertical: (row) => text(row.vertical),
-  client: (row) => ({ style: WRAP_STYLE, content: row.client || "—" }),
+  client: (row) => ellipsis(row.client, SHORT_ELLIPSIS_STYLE),
   category: (row) => text(row.category),
-  batchCode: (row) => ({
-    style: BOLD_NOWRAP_STYLE,
-    title: row.batch_id || undefined,
-    content: row.batch_code || shortId(row.batch_id),
-  }),
-  dateOfTraining: (row) => ({ style: BOLD_NOWRAP_STYLE, content: formatDate(row.date_of_training) }),
-  topic: (row) => ({ style: LONG_WRAP_STYLE, content: row.topic || "—" }),
-  facultyName: (row) => ({ style: BOLD_NOWRAP_STYLE, content: row.faculty_name || "—" }),
+  batchCode: (row) => {
+    // The code is the readable form; the raw id is the tooltip and the fallback
+    // when no seeder wrote a code.
+    if (!isBlankTableValue(row.batch_id)) {
+      const title = row.batch_id as string;
+      return {
+        style: BOLD_NOWRAP_STYLE,
+        title,
+        content: isBlankTableValue(row.batch_code) ? shortId(row.batch_id) : (row.batch_code as string),
+      };
+    }
+    return isBlankTableValue(row.batch_code)
+      ? { ...empty(), style: { ...BOLD_NOWRAP_STYLE, ...MUTED_STYLE } }
+      : { style: BOLD_NOWRAP_STYLE, content: row.batch_code as string };
+  },
+  dateOfTraining: (row) => boldText(formatDate(row.date_of_training) || null),
+  topic: (row) => ellipsis(row.topic, ELLIPSIS_STYLE),
+  facultyName: (row) => boldText(row.faculty_name),
   facultyTypeName: (row) => text(row.faculty_type_name),
-  noOfHours: (row) => ({ style: { textAlign: "right" }, content: row.no_of_hours ?? "—" }),
-  moduleFeedback: (row) => ({
-    style: { ...LONG_WRAP_STYLE, ...MUTED_STYLE },
-    content: row.module_feedback || "—",
-  }),
-  venue: (row) => ({ style: { ...WRAP_STYLE, maxWidth: 180 }, content: row.venue || "—" }),
+  noOfHours: (row) => numberCell(row.no_of_hours, "right"),
+  moduleFeedback: (row) => ellipsis(row.module_feedback, ELLIPSIS_STYLE, true),
+  venue: (row) => ellipsis(row.venue, SHORT_ELLIPSIS_STYLE),
   locationCity: (row) => text(row.location_city),
-  modeOfDelivery: (row) => ({
-    content: <Badge variant="info" size="sm">{row.mode_of_delivery || "—"}</Badge>,
-  }),
-  coordinator: (row) => ({ style: BOLD_NOWRAP_STYLE, content: row.coordinator || "—" }),
+  modeOfDelivery: (row) =>
+    isBlankTableValue(row.mode_of_delivery) ? (
+      empty()
+    ) : (
+      { content: <Badge variant="info" size="sm">{row.mode_of_delivery as string}</Badge> }
+    ),
+  coordinator: (row) => boldText(row.coordinator),
   status: (row) => ({ content: <StatusBadge status={row.status} /> }),
-  startTime: (row) => ({ style: BOLD_NOWRAP_STYLE, content: formatTime(row.start_time) }),
-  endTime: (row) => ({ style: BOLD_NOWRAP_STYLE, content: formatTime(row.end_time) }),
+  startTime: (row) => boldText(formatTime(row.start_time)),
+  endTime: (row) => boldText(formatTime(row.end_time)),
   feedbackSubmitted: (row) => ({ content: <YesNo value={row.feedback_submitted} /> }),
-  feedbackRating: (row) => ({ style: { textAlign: "right" }, content: row.feedback_rating ?? "—" }),
-  outcomeReason: (row) => ({ style: { ...LONG_WRAP_STYLE, ...MUTED_STYLE }, content: row.outcome_reason || "—" }),
-  outcomeAt: (row) => ({ style: BOLD_NOWRAP_STYLE, content: formatDateTime(row.outcome_at, "—") }),
-  outcomeBy: (row) => ({
-    style: MONO_STYLE,
-    title: row.outcome_by || undefined,
-    content: shortId(row.outcome_by),
-  }),
-  id: (row) => ({ style: MONO_STYLE, title: row.id || undefined, content: shortId(row.id) }),
-  trainingSessionId: (row) => ({
-    style: MONO_STYLE,
-    title: row.training_session_id || undefined,
-    content: shortId(row.training_session_id),
-  }),
-  programTypeId: (row) => ({
-    style: MONO_STYLE,
-    title: row.program_type_id || undefined,
-    content: shortId(row.program_type_id),
-  }),
-  createdAt: (row) => ({ style: BOLD_NOWRAP_STYLE, content: formatDateTime(row.created_at, "—") }),
-  updatedAt: (row) => ({ style: BOLD_NOWRAP_STYLE, content: formatDateTime(row.updated_at, "—") }),
+  feedbackRating: (row) => numberCell(row.feedback_rating),
+  outcomeReason: (row) => ellipsis(row.outcome_reason, ELLIPSIS_STYLE, true),
+  outcomeAt: (row) => boldText(formatDateTime(row.outcome_at, "") || null),
+  outcomeBy: (row) => monoId(row.outcome_by),
+  id: (row) => monoId(row.id),
+  trainingSessionId: (row) => monoId(row.training_session_id),
+  programTypeId: (row) => monoId(row.program_type_id),
+  createdAt: (row) => boldText(formatDateTime(row.created_at, "") || null),
+  updatedAt: (row) => boldText(formatDateTime(row.updated_at, "") || null),
 };
 
 function UtilizationRow({
@@ -380,7 +574,7 @@ function UtilizationRow({
 export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: FacultyUtilizationViewProps) {
   const rows = useMemo(() => data ?? [], [data]);
 
-  const { sortKey, sortDir, sortedRows, toggleSort, applySort } = useTableSort(
+  const { sortKey, sortDir, sortedRows, toggleSort, applySort, sortVersion } = useTableSort(
     rows,
     UTILIZATION_ACCESSORS,
     { initialKey: "dateOfTraining", initialDir: "desc", descFirstKeys: UTILIZATION_DESC_FIRST_KEYS }
@@ -404,6 +598,7 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
   const [feedbackFilter, setFeedbackFilter] = useState(ALL_FILTER_VALUE);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
 
   const columns = useColumnVisibility<ColumnKey>({
     columns: UTILIZATION_COLUMN_KEYS,
@@ -420,7 +615,7 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
 
   useEffect(() => {
     setPage(1);
-  }, [filtersVersion, feedbackFilter, startDate, endDate, sortKey, sortDir, rows.length]);
+  }, [filtersVersion, feedbackFilter, startDate, endDate, sortVersion, rows.length]);
 
   const matchedRows = useMemo(() => {
     if (!feedbackFilter && !startDate && !endDate) return filteredRows;
@@ -438,6 +633,20 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
   const filtersActive = hasActiveFilters || bespokeFilterCount > 0;
   const totalFilterCount = activeFilterCount + bespokeFilterCount;
 
+  // Same rule as `TableFilters`: a dropdown with no options can only ever offer
+  // its own "All X" placeholder, so it is dead UI rather than a filter. Computed
+  // here because this panel is built locally instead of through `TableFilters`.
+  const populatedSecondaryFilters = SECONDARY_FILTERS.filter(
+    (filter) => optionsFor(filter.key).length > 0
+  );
+
+  // Filters sitting inside the collapsed panel still narrow the rows, so the
+  // toggle has to advertise them. Without this a selection can be applied and
+  // then invisible, which reads as the table ignoring the filter.
+  const hiddenFilterCount =
+    populatedSecondaryFilters.filter((filter) => getFilter(filter.key) !== ALL_FILTER_VALUE).length +
+    bespokeFilterCount;
+
   const clearAllFilters = () => {
     clearFilters();
     setFeedbackFilter(ALL_FILTER_VALUE);
@@ -449,6 +658,20 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
   const paginatedRows = useMemo(() => matchedRows.slice(start, start + pageSize), [matchedRows, start, pageSize]);
 
   const visibleColumnCount = UTILIZATION_COLUMN_KEYS.filter((column) => columns.isVisible(column.key)).length;
+
+  // The width a column needs is only known when it renders, so a hardcoded
+  // minimum either wastes space (too low, columns stretch) or forces a
+  // horizontal scrollbar nobody asked for (too high). Deriving it from the
+  // visible set means the default 12 fit a wide screen and the table only
+  // scrolls once the reader switches the hidden columns back on.
+  const tableMinWidth = useMemo(
+    () =>
+      UTILIZATION_COLUMNS.filter((column) => columns.isVisible(column.key)).reduce(
+        (sum, column) => sum + (column.minWidth ?? DEFAULT_COLUMN_MIN_WIDTH),
+        0
+      ),
+    [columns]
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1 }}>
@@ -476,80 +699,15 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
               placeholder: "Search faculty, topic, venue, city, batch...",
               width: 280,
             }}
-            selects={[
-              {
-                key: "facultyName",
-                label: "Faculty",
-                value: getFilter("facultyName"),
-                onChange: (value) => setFilter("facultyName", value),
-                options: optionsFor("facultyName"),
-                allLabel: "All faculty",
-                width: 165,
-              },
-              {
-                key: "client",
-                label: "Client",
-                value: getFilter("client"),
-                onChange: (value) => setFilter("client", value),
-                options: optionsFor("client"),
-                allLabel: "All clients",
-                width: 150,
-              },
-              {
-                key: "category",
-                label: "Category",
-                value: getFilter("category"),
-                onChange: (value) => setFilter("category", value),
-                options: optionsFor("category"),
-                allLabel: "All categories",
-                width: 150,
-              },
-              {
-                key: "coordinator",
-                label: "Coordinator",
-                value: getFilter("coordinator"),
-                onChange: (value) => setFilter("coordinator", value),
-                options: optionsFor("coordinator"),
-                allLabel: "All coordinators",
-                width: 165,
-              },
-              {
-                key: "status",
-                label: "Status",
-                value: getFilter("status"),
-                onChange: (value) => setFilter("status", value),
-                options: optionsFor("status"),
-                allLabel: "All status",
-                width: 140,
-              },
-              {
-                key: "modeOfDelivery",
-                label: "Mode",
-                value: getFilter("modeOfDelivery"),
-                onChange: (value) => setFilter("modeOfDelivery", value),
-                options: optionsFor("modeOfDelivery"),
-                allLabel: "All modes",
-                width: 140,
-              },
-              {
-                key: "vertical",
-                label: "Vertical",
-                value: getFilter("vertical"),
-                onChange: (value) => setFilter("vertical", value),
-                options: optionsFor("vertical"),
-                allLabel: "All verticals",
-                width: 150,
-              },
-              {
-                key: "locationCity",
-                label: "City",
-                value: getFilter("locationCity"),
-                onChange: (value) => setFilter("locationCity", value),
-                options: optionsFor("locationCity"),
-                allLabel: "All cities",
-                width: 150,
-              },
-            ]}
+            selects={PRIMARY_FILTERS.map((filter) => ({
+              key: filter.key,
+              label: filter.label,
+              value: getFilter(filter.key),
+              onChange: (value) => setFilter(filter.key, value),
+              options: optionsFor(filter.key),
+              allLabel: filter.allLabel,
+              width: filter.width,
+            }))}
             sort={{
               options: UTILIZATION_SORT_OPTIONS,
               sortKey,
@@ -557,65 +715,101 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
               onChange: applySort,
               width: 210,
             }}
-            bespoke={[
-              {
-                key: "feedback",
-                label: "Feedback",
-                htmlFor: FEEDBACK_FILTER_ID,
-                width: 155,
-                content: (
-                  <select
-                    id={FEEDBACK_FILTER_ID}
-                    value={feedbackFilter}
-                    onChange={(event) => setFeedbackFilter(event.target.value)}
-                    className="glass-input"
-                    style={BESPOKE_CONTROL_STYLE}
-                  >
-                    <option value={ALL_FILTER_VALUE}>All feedback</option>
-                    <option value="SUBMITTED">Feedback submitted</option>
-                    <option value="PENDING">Feedback pending</option>
-                  </select>
-                ),
-              },
-              {
-                key: "startDate",
-                label: "Date From",
-                htmlFor: START_DATE_FILTER_ID,
-                width: 150,
-                content: (
-                  <input
-                    id={START_DATE_FILTER_ID}
-                    type="date"
-                    value={startDate}
-                    onChange={(event) => setStartDate(event.target.value)}
-                    className="glass-input"
-                    title="Training date from"
-                    style={BESPOKE_CONTROL_STYLE}
-                  />
-                ),
-              },
-              {
-                key: "endDate",
-                label: "Date To",
-                htmlFor: END_DATE_FILTER_ID,
-                width: 150,
-                content: (
-                  <input
-                    id={END_DATE_FILTER_ID}
-                    type="date"
-                    value={endDate}
-                    onChange={(event) => setEndDate(event.target.value)}
-                    className="glass-input"
-                    title="Training date to"
-                    style={BESPOKE_CONTROL_STYLE}
-                  />
-                ),
-              },
-            ]}
             onClear={clearAllFilters}
             hasActiveFilters={filtersActive}
             activeFilterCount={totalFilterCount}
-          />
+          >
+            <div style={MORE_FILTERS_WRAP_STYLE}>
+              <button
+                type="button"
+                id={MORE_FILTERS_ID}
+                onClick={() => setMoreFiltersOpen((open) => !open)}
+                aria-expanded={moreFiltersOpen}
+                aria-controls={MORE_FILTERS_PANEL_ID}
+                style={{
+                  ...MORE_FILTERS_TOGGLE_STYLE,
+                  background: hiddenFilterCount > 0 ? "var(--color-muted)" : "var(--color-card)",
+                  color: hiddenFilterCount > 0 ? "var(--color-primary)" : "var(--text-main)",
+                }}
+              >
+                <span>More filters</span>
+                {hiddenFilterCount > 0 && <span style={MORE_FILTERS_BADGE_STYLE}>{hiddenFilterCount}</span>}
+                {moreFiltersOpen ? (
+                  <ChevronUp size={15} aria-hidden="true" />
+                ) : (
+                  <ChevronDown size={15} aria-hidden="true" />
+                )}
+              </button>
+
+              {moreFiltersOpen && (
+                <div id={MORE_FILTERS_PANEL_ID} style={EXPANDED_FILTERS_STYLE}>
+                  <div style={EXPANDED_FILTERS_GRID_STYLE}>
+                    {populatedSecondaryFilters.map((filter) => (
+                      <FilterField
+                        key={filter.key}
+                        label={filter.label}
+                        htmlFor={`${MORE_FILTERS_PANEL_ID}-${filter.key}`}
+                        width={filter.width}
+                      >
+                        <select
+                          id={`${MORE_FILTERS_PANEL_ID}-${filter.key}`}
+                          value={getFilter(filter.key)}
+                          onChange={(event) => setFilter(filter.key, event.target.value)}
+                          className="glass-input"
+                          style={TABLE_CONTROL_STYLE}
+                        >
+                          <option value={ALL_FILTER_VALUE}>{filter.allLabel}</option>
+                          {optionsFor(filter.key).map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </FilterField>
+                    ))}
+
+                    <FilterField label="Feedback" htmlFor={FEEDBACK_FILTER_ID} width={165}>
+                      <select
+                        id={FEEDBACK_FILTER_ID}
+                        value={feedbackFilter}
+                        onChange={(event) => setFeedbackFilter(event.target.value)}
+                        className="glass-input"
+                        style={TABLE_CONTROL_STYLE}
+                      >
+                        <option value={ALL_FILTER_VALUE}>All feedback</option>
+                        <option value="SUBMITTED">Feedback submitted</option>
+                        <option value="PENDING">Feedback pending</option>
+                      </select>
+                    </FilterField>
+
+                    <FilterField label="Date From" htmlFor={START_DATE_FILTER_ID} width={160}>
+                      <input
+                        id={START_DATE_FILTER_ID}
+                        type="date"
+                        value={startDate}
+                        onChange={(event) => setStartDate(event.target.value)}
+                        className="glass-input"
+                        title="Training date from"
+                        style={TABLE_CONTROL_STYLE}
+                      />
+                    </FilterField>
+
+                    <FilterField label="Date To" htmlFor={END_DATE_FILTER_ID} width={160}>
+                      <input
+                        id={END_DATE_FILTER_ID}
+                        type="date"
+                        value={endDate}
+                        onChange={(event) => setEndDate(event.target.value)}
+                        className="glass-input"
+                        title="Training date to"
+                        style={TABLE_CONTROL_STYLE}
+                      />
+                    </FilterField>
+                  </div>
+                </div>
+              )}
+            </div>
+          </TableFilters>
         }
         actions={
           <>
@@ -644,7 +838,7 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
           />
         }
       >
-        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: 2400 }}>
+        <table className="glass-table table-pin-first-col w-full border-collapse" style={{ minWidth: tableMinWidth }}>
           <TableCaption>Faculty utilization delivery ledger records</TableCaption>
           <thead>
             <tr>

@@ -56,9 +56,35 @@ export function TableMenu({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuId = useId();
 
-  useDismissOnOutside(rootRef, open, () => setOpen(false));
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  useDismissOnOutside(rootRef, open, close);
+
+  useEffect(() => {
+    if (!open) return;
+    const firstItem = rootRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+    firstItem?.focus();
+  }, [open]);
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    if (!items.length) return;
+    const current = items.indexOf(document.activeElement as HTMLElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      items[(current + direction + items.length) % items.length].focus();
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      (event.key === "Home" ? items[0] : items[items.length - 1]).focus();
+    }
+  };
 
   return (
     <div ref={rootRef} className="relative">
@@ -66,10 +92,11 @@ export function TableMenu({
         variant="outline"
         size="sm"
         className={TOOL_BUTTON}
+        ref={triggerRef}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => (open ? close() : setOpen(true))}
         title={label}
       >
         <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
@@ -77,14 +104,14 @@ export function TableMenu({
       </Button>
 
       {open && (
-        <div id={menuId} role="menu" className={POPOVER_CLASS}>
+        <div id={menuId} role="menu" className={POPOVER_CLASS} onKeyDown={handleMenuKeyDown}>
           {items.map((item) => (
             <button
               key={item.key}
               type="button"
               role="menuitem"
               onClick={() => {
-                setOpen(false);
+                close();
                 item.onSelect();
               }}
               className={cn(
@@ -121,10 +148,21 @@ export function ColumnsMenu<K extends string>({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuId = useId();
   const hiddenCount = hidden.size;
 
-  useDismissOnOutside(rootRef, open, () => setOpen(false));
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  useDismissOnOutside(rootRef, open, close);
+
+  useEffect(() => {
+    if (!open) return;
+    rootRef.current?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.focus();
+  }, [open]);
 
   return (
     <div ref={rootRef} className="relative">
@@ -132,10 +170,11 @@ export function ColumnsMenu<K extends string>({
         variant="outline"
         size="sm"
         className={TOOL_BUTTON}
-        aria-haspopup="true"
+        ref={triggerRef}
+        aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => (open ? close() : setOpen(true))}
         title="Choose visible columns"
       >
         <Columns3 className="h-4 w-4" aria-hidden="true" />
@@ -148,9 +187,11 @@ export function ColumnsMenu<K extends string>({
       </Button>
 
       {open && (
-        <div id={menuId} className={POPOVER_CLASS}>
+        <div id={menuId} role="group" aria-labelledby={`${menuId}-label`} className={POPOVER_CLASS}>
           <p className="px-2.5 pb-1 pt-0.5 text-[0.62rem] font-extrabold uppercase tracking-[0.06em] text-muted-foreground">
+            <span id={`${menuId}-label`}>
             Visible columns
+            </span>
           </p>
           <div className="max-h-64 overflow-y-auto">
             {columns.map((column) => {
@@ -175,7 +216,10 @@ export function ColumnsMenu<K extends string>({
           {hiddenCount > 0 && (
             <button
               type="button"
-              onClick={onShowAll}
+              onClick={() => {
+                onShowAll();
+                close();
+              }}
               className="mt-1 w-full rounded-lg border-t border-border px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
             >
               Show all columns

@@ -1,7 +1,7 @@
 from typing import List, Optional, Any
 from uuid import UUID
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -20,7 +20,7 @@ from app.schemas.batch import (
     BatchLifecycleStatusUpdate,
     ActiveBatchesResponse,
 )
-from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
+from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.deps import (
     get_current_user, require_admin, require_manager_or_admin, require_coordinator_or_above
 )
@@ -255,7 +255,9 @@ async def close_batch_gate2(
 ) -> Any:
     """
     Quality Gate 2 Checkpoint:
-    Mandatory Batch NPS Score (0-10) and retrospective submission to close batch.
+    Closes the batch once Quality Checkpoint 1 has written the batch average
+    feedback. The NPS index is computed from the supplied promoter/passive/
+    detractor counts.
     """
     closed_batch = service.close_gate2(id, closure_in, current_user.id, current_user)
 
@@ -263,31 +265,12 @@ async def close_batch_gate2(
         await NotificationService.notify_gate_completion(
             batch_id=closed_batch.batch_id,
             gate_name="Gate 2 (Batch NPS Closure)",
-            score=f"NPS: {closure_in.nps_score}/10"
+            score=f"NPS: {closed_batch.batch_nps:+.0f}"
         )
     except Exception:
         pass
 
     return closed_batch
-
-
-@router.post("/{id}/feedback-import", response_model=BatchFeedbackImportResponse)
-async def import_batch_feedback(
-    id: UUID,
-    file: UploadFile = File(...),
-    service: BatchService = Depends(get_batch_service),
-    current_user: User = Depends(require_coordinator_or_above),
-) -> BatchFeedbackImportResponse:
-    """Import and calculate the authoritative final NPS breakdown for a batch."""
-    validate_upload_file(file, allowed_extensions=ALLOWED_FEEDBACK_EXTENSIONS)
-    filename = file.filename or "feedback.xlsx"
-    return service.import_feedback_workbook(
-        batch_id=id,
-        file_contents=await file.read(),
-        filename=filename,
-        user_id=current_user.id,
-        current_user=current_user,
-    )
 
 
 @router.get("/finance/export")

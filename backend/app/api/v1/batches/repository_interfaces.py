@@ -215,6 +215,17 @@ class IBatchLifecycleRepository(ABC):
         pass
 
     @abstractmethod
+    def list_batches_missing_avg_feedback(self) -> List[Batch]:
+        """Every batch whose ``batch_avg_feedback`` is still NULL.
+
+        ``batch_avg_feedback IS NULL`` is the single sentinel for "Checkpoint 1
+        has not been written yet", so this is the sweep's whole work list rather
+        than a status filter: a batch that finished while still ``Ongoing`` must
+        still be evaluated.
+        """
+        pass
+
+    @abstractmethod
     def list_completed_utilizations_with_session(self) -> List[FacultyUtilization]:
         pass
 
@@ -228,11 +239,21 @@ class IBatchLifecycleRepository(ABC):
 
     @abstractmethod
     def list_non_cancelled_training_sessions(self, batch_id: UUID) -> List[TrainingSession]:
+        """Planned curriculum days that still count towards delivery coverage."""
+        pass
+
+    @abstractmethod
+    def list_utilizations_for_batch(self, batch_id: UUID) -> List[FacultyUtilization]:
+        """Every delivery ledger row for a batch, whatever its status or linkage."""
         pass
 
     @abstractmethod
     def list_completed_feedback_ratings(self, batch_id: UUID) -> List[Decimal]:
-        """Feedback ratings recorded on completed deliveries for a batch."""
+        """Feedback ratings recorded on completed deliveries for a batch.
+
+        Includes ledger rows with no linked planned day: an unlinked row is still
+        a real delivery that faculty delivered and rated.
+        """
         pass
 
     @abstractmethod

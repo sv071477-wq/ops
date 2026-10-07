@@ -6,12 +6,13 @@ const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
   async rewrites() {
-    return [
-      {
-        source: "/api/v1/:path*",
-        destination: `${normalizedApiUrl}/api/v1/:path*`,
-      },
-    ];
+    if (apiUrl.startsWith("/")) {
+      return [];
+    }
+    return [{
+      source: "/api/v1/:path*",
+      destination: `${normalizedApiUrl}/api/v1/:path*`,
+    }];
   },
 };
 

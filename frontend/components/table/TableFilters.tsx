@@ -26,7 +26,10 @@ const LABEL_SLOT_STYLE: React.CSSProperties = {
   alignItems: "center",
   gap: 4,
   paddingLeft: 2,
-  fontSize: "0.62rem",
+  // 0.775rem, not 0.62rem: the app renders at 80% scale, so this holds the
+  // physical size the 0.62rem labels had before. They are the smallest text in
+  // the UI and already needed `--text-dim` bumped to 88% to pass AA.
+  fontSize: "0.775rem",
   fontWeight: 800,
   letterSpacing: "0.06em",
   textTransform: "uppercase",
@@ -85,11 +88,7 @@ export interface TableFilterBespokeConfig {
   key: string;
   label?: string;
   width?: number | string;
-  /**
-   * Id of the control rendered in `content`. Without it the label has nothing to
-   * point at, so clicking it does nothing and AT has no accessible name — a
-   * bespoke control must pass the id of its own input/select.
-   */
+  /** Id of the control rendered in `content`; omit this for a labelled group. */
   htmlFor?: string;
   content: React.ReactNode;
 }
@@ -141,9 +140,15 @@ function Field({
   return (
     <div style={{ ...CELL_STYLE, width, minWidth: label ? undefined : 0 }}>
       {label ? (
-        <label htmlFor={htmlFor} style={LABEL_SLOT_STYLE}>
-          {label}
-        </label>
+        htmlFor ? (
+          <label htmlFor={htmlFor} style={LABEL_SLOT_STYLE}>
+            {label}
+          </label>
+        ) : (
+          <span style={LABEL_SLOT_STYLE}>
+            {label}
+          </span>
+        )
       ) : (
         <span style={LABEL_SLOT_STYLE} aria-hidden="true" />
       )}
@@ -154,8 +159,14 @@ function Field({
 
 /**
  * Toolbar row shared by every table: free-text search, per-column filter
- * dropdowns and an explicit "Sort by" control that mirrors the click-to-sort
- * column headers. Controls passed as `children` get their own full-width row.
+ * dropdowns, any bespoke filter controls, and an explicit "Sort by" control
+ * that mirrors the click-to-sort column headers. Controls passed as `children`
+ * get their own full-width row.
+ *
+ * Order is search -> dropdowns -> bespoke -> sort -> clear, so every control
+ * that narrows the rows sits together on the left and the view-shaping controls
+ * (sort, clear) trail them. Changing this reorders the filter bar on every
+ * table, so it is a deliberate shared contract rather than a per-table choice.
  */
 export function TableFilters({
   search,
@@ -172,6 +183,13 @@ export function TableFilters({
   // Tables rendered on the same view share filter keys, so ids must be unique
   // per instance or the labels end up wired to another table's control.
   const instanceId = React.useId();
+
+  // A dropdown whose rows all carry a blank value derives no options, so its
+  // only entry is the "All X" placeholder and choosing anything else is
+  // impossible. That is a dead control, not a filter: the column either has no
+  // data yet (nothing to narrow by) or it will fill in and the dropdown returns
+  // on the next render. Dropping it here keeps that decision out of every table.
+  const populatedSelects = (selects ?? []).filter((select) => select.options.length > 0);
 
   return (
     <div
@@ -203,7 +221,7 @@ export function TableFilters({
         </Field>
       )}
 
-      {selects?.map((select) => {
+      {populatedSelects.map((select) => {
         const selectId = `${instanceId}-filter-${select.key}`;
         return (
           <Field key={select.key} label={select.label} htmlFor={selectId} width={select.width ?? 150}>
@@ -223,6 +241,17 @@ export function TableFilters({
           </Field>
         );
       })}
+
+      {bespoke?.map((entry) => (
+        <Field
+          key={entry.key}
+          label={entry.label}
+          htmlFor={entry.htmlFor}
+          width={entry.width}
+        >
+          {entry.content}
+        </Field>
+      ))}
 
       {sort && (
         <Field label="Sort by" htmlFor={`${instanceId}-sort`} width={sort.width ?? 200}>
@@ -275,17 +304,6 @@ export function TableFilters({
           </div>
         </Field>
       )}
-
-      {bespoke?.map((entry) => (
-        <Field
-          key={entry.key}
-          label={entry.label}
-          htmlFor={entry.htmlFor ?? `${instanceId}-bespoke-${entry.key}`}
-          width={entry.width}
-        >
-          {entry.content}
-        </Field>
-      ))}
 
       {onClear && hasActiveFilters && (
         <Field width="auto">

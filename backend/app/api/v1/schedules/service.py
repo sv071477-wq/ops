@@ -15,9 +15,7 @@ from app.schemas.schedule import (
 )
 from app.models.session import TrainingSession
 from app.api.v1.auth.repository_interfaces import IUserRepository
-from app.api.v1.schedules.conflict_engine import ConflictEngine
 from app.api.v1.schedules.repository_interfaces import IScheduleRepository
-from app.api.v1.sessions.repository_interfaces import ISessionRepository
 
 
 class ExcelIngestionService:
@@ -594,7 +592,6 @@ class ExcelIngestionService:
         items: List[ExtractedScheduleItem],
         source_filename: Optional[str] = None,
         user_id: Optional[UUID] = None,
-        conflict_repo: Optional[ISessionRepository] = None,
     ) -> ScheduleApplyResponse:
         """Validate and persist a complete schedule upload as one transaction."""
         batch = schedule_repo.get_batch_by_batch_id(target_batch_id)
@@ -633,7 +630,6 @@ class ExcelIngestionService:
         errors: List[dict] = []
         prepared = []
         seen_keys = set()
-        running_hours = {}
         running_slots = {}
         for item in items:
             row_key = (item.date_of_training.date(), item.start_time, item.end_time, item.topic.strip().lower())
@@ -675,27 +671,13 @@ class ExcelIngestionService:
                 errors.append({"source_row": item.source_row, "message": "Matching session already exists for this batch"})
                 continue
 
-            day_key = (faculty_name.lower(), s_date)
-            prior_hours = running_hours.get(day_key, Decimal("0"))
-            conflicts = ConflictEngine.check_session_conflict(
-                session_repo=conflict_repo,
-                faculty_name=faculty_name,
-                date_of_training=item.date_of_training,
-                requested_hours=item.no_of_hours,
-                existing_hours=prior_hours,
-                start_time=item.start_time,
-                end_time=item.end_time,
-                faculty_id=None,
-            )
+            # Overlap inside a single upload is caught here. Cross-batch faculty
+            # availability is not checked: the conflict engine was removed.
             slot_key = (faculty_name.lower(), s_date)
             for previous_start, previous_end, previous_row in running_slots.get(slot_key, []):
                 if item.start_time and item.end_time and previous_start and previous_end and previous_start < item.end_time and previous_end > item.start_time:
                     errors.append({"source_row": item.source_row, "message": f"Overlaps another uploaded session from row {previous_row}"})
-            if conflicts:
-                errors.extend({"source_row": item.source_row, "message": conflict.message} for conflict in conflicts)
-                continue
 
-            running_hours[day_key] = prior_hours + item.no_of_hours
             running_slots.setdefault(slot_key, []).append((item.start_time, item.end_time, item.source_row))
             prepared.append((item, faculty_name))
 

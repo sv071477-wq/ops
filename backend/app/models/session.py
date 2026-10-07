@@ -8,6 +8,14 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+# A delivery is finished, one way or the other, once it reaches one of these
+# statuses. Kept in one place so the batch-feedback calculation, the session
+# outcome transitions and the Gate 2 precondition cannot drift apart: they
+# previously carried three separate copies, one of which omitted
+# "Not Conducted" and so blocked the batch average forever.
+TERMINAL_UTILIZATION_STATUSES = frozenset({"Completed", "Cancelled", "Not Conducted"})
+
+
 class TrainingSession(Base):
     """Stores the ingested day-wise curriculum schedule for a batch."""
     __tablename__ = "training_sessions"

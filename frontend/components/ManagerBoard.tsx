@@ -414,7 +414,7 @@ export const ManagerBoard: React.FC<ManagerBoardProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [personnelFilters.filtersVersion]);
+  }, [personnelFilters.filtersVersion, personnelSort.sortVersion]);
 
   const personnelStart = (page - 1) * pageSize;
   const pagedPersonnel = useMemo(

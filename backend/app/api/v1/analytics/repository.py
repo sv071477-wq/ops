@@ -101,6 +101,9 @@ class AnalyticsRepository(IAnalyticsRepository):
     def list_all_batches(self) -> List[Batch]:
         return self.db.query(Batch).all()
 
+    def list_batches_by_ids(self, batch_ids: Sequence[UUID]) -> List[Batch]:
+        return self.db.query(Batch).filter(Batch.id.in_(list(batch_ids))).all()
+
     # --- Session aggregates ---
     def count_ongoing_sessions(self, batch_ids: Optional[Sequence[UUID]], today: date) -> int:
         return self._sessions(batch_ids).filter(

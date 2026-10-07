@@ -1,8 +1,5 @@
 from datetime import datetime, timezone, timedelta, date
-import io
 import json
-import pandas as pd
-from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
@@ -17,7 +14,7 @@ from app.models.batch import (
 )
 from app.models.user import User
 from app.schemas.batch import ApprovalConfigurationBase, ApprovalDecision, BatchApprove, BatchCreateRequest, BatchUpdateRequest, ActiveBatchesResponse
-from app.schemas.feedback import BatchNpsClosureCreate, BatchFeedbackImportResponse
+from app.schemas.feedback import BatchNpsClosureCreate
 from app.api.v1.auth.repository_interfaces import IUserRepository
 from app.api.v1.batches.repository_interfaces import BatchScope, IBatchRepository
 from app.api.v1.gates.service import GatekeeperService
@@ -341,6 +338,8 @@ class BatchService:
                 training_days=training_days,
                 sessions_conducted=conducted,
                 progress=progress,
+                batch_avg_feedback=b.batch_avg_feedback,
+                batch_nps=b.batch_nps,
             ))
 
         # Get sessions for this date
@@ -584,7 +583,8 @@ class BatchService:
         batch.status = target_status
         batch.updated_at = datetime.now(timezone.utc)
 
-        # Cascade cancellation to all sessions so the conflict engine frees faculty availability
+        # Cascade cancellation to all sessions so a cancelled batch stops counting
+        # as delivered faculty time.
         if target_status == "Cancelled":
             for fs in self.batch_repo.list_non_terminal_faculty_sessions(batch.id):
                 fs.status = "Cancelled"
@@ -652,98 +652,3 @@ class BatchService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Option not found")
         self.batch_repo.deactivate_option_instance(option)
         return {"detail": "Option deactivated"}
-
-    def import_feedback_workbook(
-        self,
-        batch_id: UUID,
-        file_contents: bytes,
-        filename: str,
-        user_id: UUID,
-        current_user: Optional[User] = None,
-    ) -> BatchFeedbackImportResponse:
-        batch = self.get(batch_id)
-        if current_user:
-            self._require_operational_scope(batch, current_user)
-        try:
-            if filename.lower().endswith(".csv"):
-                sheets = {"CSV": pd.read_csv(io.BytesIO(file_contents))}
-            else:
-                sheets = pd.read_excel(io.BytesIO(file_contents), sheet_name=None)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Could not read feedback workbook: {exc}") from exc
-
-        frames = [frame for frame in sheets.values() if not frame.empty]
-        if not frames:
-            raise HTTPException(status_code=422, detail="Feedback workbook contains no rows")
-        data = pd.concat(frames, ignore_index=True)
-        columns = {str(column).strip().lower().replace("_", " "): column for column in data.columns}
-
-        def find_column(aliases):
-            for alias in aliases:
-                if alias in columns:
-                    return columns[alias]
-            return None
-
-        category_column = find_column(("category", "nps category", "response category", "segment"))
-        nps_column = find_column(("nps score", "nps", "recommendation score", "recommendation", "likelihood to recommend"))
-        total_column = find_column(("total responses", "responses", "response count", "total"))
-        promoter_column = find_column(("promoters", "promoter count", "promoters count"))
-        passive_column = find_column(("passives", "passive", "neutral", "neutral count", "passive count"))
-        detractor_column = find_column(("detractors", "detractor count", "detractors count"))
-        feedback_column = find_column(("feedback rating", "average feedback", "session rating", "module rating"))
-
-        promoters = passives = detractors = total = 0
-        if category_column:
-            categories = data[category_column].dropna().astype(str).str.strip().str.lower()
-            promoters = int(categories.isin({"promoter", "promoters"}).sum())
-            passives = int(categories.isin({"passive", "passives", "neutral"}).sum())
-            detractors = int(categories.isin({"detractor", "detractors"}).sum())
-            total = promoters + passives + detractors
-        elif nps_column:
-            scores = pd.to_numeric(data[nps_column], errors="coerce").dropna()
-            if ((scores < 0) | (scores > 10)).any():
-                raise HTTPException(status_code=422, detail="NPS responses must be between 0 and 10")
-            promoters = int((scores >= 9).sum())
-            passives = int(scores.between(7, 8, inclusive="both").sum())
-            detractors = int((scores <= 6).sum())
-            total = int(len(scores))
-        elif total_column and promoter_column and passive_column and detractor_column:
-            first = data.iloc[0]
-            promoters = int(first[promoter_column])
-            passives = int(first[passive_column])
-            detractors = int(first[detractor_column])
-            total = int(first[total_column])
-        else:
-            raise HTTPException(status_code=422, detail="Workbook must contain NPS scores, categories, or a summary count row")
-
-        if total <= 0 or promoters + passives + detractors != total:
-            raise HTTPException(status_code=422, detail="NPS category counts must be positive and add up to total responses")
-
-        average_feedback = None
-        if feedback_column:
-            ratings = pd.to_numeric(data[feedback_column], errors="coerce").dropna()
-            if not ratings.empty:
-                if ((ratings < 1) | (ratings > 5)).any():
-                    raise HTTPException(status_code=422, detail="Feedback ratings must be between 1 and 5")
-                average_feedback = Decimal(str(round(float(ratings.mean()), 2)))
-
-        nps_score = Decimal(str(round(((promoters - detractors) / total) * 100, 2)))
-        batch.nps_total_responses = total
-        batch.nps_promoters = promoters
-        batch.nps_passives = passives
-        batch.nps_detractors = detractors
-        batch.batch_nps = nps_score
-        if average_feedback is not None:
-            batch.batch_avg_feedback = average_feedback
-        batch.updated_at = datetime.now(timezone.utc)
-        self.batch_repo.commit()
-        return BatchFeedbackImportResponse(
-            batch_id=batch.id,
-            source_filename=filename,
-            total_responses=total,
-            promoters_count=promoters,
-            passive_count=passives,
-            detractors_count=detractors,
-            nps_score=nps_score,
-            average_feedback_score=average_feedback or batch.batch_avg_feedback,
-        )
