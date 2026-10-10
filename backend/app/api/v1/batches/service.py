@@ -7,8 +7,10 @@ from fastapi import HTTPException, status
 
 from app.models.batch import (
     Accommodation,
+    ApprovalStatus,
     Batch,
     BatchCategory,
+    BatchStatus,
     DeliveryMode,
     Entity,
 )
@@ -139,9 +141,11 @@ class BatchService:
     def _calendar_days(start_date, end_date) -> int:
         if not start_date or not end_date:
             return 0
-        if end_date < start_date:
+        start_utc = BatchService._as_utc(start_date)
+        end_utc = BatchService._as_utc(end_date)
+        if end_utc < start_utc:
             raise HTTPException(status_code=422, detail="end_date must be on or after start_date")
-        return (end_date.date() - start_date.date()).days
+        return (end_utc.date() - start_utc.date()).days
 
     def _option_id(self, model, option_id, legacy_name: str):
         if option_id:
@@ -180,6 +184,11 @@ class BatchService:
             raise HTTPException(status_code=409, detail="Admin must configure both approvers before submission")
         if batch.start_date and batch.start_date.date() < datetime.now(timezone.utc).date():
             raise HTTPException(status_code=422, detail="Cannot submit a batch whose start date has already passed")
+        
+        # Allow resubmission from Rejected state
+        if batch.status != "Rejected" and batch.status != "Requested":
+            raise HTTPException(status_code=409, detail="Batch can only be submitted for approval from Requested or Rejected state")
+        
         batch.approver_1_id = config.approver_1_id
         batch.approver_2_id = config.approver_2_id
         batch.approver_1_status = "Pending"
@@ -199,7 +208,7 @@ class BatchService:
                 batch.approver_1_status = "Rejected"
             else:
                 batch.approver_2_status = "Rejected"
-            batch.status = "Requested"
+            batch.status = "Rejected"
             if decision.reason:
                 batch.remarks = f"Approval {level} rejected: {decision.reason}"
         elif level == 1:
@@ -273,7 +282,7 @@ class BatchService:
                 total = b.training_days or conducted or 1
                 if b.status == "Completed":
                     b._completion_rate = 100.0
-                elif b.status in ("Requested", "Approval 1 Pending", "Approval 2 Pending", "Cancelled"):
+                elif b.status in ("Requested", "Approval 1 Pending", "Approval 2 Pending", "Cancelled", "Rejected"):
                     b._completion_rate = 0.0
                 else:
                     b._completion_rate = round(min(100.0, (conducted / total) * 100.0), 1)
@@ -485,28 +494,64 @@ class BatchService:
             restricted = {"client_name", "category", "program_name", "technology", "domain"}
             for field in restricted.intersection(update_data):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Batch schema is locked. Modifying '{field}' requires Manager or Admin authorization.")
+
+        # Check if schedule fields are being modified on a schema-locked batch in active status
+        schedule_trigger_fields = {"training_days", "end_date", "start_date", "total_hours"}
+        active_statuses = {"Upcoming", "Ongoing", "Pending for Closure"}
+        should_trigger_reapproval = (
+            batch.is_schema_locked
+            and batch.status in active_statuses
+            and (current_user.role or "").lower() == "coordinator"
+            and schedule_trigger_fields.intersection(update_data)
+        )
+
         for field, value in update_data.items():
             setattr(batch, field, value)
         batch.updated_at = datetime.now(timezone.utc)
+
+        if should_trigger_reapproval:
+            config = self.get_approval_config()
+            if not config.approver_1_id or not config.approver_2_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Both approvers must be configured before schedule changes can trigger re-approval."
+                )
+            batch.is_schema_locked = False
+            batch.approver_1_status = "Pending"
+            batch.approver_2_status = "Pending"
+            batch.approver_1_id = config.approver_1_id
+            batch.approver_2_id = config.approver_2_id
+            batch.approval_id = None
+            batch.status = "Approval 1 Pending"
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            timestamp = datetime.now(ist_tz).strftime("%d-%m-%Y %H:%M IST")
+            actor_name = current_user.full_name or current_user.email
+            audit_entry = (
+                f"[{timestamp} - Schedule changed by {actor_name} ({current_user.role or 'User'})]: "
+                f"Batch reset to Approval 1 Pending due to schedule field modification(s): "
+                f"{', '.join(sorted(schedule_trigger_fields.intersection(update_data)))}"
+            )
+            batch.remarks = f"{batch.remarks}\n{audit_entry}" if batch.remarks else audit_entry
+
         return self._save(batch)
 
     # Valid lifecycle status transitions
     # Key: current_status -> Set of allowed next statuses
     VALID_TRANSITIONS: dict[str, set[str]] = {
         "Requested": {"Approval 1 Pending", "OnHold", "Cancelled"},
-        "Approval 1 Pending": {"Approval 2 Pending", "Requested", "OnHold", "Cancelled"},  # Requested on rejection
-        "Approval 2 Pending": {"Approved", "Upcoming", "Ongoing", "Requested", "OnHold", "Cancelled"},
-        "Approved": {"Upcoming", "Ongoing", "OnHold", "Cancelled"},
-        "Upcoming": {"Ongoing", "OnHold", "Cancelled", "Approved"},
+        "Approval 1 Pending": {"Approval 2 Pending", "Rejected", "OnHold", "Cancelled"},
+        "Approval 2 Pending": {"Upcoming", "Ongoing", "Rejected", "OnHold", "Cancelled"},
+        "Upcoming": {"Ongoing", "OnHold", "Cancelled"},
         "Ongoing": {"Pending for Closure", "OnHold", "Cancelled"},
         "Pending for Closure": {"Completed", "OnHold", "Cancelled"},
-        "Completed": {"OnHold"},  # Allow reopening for corrections
-        "OnHold": {"Requested", "Approval 1 Pending", "Approval 2 Pending", "Approved", "Upcoming", "Ongoing", "Cancelled"},
-        "Cancelled": set(),  # Terminal state - no transitions allowed
+        "Completed": {"OnHold"},
+        "OnHold": {"Requested", "Approval 1 Pending", "Approval 2 Pending", "Upcoming", "Ongoing", "Cancelled"},
+        "Cancelled": set(),
+        "Rejected": {"Approval 1 Pending"},
     }
 
     # Statuses that require approval completion before entering
-    APPROVAL_REQUIRED_STATUSES = {"Approved", "Upcoming", "Ongoing", "Pending for Closure", "Completed"}
+    APPROVAL_REQUIRED_STATUSES = {"Upcoming", "Ongoing", "Pending for Closure", "Completed"}
 
     def _get_resume_target_status(self, batch: Batch) -> str:
         """Determine the correct status when resuming from OnHold based on approval state."""
@@ -515,7 +560,7 @@ class BatchService:
         if batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
             return "Approval 2 Pending"
         if batch.approver_1_status == "Rejected" or batch.approver_2_status == "Rejected":
-            return "Requested"
+            return "Rejected"
         if batch.approver_1_status == "Approved" and batch.approver_2_status == "Approved":
             return "Upcoming"
         return "Approval 1 Pending"
@@ -557,6 +602,8 @@ class BatchService:
                 target_status = "Approval 1 Pending"
             elif batch.approver_1_status == "Approved" and batch.approver_2_status == "Pending":
                 target_status = "Approval 2 Pending"
+            elif batch.approver_1_status == "Rejected" or batch.approver_2_status == "Rejected":
+                target_status = "Rejected"
             else:
                 target_status = "Requested"
 
@@ -584,14 +631,14 @@ class BatchService:
         batch.updated_at = datetime.now(timezone.utc)
 
         # Cascade cancellation to all sessions so a cancelled batch stops counting
-        # as delivered faculty time.
+        # as delivered faculty time. Sessions revert to Scheduled (not Completed).
         if target_status == "Cancelled":
             for fs in self.batch_repo.list_non_terminal_faculty_sessions(batch.id):
-                fs.status = "Cancelled"
+                fs.status = "Scheduled"
                 fs.updated_at = datetime.now(timezone.utc)
 
             for ts in self.batch_repo.list_non_terminal_training_sessions(batch.id):
-                ts.status = "Cancelled"
+                ts.status = "Scheduled"
                 ts.updated_at = datetime.now(timezone.utc)
 
         return self._save(batch)

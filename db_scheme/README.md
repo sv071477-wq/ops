@@ -85,8 +85,8 @@ Stores the primary training batch lifecycle and governance information.
 | batch_id | VARCHAR(255) | No | Unique batch identifier |
 | sow_number | VARCHAR(100) | Yes | Client SOW number |
 | approval_id | VARCHAR(100) | Yes | Financial approval reference |
- | category | VARCHAR(100) | No | e.g. Bootcamp, RBT |
- | entity_id | UUID | Yes | FK to entities.id |
+| category | VARCHAR(100) | No | e.g. Bootcamp, RBT, PJP, Workshop |
+| entity_id | UUID | Yes | FK to entities.id |
 | category_id | UUID | Yes | FK to batch_categories.id |
 | delivery_mode_id | UUID | Yes | FK to delivery_modes.id |
 | accommodation_id | UUID | Yes | FK to accommodations.id |
@@ -102,32 +102,31 @@ Stores the primary training batch lifecycle and governance information.
 | calendar_days | INTEGER | Yes | Calendar days |
 | total_hours | NUMERIC(8,2) | No | Batch total hours |
 | total_enrollments | INTEGER | No | Count of enrollments |
-| residential_enrollments | INTEGER | No | Residential enrollments |
-| non_residential_enrollments | INTEGER | No | Non-residential enrollments |
-| status | VARCHAR(50) | No | Lifecycle status |
+| status | VARCHAR(50) | No | Lifecycle status (Requested, Approval 1 Pending, Approval 2 Pending, Approved, Upcoming, Ongoing, Pending for Closure, Completed, OnHold, Cancelled, Rejected) |
 | is_schema_locked | BOOLEAN | No | Schema freeze flag |
+| schedule_complete | BOOLEAN | No | Schedule completeness flag |
 | approver_1_id | UUID | Yes | First approver |
 | approver_2_id | UUID | Yes | Second approver |
-| approver_1_status | VARCHAR(20) | No | Approver 1 status |
-| approver_2_status | VARCHAR(20) | No | Approver 2 status |
+| approver_1_status | VARCHAR(20) | No | Approver 1 status (Pending, Approved, Rejected) |
+| approver_2_status | VARCHAR(20) | No | Approver 2 status (Pending, Approved, Rejected) |
 | approver_1_approved_at | TIMESTAMPTZ | Yes | Approval timestamp |
 | approver_2_approved_at | TIMESTAMPTZ | Yes | Approval timestamp |
 | primary_manager_id | UUID | Yes | Manager owner |
 | coordinator_id | UUID | Yes | Coordinator owner |
- | sales_spoc_id | UUID | Yes | Sales SPOC |
- | faculty_members | JSON | Yes | Faculty member roster |
- | faculty_assigned_text | VARCHAR(500) | Yes | Legacy faculty text |
- | finance_status | VARCHAR(50) | No | Finance checkpoint |
+| sales_spoc_id | UUID | Yes | Sales SPOC |
+| faculty_members | JSON | Yes | Faculty member roster |
+| faculty_assigned_text | VARCHAR(500) | Yes | Legacy faculty text |
+| finance_status | VARCHAR(50) | No | Finance checkpoint (Pending, Cleared) |
 | finance_status_check_date | DATE | Yes | Finance check date |
 | finance_check | INTEGER | Yes | Finance check value |
- | batch_avg_feedback | NUMERIC(3,2) | Yes | Average feedback score |
- | batch_nps | NUMERIC(6,2) | Yes | NPS score (-100 to 100) |
+| batch_avg_feedback | NUMERIC(3,2) | Yes | Average feedback score (1.0-5.0) |
+| batch_nps | NUMERIC(6,2) | Yes | NPS score (-100 to 100) |
 | nps_total_responses | INTEGER | Yes | Feedback response count |
 | nps_promoters | INTEGER | Yes | Promoter count |
 | nps_passives | INTEGER | Yes | Passive count |
 | nps_detractors | INTEGER | Yes | Detractor count |
- | remarks | TEXT | Yes | Batch remarks |
- | created_at | TIMESTAMPTZ | No | Audit timestamp |
+| remarks | TEXT | Yes | Batch remarks |
+| created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
 ### 7. batch_categories, delivery_modes, accommodations, entities, faculty_types, verticals, program_types
@@ -151,8 +150,8 @@ Stores approval assignment configuration between approvers.
 |---|---|---:|---|
 | id | UUID | No | Primary key |
 | approver_1_id | UUID | Yes | FK to users.id |
- | approver_2_id | UUID | Yes | FK to users.id |
- | updated_at | TIMESTAMPTZ | No | Audit timestamp |
+| approver_2_id | UUID | Yes | FK to users.id |
+| updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
 ### 9. training_sessions
 Represents the planned day-wise schedule for a batch.
@@ -170,7 +169,7 @@ Represents the planned day-wise schedule for a batch.
 | duration_hours | NUMERIC(5,2) | No | Duration |
 | module | TEXT | No | Module title |
 | trainer_name | VARCHAR(255) | Yes | Trainer name |
-| status | VARCHAR(30) | No | Scheduled / InProgress / etc. |
+| status | VARCHAR(30) | No | Scheduled, InProgress, Completed, Cancelled, Not Conducted, Rescheduled |
 | created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
@@ -193,14 +192,17 @@ Tracks actual delivery and utilization records for faculty sessions.
 | venue | VARCHAR(255) | Yes | Delivery venue |
 | location_city | VARCHAR(100) | Yes | City |
 | mode_of_delivery | VARCHAR(50) | No | Online / Offline / etc. |
-| status | VARCHAR(30) | No | Scheduled / Completed / Cancelled |
+| status | VARCHAR(30) | No | Scheduled, InProgress, Completed, Cancelled, Not Conducted, Rescheduled |
 | feedback_submitted | BOOLEAN | No | Feedback submitted flag |
 | feedback_rating | NUMERIC(3,2) | Yes | Feedback score (1.0-5.0) |
 | feedback_notes | TEXT | Yes | Detailed feedback |
 | outcome_reason | TEXT | Yes | Outcome explanation |
 | outcome_at | TIMESTAMPTZ | Yes | Outcome timestamp |
- | outcome_by | UUID | Yes | FK to users.id |
- | created_at | TIMESTAMPTZ | No | Audit timestamp |
+| outcome_by | UUID | Yes | FK to users.id |
+| vertical | VARCHAR(50) | Yes | Delivery vertical |
+| program_type_id | UUID | Yes | FK to program_types.id |
+| faculty_type_id | UUID | Yes | FK to faculty_types.id |
+| created_at | TIMESTAMPTZ | No | Audit timestamp |
 | updated_at | TIMESTAMPTZ | No | Audit timestamp |
 
 ## Relationships summary
@@ -221,6 +223,9 @@ Tracks actual delivery and utilization records for faculty sessions.
 - training_sessions stores the ingested curriculum plan.
 - faculty_utilization stores actual logged sessions, utilization, outcomes, and feedback.
 - The application treats these as distinct but linked entities.
+- Batch status follows a state machine: Requested → Approval 1 Pending → Approval 2 Pending → Approved/Upcoming → Ongoing → Pending for Closure → Completed
+- Session status values: Scheduled, InProgress, Completed, Cancelled, Not Conducted, Rescheduled
+- Approval status values: Pending, Approved, Rejected
 
 ## Source
 
@@ -388,10 +393,9 @@ Table batches {
   calendar_days integer [null, default: 0]
   total_hours numeric(8,2) [not null, default: 0.00]
   total_enrollments integer [not null, default: 0]
-  residential_enrollments integer [not null, default: 0]
-  non_residential_enrollments integer [not null, default: 0]
   status varchar(50) [not null, default: 'Requested']
   is_schema_locked boolean [not null, default: false]
+  schedule_complete boolean [not null, default: false]
   approver_1_id uuid [null]
   approver_2_id uuid [null]
   approver_1_status varchar(20) [not null, default: 'Pending']

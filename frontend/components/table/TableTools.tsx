@@ -250,7 +250,7 @@ export function ExportButton<T>({
     <Button
       variant="outline"
       size="sm"
-      className={TOOL_BUTTON}
+      className="h-9 shrink-0 gap-1.5 px-2 text-xs"
       onClick={handleExport}
       disabled={rows.length === 0}
       title={rows.length === 0 ? "Nothing to export with the current filters" : `${label} (${rows.length} rows)`}

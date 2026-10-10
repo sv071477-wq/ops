@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, TERMINAL_UTILIZATION_STATUSES
+from app.models.session import FacultyUtilization, SessionStatus
 from app.schemas.feedback import SessionFeedbackCreate, BatchNpsClosureCreate
 from app.api.v1.batches.lifecycle_service import BatchLifecycleService
 from app.api.v1.gates.repository_interfaces import IGateRepository
@@ -59,10 +59,10 @@ class GatekeeperService:
                     "submitted_by": str(user_id)
                 }
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        if session_obj.status in TERMINAL_UTILIZATION_STATUSES:
+        if session_obj.status == SessionStatus.Completed:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not available for Gate 1 completion")
 
-        session_obj.status = "Completed"
+        session_obj.status = SessionStatus.Completed
         session_obj.feedback_submitted = True
         session_obj.feedback_rating = feedback_data.rating
         notes = feedback_data.topic_feedback or ""
@@ -138,7 +138,8 @@ class GatekeeperService:
             for group in self.gate_repo.list_all_sessions_for_batch(batch.id)
             for session in group
         ]
-        if all_sessions and any(s.status not in TERMINAL_UTILIZATION_STATUSES for s in all_sessions):
+        TERMINAL_STATUSES = {SessionStatus.Completed}
+        if all_sessions and any(s.status not in TERMINAL_STATUSES for s in all_sessions):
             raise HTTPException(status_code=409, detail="Every session must have a terminal outcome before batch closure")
 
         promoters = closure_data.promoters_count

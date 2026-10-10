@@ -384,6 +384,15 @@ export function MyBatchesView({
         />
       </div>
 
+      {canCreateBatch && onCreateBatch && batches.length > 0 && (
+        <div className="flex justify-end">
+          <Button size="sm" className="h-9 shrink-0" onClick={onCreateBatch}>
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
+            <span>Add New Batch</span>
+          </Button>
+        </div>
+      )}
+
       <FullscreenTable
         stickyHeader
         stickyTop={NAVBAR_HEIGHT}
@@ -466,12 +475,6 @@ export function MyBatchesView({
             />
             <ExportButton filename="my-batches" columns={EXPORT_COLUMNS} rows={filteredRows} />
             {onRefresh && <RefreshButton onClick={onRefresh} isLoading={isLoading} label="Refresh" />}
-            {canCreateBatch && onCreateBatch && (
-              <Button size="sm" onClick={onCreateBatch}>
-                <UserPlus className="h-4 w-4" aria-hidden="true" />
-                <span>Add New Batch</span>
-              </Button>
-            )}
           </>
         }
         footer={

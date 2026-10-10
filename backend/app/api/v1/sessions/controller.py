@@ -8,7 +8,7 @@ from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
     SessionCreate, SessionUpdate, SessionDetailResponse,
-    SessionOutcomeRequest, SessionRescheduleRequest, TrainingSessionResponse,
+    TrainingSessionResponse,
     TrainingSessionUpdate, TrainingSessionCreate,
 )
 from app.api.deps import get_current_user, require_coordinator_or_above
@@ -86,36 +86,6 @@ def update_session(
     current_user: User = Depends(require_coordinator_or_above),
 ) -> Any:
     return service.update(id, session_in, current_user.id)
-
-
-@router.post("/{id}/cancel", response_model=SessionDetailResponse)
-def cancel_session(
-    id: UUID,
-    request: SessionOutcomeRequest,
-    service: SessionService = Depends(get_session_service),
-    current_user: User = Depends(require_coordinator_or_above),
-) -> Any:
-    return service.cancel(id, request, current_user.id)
-
-
-@router.post("/{id}/not-conducted", response_model=SessionDetailResponse)
-def mark_session_not_conducted(
-    id: UUID,
-    request: SessionOutcomeRequest,
-    service: SessionService = Depends(get_session_service),
-    current_user: User = Depends(require_coordinator_or_above),
-) -> Any:
-    return service.mark_not_conducted(id, request, current_user.id)
-
-
-@router.post("/{id}/reschedule", response_model=SessionDetailResponse)
-def reschedule_session(
-    id: UUID,
-    request: SessionRescheduleRequest,
-    service: SessionService = Depends(get_session_service),
-    current_user: User = Depends(require_coordinator_or_above),
-) -> Any:
-    return service.reschedule(id, request, current_user.id)
 
 
 @router.patch("/{id}/complete")

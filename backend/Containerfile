@@ -15,7 +15,7 @@ RUN apt-get -o Acquire::ForceIPv4=true update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir --user -r requirements.txt
 
 # Final runtime stage
 FROM docker.io/library/python:3.11-slim

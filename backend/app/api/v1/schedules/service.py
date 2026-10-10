@@ -615,7 +615,7 @@ class ExcelIngestionService:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only apply schedules within your manager scope.")
         
         # Schedule ingestion only allowed after batch is submitted for Approval 1
-        allowed_statuses = {"Approval 1 Pending", "Approval 2 Pending", "Approved", "Upcoming", "Ongoing"}
+        allowed_statuses = {"Approval 1 Pending", "Approval 2 Pending", "Upcoming", "Ongoing"}
         if batch.status not in allowed_statuses:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, 
@@ -627,10 +627,21 @@ class ExcelIngestionService:
         if not items:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Schedule upload contains no valid rows")
 
+        # Validate training_days limit before processing items
+        if batch.training_days > 0:
+            existing_dates = {s.session_date for s in schedule_repo.list_scheduled_sessions_for_batch(batch.id)}
+            upload_dates = {item.date_of_training.date() for item in items}
+            total_unique_dates = len(existing_dates.union(upload_dates))
+            if total_unique_dates > batch.training_days:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Cannot add more training sessions than training_days ({batch.training_days}). "
+                           f"Upload would create {total_unique_dates} unique training dates."
+                )
+
         errors: List[dict] = []
         prepared = []
         seen_keys = set()
-        running_slots = {}
         for item in items:
             row_key = (item.date_of_training.date(), item.start_time, item.end_time, item.topic.strip().lower())
             if row_key in seen_keys:
@@ -671,14 +682,6 @@ class ExcelIngestionService:
                 errors.append({"source_row": item.source_row, "message": "Matching session already exists for this batch"})
                 continue
 
-            # Overlap inside a single upload is caught here. Cross-batch faculty
-            # availability is not checked: the conflict engine was removed.
-            slot_key = (faculty_name.lower(), s_date)
-            for previous_start, previous_end, previous_row in running_slots.get(slot_key, []):
-                if item.start_time and item.end_time and previous_start and previous_end and previous_start < item.end_time and previous_end > item.start_time:
-                    errors.append({"source_row": item.source_row, "message": f"Overlaps another uploaded session from row {previous_row}"})
-
-            running_slots.setdefault(slot_key, []).append((item.start_time, item.end_time, item.source_row))
             prepared.append((item, faculty_name))
 
         generated = []
@@ -747,6 +750,10 @@ class ExcelIngestionService:
 
         try:
             sessions = schedule_repo.persist_sessions(sessions)
+            # Update schedule_complete flag on batch
+            total_scheduled = schedule_repo.get_scheduled_session_count(batch.id)
+            batch.schedule_complete = (total_scheduled >= batch.training_days)
+            schedule_repo.commit()
         except IntegrityError as e:
             schedule_repo.rollback()
             # Handle unique constraint violation on (batch_id, session_date, module)

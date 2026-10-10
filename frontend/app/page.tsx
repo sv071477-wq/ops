@@ -1291,6 +1291,8 @@ export default function DashboardPage() {
                       label: "Workflow",
                       htmlFor: FINANCE_WORKFLOW_FILTER_ID,
                       width: 160,
+                      chipValue: financeStatusFilter !== "ACTIVE" ? financeStatusFilter : null,
+                      onClear: () => setFinanceStatusFilter("ACTIVE"),
                       content: (
                         <select
                           id={FINANCE_WORKFLOW_FILTER_ID}
@@ -1316,6 +1318,8 @@ export default function DashboardPage() {
                       label: "Start Date",
                       htmlFor: FINANCE_START_FILTER_ID,
                       width: 150,
+                      chipValue: financeStartDate || null,
+                      onClear: () => setFinanceStartDate(""),
                       content: (
                         <input
                           id={FINANCE_START_FILTER_ID}
@@ -1334,6 +1338,8 @@ export default function DashboardPage() {
                       label: "End Date",
                       htmlFor: FINANCE_END_FILTER_ID,
                       width: 150,
+                      chipValue: financeEndDate || null,
+                      onClear: () => setFinanceEndDate(""),
                       content: (
                         <input
                           id={FINANCE_END_FILTER_ID}
@@ -1376,7 +1382,7 @@ export default function DashboardPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 shrink-0"
+                    className="h-9 shrink-0 gap-1.5 px-2 text-xs"
                     onClick={exportFinanceSheet}
                     disabled={sortedFinanceBatches.length === 0}
                     title={

@@ -1,7 +1,14 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { FullscreenTable, PlainHeaderCell, SortableHeaderCell, TableFilters } from '@/components/table';
+import {
+  ColumnsMenu,
+  ExportButton,
+  FullscreenTable,
+  PlainHeaderCell,
+  SortableHeaderCell,
+  TableFilters,
+} from '@/components/table';
 import { useTableFilters, type TableFilterField } from '@/hooks/useTableFilters';
 import { useTableSort } from '@/hooks/useTableSort';
 import type { SortAccessors } from '@/lib/tableUtils';
@@ -272,6 +279,7 @@ describe('TableFilters', () => {
         <FiltersHarness />
       </>,
     );
+    screen.getAllByRole('button', { name: 'Filters' }).forEach((button) => fireEvent.click(button));
     const ids = screen.getAllByLabelText('Team').map((select) => select.id);
     expect(ids).toHaveLength(2);
     expect(new Set(ids).size).toBe(2);
@@ -279,6 +287,8 @@ describe('TableFilters', () => {
 
   it('offers the distinct column values and an all option', () => {
     render(<FiltersHarness />);
+    expect(screen.queryByLabelText('Team')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }));
     const select = screen.getByLabelText('Team') as HTMLSelectElement;
     expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
       'All teams',
@@ -289,18 +299,17 @@ describe('TableFilters', () => {
 
   it('reveals the clear action only once a filter is active', async () => {
     render(<FiltersHarness />);
-    expect(screen.queryByRole('button', { name: /Clear/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }));
+    expect(screen.queryByRole('button', { name: /Clear all/ })).not.toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Team'), 'Finance');
-    const clear = screen.getByRole('button', { name: /Clear/ });
+    const clear = screen.getByRole('button', { name: /Clear all/ });
 
     await userEvent.click(clear);
     expect(screen.getByLabelText('Team')).toHaveValue('');
   });
 
-  it('orders the toolbar search, dropdowns, bespoke filters, then sort', () => {
-    // The order is a shared contract across every table: the controls that
-    // narrow the rows come first, then the one that reshapes their order.
+  it('keeps filters collapsed until requested while search and sort stay available', () => {
     render(
       <TableFilters
         search={{ value: '', onChange: () => {} }}
@@ -322,32 +331,72 @@ describe('TableFilters', () => {
       />,
     );
 
-    // DOM order of the form controls, left to right.
-    const order = Array.from(document.querySelectorAll('input, select')).map(
-      (el) => el.getAttribute('aria-label') ?? el.getAttribute('type') ?? '',
-    );
+    expect(screen.getByRole('searchbox')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sort by')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Team')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument();
 
-    const search = order.indexOf('search');
-    const team = screen.getByLabelText('Team');
-    const from = screen.getByLabelText('From');
-    const to = screen.getByLabelText('To');
-    const sortBy = screen.getByLabelText('Sort by');
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }));
+    expect(screen.getByLabelText('Team')).toBeInTheDocument();
+    expect(screen.getByLabelText('From')).toBeInTheDocument();
+    expect(screen.getByLabelText('To')).toBeInTheDocument();
+  });
 
-    const indexOf = (el: Element) => Array.from(document.querySelectorAll('input, select')).indexOf(el);
+  it('shows selected values as removable chips', async () => {
+    render(<FiltersHarness />);
+    fireEvent.click(screen.getByRole('button', { name: /Filters/ }));
+    await userEvent.selectOptions(screen.getByLabelText('Team'), 'Finance');
 
-    expect(indexOf(team)).toBeGreaterThan(search);
-    expect(indexOf(from)).toBeGreaterThan(indexOf(team));
-    expect(indexOf(to)).toBeGreaterThan(indexOf(from));
-    expect(indexOf(sortBy)).toBeGreaterThan(indexOf(to));
+    const removeTeam = screen.getByRole('button', { name: 'Remove Team filter' });
+    expect(removeTeam).toHaveTextContent('Team:');
+    expect(screen.getByRole('button', { name: /Filters, 1 active filter/ })).toBeInTheDocument();
 
-    // The clear action is a button, so it is checked separately at the end.
-    const clear = screen.getByRole('button', { name: /Clear/ });
-    expect(clear.compareDocumentPosition(sortBy) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    await userEvent.click(removeTeam);
+    expect(screen.getByLabelText('Team')).toHaveValue('');
+    expect(screen.queryByRole('button', { name: 'Remove Team filter' })).not.toBeInTheDocument();
   });
 });
 
 describe('FullscreenTable', () => {
-  it('toggles fullscreen and exits on Escape', async () => {
+  it('keeps table actions on one line without clipping action menus', async () => {
+    render(
+      <FullscreenTable
+        title="Ledger"
+        actions={
+          <ColumnsMenu columns={[{ key: 'name', label: 'Name' }]} hidden={new Set<string>()} onToggle={() => {}} onShowAll={() => {}} />
+        }
+      >
+        <table>
+          <tbody />
+        </table>
+      </FullscreenTable>
+    );
+
+    const actions = screen.getByRole('group', { name: 'Table actions' });
+    expect((actions as HTMLElement).style.flexWrap).toBe('nowrap');
+    expect((actions as HTMLElement).style.overflowX).toBe('');
+    expect((actions as HTMLElement).style.flexShrink).toBe('0');
+
+    await userEvent.click(screen.getByTitle('Choose visible columns'));
+    expect(screen.getByText('Visible columns')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Name' })).toBeInTheDocument();
+  });
+
+  it('uses a compact export button while keeping its accessible label', () => {
+    render(
+      <ExportButton
+        filename="rows"
+        columns={[{ key: 'name', label: 'Name', value: (row: Row) => row.name }]}
+        rows={ROWS}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: 'Export' });
+    expect(button).toHaveClass('px-2', 'text-xs');
+    expect(button).toHaveTextContent('Export');
+  });
+
+  it('portals fixed fullscreen above the page and exits on Escape', async () => {
     const { container } = render(
       <FullscreenTable title="Ledger">
         <table>
@@ -360,16 +409,48 @@ describe('FullscreenTable', () => {
       </FullscreenTable>
     );
 
-    const panel = container.firstElementChild as HTMLElement;
-    expect(panel).toHaveAttribute('data-fullscreen', 'false');
+    expect(container.querySelector('[data-fullscreen="false"]')).not.toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: /Full Screen/ }));
-    expect(panel).toHaveAttribute('data-fullscreen', 'true');
+    const panel = document.body.querySelector<HTMLElement>('[data-fullscreen="true"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.parentElement).toBe(document.body);
+    expect(panel?.style.position).toBe('fixed');
+    expect(document.body.style.overflow).toBe('hidden');
 
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
-    expect(panel).toHaveAttribute('data-fullscreen', 'false');
+    expect(container.querySelector('[data-fullscreen="false"]')).not.toBeNull();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('falls back to the expanded panel when native fullscreen is denied', async () => {
+    const { container } = render(
+      <FullscreenTable nativeFullscreen title="Ledger">
+        <table>
+          <tbody />
+        </table>
+      </FullscreenTable>
+    );
+    const panel = container.querySelector<HTMLElement>('[data-fullscreen="false"]');
+    expect(panel).not.toBeNull();
+    Object.defineProperty(panel, 'requestFullscreen', {
+      configurable: true,
+      value: () => Promise.reject(new Error('Fullscreen permission denied')),
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /Full Screen/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Fullscreen notice: Browser fullscreen was unavailable; using expanded view instead. Fullscreen permission denied'
+    );
+    const expandedPanel = document.body.querySelector<HTMLElement>('[data-fullscreen="true"]');
+    expect(expandedPanel).not.toBeNull();
+    expect(expandedPanel?.style.position).toBe('fixed');
+
+    await userEvent.click(screen.getByRole('button', { name: /Exit Full Screen/ }));
+    expect(container.querySelector('[data-fullscreen="false"]')).not.toBeNull();
   });
 
   it('keeps the fullscreen button out of the way when hidden', () => {

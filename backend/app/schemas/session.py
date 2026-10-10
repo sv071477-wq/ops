@@ -7,6 +7,11 @@ from app.schemas.user import UserResponse
 from app.schemas.feedback import SessionFeedbackResponse
 
 
+class SessionStatus(str):
+    Scheduled = "Scheduled"
+    Completed = "Completed"
+
+
 # ============================================================================
 # Scheduled Training Session Schemas (Curriculum Schedule from Ingested Excel)
 # ============================================================================
@@ -88,13 +93,10 @@ class SessionBase(BaseModel):
     venue: Optional[str] = None
     location_city: Optional[str] = None
     mode_of_delivery: str = "Online"  # Online, Offline, F2F, Blended
-    status: str = "Completed"  # Completed, InProgress, Scheduled, Cancelled, Not Conducted
+    status: str = "Completed"  # Scheduled, Completed
     feedback_submitted: Optional[bool] = False
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
-    outcome_reason: Optional[str] = None
-    outcome_at: Optional[datetime] = None
-    outcome_by: Optional[UUID] = None
     vertical: Optional[str] = None  # Delivery vertical, e.g. IT/ITES
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None  # Engagement type, from faculty_types
@@ -139,9 +141,6 @@ class SessionUpdate(BaseModel):
     feedback_submitted: Optional[bool] = None
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
-    outcome_reason: Optional[str] = None
-    outcome_at: Optional[datetime] = None
-    outcome_by: Optional[UUID] = None
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None
@@ -161,24 +160,11 @@ class SessionUpdate(BaseModel):
         return data
 
 
-class SessionOutcomeRequest(BaseModel):
-    reason: str = Field(..., min_length=3, max_length=2000)
-
-
-class SessionRescheduleRequest(SessionOutcomeRequest):
-    date_of_training: datetime
-    start_time: Optional[time] = None
-    end_time: Optional[time] = None
-
-
 class SessionResponse(SessionBase):
     id: UUID
     feedback_submitted: bool
     feedback_rating: Optional[Decimal] = None
     feedback_notes: Optional[str] = None
-    outcome_reason: Optional[str] = None
-    outcome_at: Optional[datetime] = None
-    outcome_by: Optional[UUID] = None
     vertical: Optional[str] = None
     program_type_id: Optional[UUID] = None
     faculty_type_id: Optional[UUID] = None

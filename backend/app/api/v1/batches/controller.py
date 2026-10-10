@@ -152,7 +152,7 @@ async def approve_batch(
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_manager_or_admin)
 ) -> Any:
-    """Manager Approval: Locks schema, assigns financial SOW Approval ID, transitions status to 'Approved'."""
+    """Manager Approval: Locks schema, assigns financial SOW Approval ID, transitions status to Upcoming/Ongoing."""
     batch = service.approve(id, approve_in, current_user)
 
     # Trigger Async Notification
@@ -225,14 +225,23 @@ def get_batch_detail(
 
 
 @router.patch("/{id}", response_model=BatchResponse)
-def update_batch(
+async def update_batch(
     id: UUID,
     batch_in: BatchUpdateRequest,
     service: BatchService = Depends(get_batch_service),
     current_user: User = Depends(require_coordinator_or_above)
 ) -> Any:
     """Updates batch fields. Schema locked batches restrict modification to non-governed fields."""
-    return service.update(id, batch_in, current_user)
+    batch = service.update(id, batch_in, current_user)
+
+    # If batch was reset to Approval 1 Pending due to schedule change, notify approvers
+    if batch.status == "Approval 1 Pending" and batch.approver_1_status == "Pending" and batch.approver_2_status == "Pending":
+        try:
+            await NotificationService.notify_approval_requested(batch)
+        except Exception:
+            pass
+
+    return batch
 
 
 @router.post("/{id}/lifecycle-status", response_model=BatchResponse)

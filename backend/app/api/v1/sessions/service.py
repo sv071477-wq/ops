@@ -5,11 +5,11 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from app.models.batch import Batch
-from app.models.session import FacultyUtilization, TERMINAL_UTILIZATION_STATUSES, TrainingSession
+from app.models.session import FacultyUtilization, TrainingSession, SessionStatus
 from app.models.user import User
 from app.schemas.feedback import SessionFeedbackCreate
 from app.schemas.session import (
-    SessionCreate, SessionUpdate, SessionOutcomeRequest, SessionRescheduleRequest,
+    SessionCreate, SessionUpdate,
     TrainingSessionCreate,
     TrainingSessionUpdate,
 )
@@ -37,7 +37,8 @@ class SessionService:
         all_sessions = self.session_repo.list_all_sessions_for_batch(batch_id)
         if not all_sessions:
             return
-        if not all(session.status in TERMINAL_UTILIZATION_STATUSES for session in all_sessions):
+        TERMINAL_STATUSES = {SessionStatus.Completed}
+        if not all(session.status in TERMINAL_STATUSES for session in all_sessions):
             return
 
         batch = self.session_repo.get_batch_by_id(batch_id)
@@ -210,24 +211,14 @@ class SessionService:
 
         self._validate_time_window(session_in.start_time, session_in.end_time)
 
-        # Require outcome_reason when status is Cancelled or Not Conducted
-        if session_dict.get("status") in ["Cancelled", "Not Conducted"] and not session_dict.get("outcome_reason"):
-            raise HTTPException(status_code=422, detail="Outcome reason is required when status is Cancelled or Not Conducted")
-
-        # Auto-set outcome_by to current user if outcome_reason is provided but outcome_by is not
-        if session_dict.get("outcome_reason") and not session_dict.get("outcome_by"):
-            session_dict["outcome_by"] = user_id
-            if not session_dict.get("outcome_at"):
-                session_dict["outcome_at"] = datetime.now(timezone.utc)
-
         session = self.session_repo.create_utilization(FacultyUtilization(**session_dict))
 
         # If linked to a scheduled training session day and status is Completed, mark it Completed.
         # The timetable has no feedback columns; the rating stays on this ledger row.
-        if session_in.training_session_id and session_in.status == "Completed":
+        if session_in.training_session_id and session_in.status == SessionStatus.Completed.value:
             sched = self.session_repo.get_training_session_by_id(session_in.training_session_id)
             if sched:
-                sched.status = "Completed"
+                sched.status = SessionStatus.Completed
                 self.session_repo.commit()
 
         # Check and update batch completion/feedback
@@ -257,20 +248,11 @@ class SessionService:
         if batch and batch.end_date and target_date.date() > batch.end_date.date():
             raise HTTPException(status_code=422, detail="Session date is after the batch end date")
 
-        # Require outcome_reason when status is changed to Cancelled or Not Conducted
         new_status = update_dict.get("status", session.status)
-        if new_status in ["Cancelled", "Not Conducted"] and not update_dict.get("outcome_reason") and not session.outcome_reason:
-            raise HTTPException(status_code=422, detail="Outcome reason is required when status is Cancelled or Not Conducted")
-
-        # Auto-set outcome_by and outcome_at when outcome_reason is provided
-        if update_dict.get("outcome_reason") and not update_dict.get("outcome_by"):
-            update_dict["outcome_by"] = user_id
-            if not update_dict.get("outcome_at"):
-                update_dict["outcome_at"] = datetime.now(timezone.utc)
 
         # Track if status is changing to Completed
-        was_completed = session.status == "Completed"
-        will_be_completed = new_status == "Completed"
+        was_completed = session.status == SessionStatus.Completed.value
+        will_be_completed = new_status == SessionStatus.Completed.value
 
         for field, value in update_dict.items():
             setattr(session, field, value)
@@ -282,43 +264,10 @@ class SessionService:
         if session.training_session_id and not was_completed and will_be_completed:
             sched = self.session_repo.get_training_session_by_id(session.training_session_id)
             if sched:
-                sched.status = "Completed"
+                sched.status = SessionStatus.Completed
                 self.session_repo.commit()
 
         # Check and update batch completion/feedback
-        self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
-
-        return session
-
-    def _transition(self, session_id: UUID, status: str, reason: str, user_id: UUID) -> FacultyUtilization:
-        session = self.session_repo.get_utilization_by_id(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        batch = self.session_repo.get_batch_by_id(session.batch_id)
-        self._require_batch_scope(batch, user_id)
-        if session.status == "Completed":
-            raise HTTPException(status_code=409, detail="Completed sessions cannot be changed")
-        session.status = status
-        session.outcome_reason = reason.strip()
-        session.outcome_at = datetime.now(timezone.utc)
-        session.outcome_by = user_id
-        session.updated_at = datetime.now(timezone.utc)
-
-        # Sync the linked timetable day so lifecycle checks see the terminal status.
-        if session.training_session_id:
-            sched = self.session_repo.get_training_session_by_id(session.training_session_id)
-            if sched and sched.status != status:
-                sched.status = status
-                sched.updated_at = datetime.now(timezone.utc)
-
-        self.session_repo.commit()
-        self.session_repo.refresh(session)
-
-        # Mark batch Completed when every (scheduled + logged) session is terminal.
-        self._check_and_update_batch_completion(session.batch_id)
-
-        # Delegate feedback calculation to the lifecycle service — it only writes
-        # batch_avg_feedback once all non-cancelled sessions are Completed.
         self.lifecycle_service.check_and_update_batch_feedback(session.batch_id)
 
         return session
@@ -335,31 +284,6 @@ class SessionService:
         batch_user_ids = {batch.primary_manager_id, batch.coordinator_id, batch.sales_spoc_id}
         if not scope_ids.intersection({value for value in batch_user_ids if value is not None}):
             raise HTTPException(status_code=403, detail="You can only view or edit sessions within your manager scope.")
-
-    def cancel(self, session_id: UUID, request: SessionOutcomeRequest, user_id: UUID) -> FacultyUtilization:
-        return self._transition(session_id, "Cancelled", request.reason, user_id)
-
-    def mark_not_conducted(self, session_id: UUID, request: SessionOutcomeRequest, user_id: UUID) -> FacultyUtilization:
-        return self._transition(session_id, "Not Conducted", request.reason, user_id)
-
-    def reschedule(self, session_id: UUID, request: SessionRescheduleRequest, user_id: UUID) -> FacultyUtilization:
-        session = self.session_repo.get_utilization_by_id(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        if session.status == "Completed":
-            raise HTTPException(status_code=409, detail="Completed sessions cannot be rescheduled")
-        updated = self.update(session_id, SessionUpdate(
-            date_of_training=request.date_of_training,
-            start_time=request.start_time,
-            end_time=request.end_time,
-        ), user_id)
-        updated.status = "Scheduled"
-        updated.outcome_reason = request.reason.strip()
-        updated.outcome_at = datetime.now(timezone.utc)
-        updated.outcome_by = user_id
-        self.session_repo.commit()
-        self.session_repo.refresh(updated)
-        return updated
 
     def complete_gate1(self, session_id: str, feedback: SessionFeedbackCreate, user_id: UUID) -> dict:
         return self.gatekeeper.complete_session_gate1(

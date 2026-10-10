@@ -13,7 +13,7 @@ from app.api.v1.analytics.repository_interfaces import IAnalyticsRepository
 from app.api.v1.auth.repository_interfaces import IUserRepository
 
 
-_ACTIVE_STATUSES = ["Approved", "Upcoming", "Ongoing"]
+_ACTIVE_STATUSES = ["Upcoming", "Ongoing"]
 
 
 class AnalyticsService:

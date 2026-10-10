@@ -409,9 +409,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
   // loads: `scheduledSessions` is the planned curriculum, `sessions` the actual
   // delivery ledger. The batch average itself is never recomputed here — the
   // backend writes it once and is the authority.
-  const TERMINAL_DELIVERY_STATUSES = ["Completed", "Cancelled", "Not Conducted"];
+  const TERMINAL_DELIVERY_STATUSES = ["Completed"];
   const checkpoint1Progress = useMemo(() => {
-    const plannedDays = scheduledSessions.filter((s) => s.status !== "Cancelled");
+    const plannedDays = scheduledSessions; // All scheduled sessions count as planned (no Cancelled status)
     const planned = plannedDays.length;
     const logged = plannedDays.filter((s) => s.utilization_logged).length;
     const closed = plannedDays.filter((s) => TERMINAL_DELIVERY_STATUSES.includes(s.status)).length;
@@ -552,10 +552,8 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       setUtilError(utilTimeError);
       return;
     }
-    if ((utilStatus === "Cancelled" || utilStatus === "Not Conducted") && utilOutcomeReason.trim().length < 3) {
-      setUtilError("Outcome reason is required when status is Cancelled or Not Conducted (minimum 3 characters)");
-      return;
-    }
+    // No longer need outcome reason validation for Cancelled/Not Conducted statuses
+    // since those statuses have been removed. Only Completed status is used.
     if (!options.verticals.length) {
       setUtilError("No delivery verticals are configured. Ask an admin to add one in Settings, then reload.");
       return;
@@ -603,9 +601,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
         vertical: utilVertical,
         faculty_type_id: utilFacultyTypeId || undefined,
       };
-      if (utilStatus === "Cancelled" || utilStatus === "Not Conducted") {
-        payload.outcome_reason = utilOutcomeReason.trim();
-      }
       await api.createSession(payload);
       setIsLogUtilizationOpen(false);
       setIsUtilDirty(false);
@@ -969,29 +964,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
       await loadSessions();
     } catch (err: any) {
       notifyError("Failed to edit session", err);
-    }
-  };
-
-  const handleSessionOutcome = async (session: TrainingSession, action: "cancel" | "not-conducted") => {
-    const reason = await requestText({
-      title: action === "cancel" ? "Cancel session" : "Mark session not conducted",
-      description: "A reason is required and will be recorded in the audit trail.",
-      placeholder: "Reason",
-      multiline: true,
-      minLength: 3,
-      validationMessage: "Reason must be at least 3 characters",
-      confirmLabel: "Confirm",
-    });
-    if (reason === null || reason.length < 3) return;
-    try {
-      if (action === "cancel") {
-        await api.cancelSession(session.id, reason);
-      } else {
-        await api.markSessionNotConducted(session.id, reason);
-      }
-      await loadSessions();
-    } catch (err: any) {
-      notifyError("Failed to update session outcome", err);
     }
   };
 
@@ -2074,18 +2046,6 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                       {checkpoint1Progress.logged === checkpoint1Progress.planned && (
                         <span style={{ fontSize: "0.7rem", marginLeft: 6, color: "#16a34a", fontWeight: 700 }}>✓ All Logged</span>
                       )}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Status</div>
-                    <div style={{ fontSize: "0.825rem", fontWeight: 600, marginTop: 6, color: "var(--text-muted)" }}>
-                      {activeBatch.batch_avg_feedback != null
-                        ? `All ${checkpoint1Progress.planned} deliveries logged and closed`
-                        : checkpoint1Progress.logged < checkpoint1Progress.planned
-                          ? `${checkpoint1Progress.logged} of ${checkpoint1Progress.planned} deliveries logged · ${checkpoint1Progress.planned - checkpoint1Progress.logged} session(s) still to log`
-                          : checkpoint1Progress.closed < checkpoint1Progress.planned
-                            ? `All ${checkpoint1Progress.planned} deliveries logged · ${checkpoint1Progress.planned - checkpoint1Progress.closed} awaiting outcome`
-                            : "No feedback submitted"}
                     </div>
                   </div>
                 </div>
@@ -3593,30 +3553,9 @@ export const BatchDetailDrawer: React.FC<BatchDetailDrawerProps> = ({
                     required
                   >
                     <option value="Completed">Completed / Delivered</option>
-                    <option value="InProgress">In Progress</option>
                     <option value="Scheduled">Scheduled</option>
-                    <option value="Cancelled">Cancelled</option>
-                    <option value="Not Conducted">Not Conducted</option>
                   </select>
                 </div>
-
-                {(utilStatus === "Cancelled" || utilStatus === "Not Conducted") && (
-                  <div>
-                    <label htmlFor="util-outcome" style={UTIL_LABEL}>Outcome Reason *</label>
-                    <textarea
-                      id="util-outcome"
-                      value={utilOutcomeReason}
-                      onChange={(e) => { setUtilOutcomeReason(e.target.value); markUtilDirty(); }}
-                      placeholder="Reason for cancellation or non-conduct (e.g. Faculty unavailable, client cancelled)"
-                      className="glass-input"
-                      style={{ width: "100%", minHeight: 72, resize: "vertical" }}
-                      required
-                    />
-                    <span style={UTIL_HINT}>
-                      Required when status is Cancelled or Not Conducted (minimum 3 characters)
-                    </span>
-                  </div>
-                )}
               </div>
 
               {/* Feedback */}

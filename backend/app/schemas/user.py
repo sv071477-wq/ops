@@ -175,3 +175,17 @@ class CoordinatorMappingListResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class AuditLogResponse(BaseModel):
+    """Audit log entry for admin panel display."""
+    id: UUID
+    event_type: str
+    user_id: Optional[UUID] = None
+    user_email: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    details: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

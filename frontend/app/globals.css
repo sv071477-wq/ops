@@ -68,10 +68,8 @@
   --border-subtle: var(--color-border);
   --primary: var(--color-primary);
   --accent-primary: var(--color-primary);
-  /* UI scale factor. 0.8 renders the app at the size it has at 80% browser zoom.
-     Consumed by the `zoom` rule below; the micro-label sizes in `TableFilters`,
-     `panel` and `SortableHeaderCell` are divided by it to hold their current
-     physical size. */
+  /* UI scale factor. The micro-label sizes in `TableFilters`, `panel` and
+     `SortableHeaderCell` are divided by it to hold their current physical size. */
   --app-scale: 0.8;
 }
 
@@ -92,13 +90,11 @@
 }
 
 @media (min-width: 1024px) {
-  /* UI scale. 0.8 renders the app at the size it has at 80% browser zoom, as CSS,
-     so the browser stays at 100%. On `html` rather than an inner wrapper so Radix
-     portals -- the drawer, all 8 modals, selects, dropdowns -- stay inside the
-     scaled box. Desktop only: at phone widths this would put body text at ~11.2
-     physical px. */
+  /* Scale rem-based UI without CSS `zoom`: zoom throws off hit-testing for table
+     controls and fullscreen overlays. Keeping this on `html` also scales Radix
+     portals mounted under `body`. Desktop only so phone text remains readable. */
   html {
-    zoom: var(--app-scale);
+    font-size: calc(1rem * var(--app-scale));
   }
 }
 

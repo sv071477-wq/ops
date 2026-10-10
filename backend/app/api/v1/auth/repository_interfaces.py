@@ -48,6 +48,11 @@ class IUserRepository(ABC):
         pass
 
     @abstractmethod
+    def list_by_team_name(self, team_name: str) -> List[User]:
+        """Active users belonging to the named team."""
+        pass
+
+    @abstractmethod
     def list_by_ids(self, user_ids: List[UUID]) -> List[User]:
         pass
 
@@ -155,4 +160,9 @@ class IUserRepository(ABC):
         details: Optional[str] = None,
     ) -> None:
         """Persist an audit entry; never raises, so audit issues cannot break a request."""
+        pass
+
+    @abstractmethod
+    def get_audit_logs(self, skip: int = 0, limit: int = 100) -> List[AuditLog]:
+        """Retrieve audit logs with pagination, ordered by creation date descending."""
         pass

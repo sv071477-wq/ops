@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Search, Users } from "lucide-react";
+import { Search, Users } from "lucide-react";
 import { TrainingSession } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/dateUtils";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -15,9 +15,7 @@ import {
   TableCaption,
   TableFilters,
   TableStateRow,
-  TABLE_CONTROL_HEIGHT,
   TABLE_CONTROL_STYLE,
-  TABLE_LABEL_SLOT_STYLE,
 } from "@/components/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,13 +46,11 @@ import type { CsvColumn } from "@/lib/csv";
 const FEEDBACK_FILTER_ID = "faculty-utilization-feedback-filter";
 const START_DATE_FILTER_ID = "faculty-utilization-start-date";
 const END_DATE_FILTER_ID = "faculty-utilization-end-date";
-const MORE_FILTERS_ID = "faculty-utilization-more-filters";
-const MORE_FILTERS_PANEL_ID = "faculty-utilization-more-filters-panel";
 
-// Bumped to v2 with the 12-column default. A stored layout deliberately wins
+// Bumped to v3 with the compact six-column default. A stored layout deliberately wins
 // over `DEFAULT_HIDDEN`, so without a new key anyone who has opened this view
-// keeps the old 15-column layout and never sees the fix.
-const COLUMN_STORAGE_KEY = "ops.table.faculty-utilization.columns.v2";
+// keeps the wider layout and never sees the fix.
+const COLUMN_STORAGE_KEY = "ops.table.faculty-utilization.columns.v3";
 const PAGE_SIZE_STORAGE_KEY = "ops.table.faculty-utilization.pageSize";
 const DEFAULT_PAGE_SIZE = 15;
 
@@ -68,95 +64,6 @@ const TD_STYLE: React.CSSProperties = {
 };
 
 const MONO_STYLE: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: "0.75rem" };
-
-/**
- * Label-over-control pair for the expanded filter row. Same tokens as
- * `TableFilters` so the secondary filters sit on the primary row's grid rather
- * than reading as a second, differently-built toolbar.
- */
-function FilterField({
-  label,
-  htmlFor,
-  width,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  width: number | string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, width, minWidth: 0 }}>
-      <label htmlFor={htmlFor} style={TABLE_LABEL_SLOT_STYLE}>
-        {label}
-      </label>
-      <div style={{ display: "flex", alignItems: "center", minHeight: TABLE_CONTROL_HEIGHT }}>{children}</div>
-    </div>
-  );
-}
-
-/**
- * Bordered panel that holds the filters too many to keep on the primary
- * toolbar row. Rendered only while the toggle is open, so the collapsed state is
- * a plain button rather than an empty bordered box.
- */
-const EXPANDED_FILTERS_STYLE: React.CSSProperties = {
-  flex: "1 1 100%",
-  minWidth: 0,
-  marginTop: 2,
-  padding: "12px 14px 14px",
-  border: "1px solid var(--border-subtle)",
-  borderRadius: 10,
-  background: "var(--color-background)",
-};
-
-const EXPANDED_FILTERS_GRID_STYLE: React.CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "flex-end",
-  gap: "10px 10px",
-};
-
-/**
- * `TableFilters` hands its `children` slot a plain non-wrapping flex row, so two
- * children would sit side by side. This wrapper wraps instead, and the toggle
- * claims a full basis so the button takes its own line above the panel rather
- * than sharing one.
- */
-const MORE_FILTERS_WRAP_STYLE: React.CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "flex-start",
-  gap: "8px 10px",
-  width: "100%",
-  minWidth: 0,
-};
-
-const MORE_FILTERS_TOGGLE_STYLE: React.CSSProperties = {
-  flexBasis: "100%",
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  width: "fit-content",
-  height: TABLE_CONTROL_HEIGHT,
-  padding: "0 12px",
-  borderRadius: 6,
-  border: "1px solid var(--color-input)",
-  fontSize: "0.8rem",
-  fontWeight: 700,
-  cursor: "pointer",
-};
-
-const MORE_FILTERS_BADGE_STYLE: React.CSSProperties = {
-  minWidth: 18,
-  padding: "0 5px",
-  borderRadius: 999,
-  background: "var(--color-primary)",
-  color: "var(--color-card)",
-  fontSize: "0.7rem",
-  lineHeight: "18px",
-  textAlign: "center",
-};
 
 const ELLIPSIS_STYLE: React.CSSProperties = {
   whiteSpace: "nowrap",
@@ -186,9 +93,9 @@ type UtilizationColumn = TableColumnDef<TrainingSession, ColumnKey> & { minWidth
  * Order is the order a reader scans a delivery ledger: when, who, which batch,
  * what, how long, how it went, and only then the batch attributes. It also
  * decides which column the sticky first-column slot is spent on, so the
- * highest-value anchor (the training date) has to lead. The 12 default-visible
- * columns come first and the plumbing that `DEFAULT_HIDDEN` switches off
- * follows.
+ * highest-value anchor (the training date) has to lead. The six primary
+ * columns come first and the optional details that `DEFAULT_HIDDEN` switches
+ * off follow.
  */
 const UTILIZATION_COLUMN_DEFS = [
   { key: "dateOfTraining", label: "Date of Training", accessor: (row: TrainingSession) => row.date_of_training || "", minWidth: 150 },
@@ -313,10 +220,16 @@ const UTILIZATION_DESC_FIRST_KEYS = ["dateOfTraining", "createdAt"] as const;
  * Raw database ids, audit stamps, the outcome trail and the two columns no
  * seeder ever populates (`vertical`, `faculty_type_name`) are one click away
  * rather than shipped visible: a column that renders an em-dash in every row
- * costs horizontal space and says nothing. 12 columns ship visible, which is
- * also what keeps the table inside a wide screen's width.
+ * costs horizontal space and says nothing. The six primary columns ship
+ * visible so the ledger stays readable without forcing horizontal scrolling.
  */
 const DEFAULT_HIDDEN: readonly ColumnKey[] = [
+  "modeOfDelivery",
+  "feedbackRating",
+  "client",
+  "category",
+  "coordinator",
+  "locationCity",
   "venue",
   "moduleFeedback",
   "facultyTypeName",
@@ -598,7 +511,6 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
   const [feedbackFilter, setFeedbackFilter] = useState(ALL_FILTER_VALUE);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
 
   const columns = useColumnVisibility<ColumnKey>({
     columns: UTILIZATION_COLUMN_KEYS,
@@ -632,20 +544,6 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
   const bespokeFilterCount = (feedbackFilter ? 1 : 0) + (startDate ? 1 : 0) + (endDate ? 1 : 0);
   const filtersActive = hasActiveFilters || bespokeFilterCount > 0;
   const totalFilterCount = activeFilterCount + bespokeFilterCount;
-
-  // Same rule as `TableFilters`: a dropdown with no options can only ever offer
-  // its own "All X" placeholder, so it is dead UI rather than a filter. Computed
-  // here because this panel is built locally instead of through `TableFilters`.
-  const populatedSecondaryFilters = SECONDARY_FILTERS.filter(
-    (filter) => optionsFor(filter.key).length > 0
-  );
-
-  // Filters sitting inside the collapsed panel still narrow the rows, so the
-  // toggle has to advertise them. Without this a selection can be applied and
-  // then invisible, which reads as the table ignoring the filter.
-  const hiddenFilterCount =
-    populatedSecondaryFilters.filter((filter) => getFilter(filter.key) !== ALL_FILTER_VALUE).length +
-    bespokeFilterCount;
 
   const clearAllFilters = () => {
     clearFilters();
@@ -690,7 +588,6 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
             }
           />
         }
-        titleStyle={{ whiteSpace: "normal" }}
         toolbar={
           <TableFilters
             search={{
@@ -699,7 +596,7 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
               placeholder: "Search faculty, topic, venue, city, batch...",
               width: 280,
             }}
-            selects={PRIMARY_FILTERS.map((filter) => ({
+            selects={[...PRIMARY_FILTERS, ...SECONDARY_FILTERS].map((filter) => ({
               key: filter.key,
               label: filter.label,
               value: getFilter(filter.key),
@@ -718,98 +615,68 @@ export function FacultyUtilizationView({ data, isLoading, error, onRefresh }: Fa
             onClear={clearAllFilters}
             hasActiveFilters={filtersActive}
             activeFilterCount={totalFilterCount}
-          >
-            <div style={MORE_FILTERS_WRAP_STYLE}>
-              <button
-                type="button"
-                id={MORE_FILTERS_ID}
-                onClick={() => setMoreFiltersOpen((open) => !open)}
-                aria-expanded={moreFiltersOpen}
-                aria-controls={MORE_FILTERS_PANEL_ID}
-                style={{
-                  ...MORE_FILTERS_TOGGLE_STYLE,
-                  background: hiddenFilterCount > 0 ? "var(--color-muted)" : "var(--color-card)",
-                  color: hiddenFilterCount > 0 ? "var(--color-primary)" : "var(--text-main)",
-                }}
-              >
-                <span>More filters</span>
-                {hiddenFilterCount > 0 && <span style={MORE_FILTERS_BADGE_STYLE}>{hiddenFilterCount}</span>}
-                {moreFiltersOpen ? (
-                  <ChevronUp size={15} aria-hidden="true" />
-                ) : (
-                  <ChevronDown size={15} aria-hidden="true" />
-                )}
-              </button>
-
-              {moreFiltersOpen && (
-                <div id={MORE_FILTERS_PANEL_ID} style={EXPANDED_FILTERS_STYLE}>
-                  <div style={EXPANDED_FILTERS_GRID_STYLE}>
-                    {populatedSecondaryFilters.map((filter) => (
-                      <FilterField
-                        key={filter.key}
-                        label={filter.label}
-                        htmlFor={`${MORE_FILTERS_PANEL_ID}-${filter.key}`}
-                        width={filter.width}
-                      >
-                        <select
-                          id={`${MORE_FILTERS_PANEL_ID}-${filter.key}`}
-                          value={getFilter(filter.key)}
-                          onChange={(event) => setFilter(filter.key, event.target.value)}
-                          className="glass-input"
-                          style={TABLE_CONTROL_STYLE}
-                        >
-                          <option value={ALL_FILTER_VALUE}>{filter.allLabel}</option>
-                          {optionsFor(filter.key).map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      </FilterField>
-                    ))}
-
-                    <FilterField label="Feedback" htmlFor={FEEDBACK_FILTER_ID} width={165}>
-                      <select
-                        id={FEEDBACK_FILTER_ID}
-                        value={feedbackFilter}
-                        onChange={(event) => setFeedbackFilter(event.target.value)}
-                        className="glass-input"
-                        style={TABLE_CONTROL_STYLE}
-                      >
-                        <option value={ALL_FILTER_VALUE}>All feedback</option>
-                        <option value="SUBMITTED">Feedback submitted</option>
-                        <option value="PENDING">Feedback pending</option>
-                      </select>
-                    </FilterField>
-
-                    <FilterField label="Date From" htmlFor={START_DATE_FILTER_ID} width={160}>
-                      <input
-                        id={START_DATE_FILTER_ID}
-                        type="date"
-                        value={startDate}
-                        onChange={(event) => setStartDate(event.target.value)}
-                        className="glass-input"
-                        title="Training date from"
-                        style={TABLE_CONTROL_STYLE}
-                      />
-                    </FilterField>
-
-                    <FilterField label="Date To" htmlFor={END_DATE_FILTER_ID} width={160}>
-                      <input
-                        id={END_DATE_FILTER_ID}
-                        type="date"
-                        value={endDate}
-                        onChange={(event) => setEndDate(event.target.value)}
-                        className="glass-input"
-                        title="Training date to"
-                        style={TABLE_CONTROL_STYLE}
-                      />
-                    </FilterField>
-                  </div>
-                </div>
-              )}
-            </div>
-          </TableFilters>
+            bespoke={[
+              {
+                key: "feedback",
+                label: "Feedback",
+                htmlFor: FEEDBACK_FILTER_ID,
+                width: 165,
+                chipValue: feedbackFilter === "SUBMITTED" ? "Submitted" : feedbackFilter === "PENDING" ? "Pending" : null,
+                onClear: () => setFeedbackFilter(ALL_FILTER_VALUE),
+                content: (
+                  <select
+                    id={FEEDBACK_FILTER_ID}
+                    value={feedbackFilter}
+                    onChange={(event) => setFeedbackFilter(event.target.value)}
+                    className="glass-input"
+                    style={TABLE_CONTROL_STYLE}
+                  >
+                    <option value={ALL_FILTER_VALUE}>All feedback</option>
+                    <option value="SUBMITTED">Feedback submitted</option>
+                    <option value="PENDING">Feedback pending</option>
+                  </select>
+                ),
+              },
+              {
+                key: "startDate",
+                label: "Date From",
+                htmlFor: START_DATE_FILTER_ID,
+                width: 160,
+                chipValue: startDate || null,
+                onClear: () => setStartDate(""),
+                content: (
+                  <input
+                    id={START_DATE_FILTER_ID}
+                    type="date"
+                    value={startDate}
+                    onChange={(event) => setStartDate(event.target.value)}
+                    className="glass-input"
+                    title="Training date from"
+                    style={TABLE_CONTROL_STYLE}
+                  />
+                ),
+              },
+              {
+                key: "endDate",
+                label: "Date To",
+                htmlFor: END_DATE_FILTER_ID,
+                width: 160,
+                chipValue: endDate || null,
+                onClear: () => setEndDate(""),
+                content: (
+                  <input
+                    id={END_DATE_FILTER_ID}
+                    type="date"
+                    value={endDate}
+                    onChange={(event) => setEndDate(event.target.value)}
+                    className="glass-input"
+                    title="Training date to"
+                    style={TABLE_CONTROL_STYLE}
+                  />
+                ),
+              },
+            ]}
+          />
         }
         actions={
           <>

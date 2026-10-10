@@ -1,4 +1,4 @@
-from typing import List, Any
+from typing import List, Any, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from app.models.user import User
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token, TokenPair,
     CoordinatorMappingCreate, CoordinatorMappingResponse, CoordinatorMappingListResponse, UserHierarchyNode,
-    ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate
+    ChangePasswordRequest, AdminResetPasswordRequest, AdminUserCreate, AuditLogResponse
 )
 from app.api.deps import get_current_user, require_admin, require_manager_or_admin
 from app.api.deps_services import get_auth_service
@@ -93,10 +93,11 @@ def create_user(
 @router.get("/users/assignable", response_model=List[UserResponse])
 def list_assignable_users(
     role: str = Query(..., pattern="^(Sales|Coordinator|Manager)$"),
+    team_name: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     service: AuthService = Depends(get_auth_service),
 ) -> Any:
-    return service.list_assignable_users(role)
+    return service.list_assignable_users(role, team_name=team_name)
 
 
 @router.get("/hierarchy", response_model=List[UserHierarchyNode], dependencies=[Depends(get_current_user)])
@@ -188,3 +189,13 @@ def delete_coordinator_mapping(
 ) -> Any:
     """Admin Only: Remove a coordinator-manager assignment by its mapping ID."""
     return service.delete_mapping(mapping_id)
+
+
+@router.get("/audit-logs", response_model=List[AuditLogResponse], dependencies=[Depends(require_admin)])
+def get_audit_logs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    service: AuthService = Depends(get_auth_service),
+) -> Any:
+    """Admin Only: Retrieve audit logs with pagination."""
+    return service.get_audit_logs(skip=skip, limit=limit)

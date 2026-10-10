@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { ArrowDownAZ, ArrowUpAZ, Search, X } from "lucide-react";
+import React, { useState } from "react";
+import { ArrowDownAZ, ArrowUpAZ, ListFilter, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ALL_FILTER_VALUE, type SortDir } from "@/lib/tableUtils";
 import { cn } from "@/lib/utils";
@@ -91,9 +91,14 @@ export interface TableFilterBespokeConfig {
   /** Id of the control rendered in `content`; omit this for a labelled group. */
   htmlFor?: string;
   content: React.ReactNode;
+  /** Non-empty values appear as removable chips below the toolbar. */
+  chipValue?: string | null;
+  onClear?: () => void;
 }
 
 export interface TableFiltersProps {
+  filtersOpen?: boolean;
+  onFiltersOpenChange?: (open: boolean) => void;
   search?: {
     value: string;
     onChange: (value: string) => void;
@@ -158,17 +163,13 @@ function Field({
 }
 
 /**
- * Toolbar row shared by every table: free-text search, per-column filter
- * dropdowns, any bespoke filter controls, and an explicit "Sort by" control
- * that mirrors the click-to-sort column headers. Controls passed as `children`
- * get their own full-width row.
- *
- * Order is search -> dropdowns -> bespoke -> sort -> clear, so every control
- * that narrows the rows sits together on the left and the view-shaping controls
- * (sort, clear) trail them. Changing this reorders the filter bar on every
- * table, so it is a deliberate shared contract rather than a per-table choice.
+ * Compact shared table toolbar. Search and sorting stay immediately available;
+ * less-frequently-used filters are grouped behind one disclosure and active
+ * criteria are shown as removable chips.
  */
 export function TableFilters({
+  filtersOpen: controlledFiltersOpen,
+  onFiltersOpenChange,
   search,
   selects,
   sort,
@@ -180,9 +181,16 @@ export function TableFilters({
   style,
   children,
 }: TableFiltersProps) {
+  const [uncontrolledFiltersOpen, setUncontrolledFiltersOpen] = useState(false);
+  const filtersOpen = controlledFiltersOpen ?? uncontrolledFiltersOpen;
+  const setFiltersOpen = (open: boolean) => {
+    if (controlledFiltersOpen === undefined) setUncontrolledFiltersOpen(open);
+    onFiltersOpenChange?.(open);
+  };
   // Tables rendered on the same view share filter keys, so ids must be unique
   // per instance or the labels end up wired to another table's control.
   const instanceId = React.useId();
+  const filtersId = `${instanceId}-filters`;
 
   // A dropdown whose rows all carry a blank value derives no options, so its
   // only entry is the "All X" placeholder and choosing anything else is
@@ -190,135 +198,232 @@ export function TableFilters({
   // data yet (nothing to narrow by) or it will fill in and the dropdown returns
   // on the next render. Dropping it here keeps that decision out of every table.
   const populatedSelects = (selects ?? []).filter((select) => select.options.length > 0);
+  const activeChips = [
+    ...(search?.value.trim()
+      ? [{
+          key: "search",
+          label: search.label ?? "Search",
+          value: search.value.trim(),
+          onClear: () => search.onChange(""),
+        }]
+      : []),
+    ...populatedSelects
+      .filter((select) => select.value && select.value !== ALL_FILTER_VALUE)
+      .map((select) => ({
+        key: select.key,
+        label: select.label,
+        value: select.value,
+        onClear: () => select.onChange(ALL_FILTER_VALUE),
+      })),
+    ...(bespoke ?? [])
+      .filter((entry) => entry.chipValue?.trim() && entry.onClear)
+      .map((entry) => ({
+        key: entry.key,
+        label: entry.label ?? entry.key,
+        value: entry.chipValue!.trim(),
+        onClear: entry.onClear!,
+      })),
+  ];
+  const displayedActiveCount = activeFilterCount ?? activeChips.length;
 
   return (
     <div
-      className={cn("flex flex-wrap items-end", className)}
-      style={{ flex: "1 1 auto", minWidth: 0, gap: "10px 10px", ...style }}
+      className={cn(className)}
+      style={{ display: "flex", flex: "1 1 auto", flexDirection: "column", minWidth: 0, gap: 10, ...style }}
     >
-      {search && (
-        <Field
-          label={search.label ?? "Search"}
-          htmlFor={`${instanceId}-search`}
-          width={search.width ?? 250}
-        >
-          <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
-            <Search
-              size={14}
-              aria-hidden="true"
-              style={{ position: "absolute", left: 9, color: "var(--text-muted)", pointerEvents: "none" }}
-            />
-            <input
-              id={`${instanceId}-search`}
-              type="search"
-              value={search.value}
-              onChange={(event) => search.onChange(event.target.value)}
-              placeholder={search.placeholder ?? "Search..."}
-              className="glass-input"
-              style={{ ...CONTROL_STYLE, paddingLeft: 28, paddingRight: 26 }}
-            />
-          </div>
-        </Field>
-      )}
-
-      {populatedSelects.map((select) => {
-        const selectId = `${instanceId}-filter-${select.key}`;
-        return (
-          <Field key={select.key} label={select.label} htmlFor={selectId} width={select.width ?? 150}>
-            <select
-              id={selectId}
-              value={select.value || ALL_FILTER_VALUE}
-              onChange={(event) => select.onChange(event.target.value)}
-              style={CONTROL_STYLE}
-            >
-              <option value={ALL_FILTER_VALUE}>{select.allLabel ?? `All ${select.label.toLowerCase()}`}</option>
-              {select.options.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </Field>
-        );
-      })}
-
-      {bespoke?.map((entry) => (
-        <Field
-          key={entry.key}
-          label={entry.label}
-          htmlFor={entry.htmlFor}
-          width={entry.width}
-        >
-          {entry.content}
-        </Field>
-      ))}
-
-      {sort && (
-        <Field label="Sort by" htmlFor={`${instanceId}-sort`} width={sort.width ?? 200}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
-            <select
-              id={`${instanceId}-sort`}
-              value={sort.sortKey ?? ALL_FILTER_VALUE}
-              onChange={(event) => {
-                const nextKey = event.target.value || null;
-                sort.onChange(nextKey, nextKey === sort.sortKey ? nextDirection(sort.sortDir) : undefined);
-              }}
-              style={{ ...CONTROL_STYLE, flex: 1, minWidth: 0 }}
-            >
-              <option value={ALL_FILTER_VALUE}>Unsorted</option>
-              {sort.options.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => sort.onChange(sort.sortKey, nextDirection(sort.sortDir))}
-              disabled={!sort.sortKey}
-              title={
-                sort.sortDir === "desc"
-                  ? "Sorted descending — click for ascending"
-                  : "Sorted ascending — click for descending"
-              }
-              aria-label={sort.sortDir === "desc" ? "Sort ascending" : "Sort descending"}
-              style={{
-                ...CONTROL_STYLE,
-                flexShrink: 0,
-                width: CONTROL_HEIGHT,
-                padding: 0,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "var(--color-card)",
-                color: sort.sortKey ? "var(--color-primary)" : "var(--text-muted)",
-                cursor: sort.sortKey ? "pointer" : "not-allowed",
-              }}
-            >
-              {sort.sortDir === "desc" ? (
-                <ArrowDownAZ size={15} aria-hidden="true" />
-              ) : (
-                <ArrowUpAZ size={15} aria-hidden="true" />
-              )}
-            </button>
-          </div>
-        </Field>
-      )}
-
-      {onClear && hasActiveFilters && (
-        <Field width="auto">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onClear}
-            title="Clear all search and filter selections"
-            aria-label="Clear all filters"
-            className="whitespace-nowrap"
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "10px 10px", minWidth: 0 }}>
+        {search && (
+          <Field
+            label={search.label ?? "Search"}
+            htmlFor={`${instanceId}-search`}
+            width={search.width ?? 250}
           >
-            <span>Clear{activeFilterCount ? ` (${activeFilterCount})` : ""}</span>
-            <X className="h-4 w-4" aria-hidden="true" />
+            <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
+              <Search
+                size={14}
+                aria-hidden="true"
+                style={{ position: "absolute", left: 9, color: "var(--text-muted)", pointerEvents: "none" }}
+              />
+              <input
+                id={`${instanceId}-search`}
+                type="search"
+                value={search.value}
+                onChange={(event) => search.onChange(event.target.value)}
+                placeholder={search.placeholder ?? "Search..."}
+                className="glass-input"
+                style={{ ...CONTROL_STYLE, paddingLeft: 28, paddingRight: 26 }}
+              />
+            </div>
+          </Field>
+        )}
+
+        <Field label="Filters" width="auto">
+          <Button
+            variant={filtersOpen ? "secondary" : "outline"}
+            size="sm"
+            className="h-9 whitespace-nowrap"
+            aria-label={
+              displayedActiveCount > 0
+                ? `Filters, ${displayedActiveCount} active filter${displayedActiveCount === 1 ? "" : "s"}`
+                : "Filters"
+            }
+            aria-expanded={filtersOpen}
+            aria-controls={filtersOpen ? filtersId : undefined}
+            onClick={() => setFiltersOpen(!filtersOpen)}
+          >
+            <ListFilter className="h-4 w-4" aria-hidden="true" />
+            <span>Filters</span>
+            {displayedActiveCount > 0 && (
+              <span className="rounded-full bg-primary/10 px-1.5 text-[0.7rem] font-bold text-primary">
+                {displayedActiveCount}
+              </span>
+            )}
           </Button>
         </Field>
+
+        {sort && (
+          <Field
+            label="Sort"
+            htmlFor={`${instanceId}-sort`}
+            width={typeof sort.width === "number" ? Math.min(sort.width, 210) : sort.width ?? 190}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
+              <select
+                id={`${instanceId}-sort`}
+                aria-label="Sort by"
+                value={sort.sortKey ?? ALL_FILTER_VALUE}
+                onChange={(event) => {
+                  const nextKey = event.target.value || null;
+                  sort.onChange(nextKey, nextKey === sort.sortKey ? nextDirection(sort.sortDir) : undefined);
+                }}
+                style={{ ...CONTROL_STYLE, flex: 1, minWidth: 0 }}
+              >
+                <option value={ALL_FILTER_VALUE}>Unsorted</option>
+                {sort.options.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => sort.onChange(sort.sortKey, nextDirection(sort.sortDir))}
+                disabled={!sort.sortKey}
+                title={
+                  sort.sortDir === "desc"
+                    ? "Sorted descending — click for ascending"
+                    : "Sorted ascending — click for descending"
+                }
+                aria-label={sort.sortDir === "desc" ? "Sort ascending" : "Sort descending"}
+                style={{
+                  ...CONTROL_STYLE,
+                  flexShrink: 0,
+                  width: CONTROL_HEIGHT,
+                  padding: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "var(--color-card)",
+                  color: sort.sortKey ? "var(--color-primary)" : "var(--text-muted)",
+                  cursor: sort.sortKey ? "pointer" : "not-allowed",
+                }}
+              >
+                {sort.sortDir === "desc" ? (
+                  <ArrowDownAZ size={15} aria-hidden="true" />
+                ) : (
+                  <ArrowUpAZ size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </Field>
+        )}
+      </div>
+
+      {filtersOpen && (
+        <div
+          id={filtersId}
+          role="region"
+          aria-label="Table filters"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+            gap: "10px 10px",
+            minWidth: 0,
+            padding: "12px",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: 10,
+            background: "var(--color-background)",
+          }}
+        >
+          {populatedSelects.map((select) => {
+            const selectId = `${instanceId}-filter-${select.key}`;
+            return (
+              <Field key={select.key} label={select.label} htmlFor={selectId} width={select.width ?? 150}>
+                <select
+                  id={selectId}
+                  value={select.value || ALL_FILTER_VALUE}
+                  onChange={(event) => select.onChange(event.target.value)}
+                  style={CONTROL_STYLE}
+                >
+                  <option value={ALL_FILTER_VALUE}>{select.allLabel ?? `All ${select.label.toLowerCase()}`}</option>
+                  {select.options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            );
+          })}
+
+          {bespoke?.map((entry) => (
+            <Field key={entry.key} label={entry.label} htmlFor={entry.htmlFor} width={entry.width}>
+              {entry.content}
+            </Field>
+          ))}
+        </div>
+      )}
+
+      {activeChips.length > 0 && (
+        <div
+          aria-label="Active filters"
+          style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, minWidth: 0 }}
+        >
+          {activeChips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={chip.onClear}
+              aria-label={`Remove ${chip.label} filter`}
+              title={`Remove ${chip.label} filter`}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-primary/10"
+            >
+              <span className="text-muted-foreground">{chip.label}:</span>
+              <span className="max-w-48 truncate">{chip.value}</span>
+              <X className="h-3 w-3 shrink-0" aria-hidden="true" />
+            </button>
+          ))}
+          {onClear && hasActiveFilters && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="px-1.5 py-1 text-xs font-semibold text-primary hover:underline"
+            >
+              Clear all{displayedActiveCount > 0 ? ` (${displayedActiveCount})` : ""}
+            </button>
+          )}
+        </div>
+      )}
+
+      {activeChips.length === 0 && onClear && hasActiveFilters && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="w-fit px-1.5 py-1 text-xs font-semibold text-primary hover:underline"
+        >
+          Clear all{displayedActiveCount > 0 ? ` (${displayedActiveCount})` : ""}
+        </button>
       )}
 
       {children && (

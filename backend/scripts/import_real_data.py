@@ -559,7 +559,7 @@ def main():
             city = clean_str(row[15]) if len(row) > 15 else b.location_city or "Bengaluru"
             mode_s = clean_str(row[16]) if len(row) > 16 else b.delivery_mode or "Online"
 
-            sess_stat = "Completed" if dt.date() < now_utc.date() else "InProgress" if dt.date() == now_utc.date() else "Scheduled"
+            sess_stat = "Completed" if dt.date() <= now_utc.date() else "Scheduled"
 
             # Check if utilization record exists for this batch, date, and faculty
             exists_util = db.query(FacultyUtilization).filter(

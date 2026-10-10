@@ -2,6 +2,7 @@ from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
@@ -30,6 +31,16 @@ class ScheduleRepository(IScheduleRepository):
             TrainingSession.module.ilike(module),
         ).first()
 
+    def list_scheduled_sessions_for_batch(self, batch_id: UUID) -> List[TrainingSession]:
+        return self.db.query(TrainingSession).filter(
+            TrainingSession.batch_id == batch_id
+        ).all()
+
+    def get_scheduled_session_count(self, batch_id: UUID) -> int:
+        return self.db.query(func.count(func.distinct(TrainingSession.session_date))).filter(
+            TrainingSession.batch_id == batch_id
+        ).scalar() or 0
+
     def persist_sessions(self, sessions: List[TrainingSession]) -> List[TrainingSession]:
         for session in sessions:
             self.db.add(session)
@@ -40,3 +51,6 @@ class ScheduleRepository(IScheduleRepository):
 
     def rollback(self) -> None:
         self.db.rollback()
+
+    def commit(self) -> None:
+        self.db.commit()

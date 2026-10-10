@@ -84,6 +84,42 @@ function renderView(props: Partial<React.ComponentProps<typeof ActiveBatchesView
   return { onFilterDateChange, onRefresh };
 }
 
+function mockNativeFullscreen(panel: HTMLElement) {
+  const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+  const originalExitFullscreen = Object.getOwnPropertyDescriptor(document, "exitFullscreen");
+  const originalRequestFullscreen = Object.getOwnPropertyDescriptor(panel, "requestFullscreen");
+  const setFullscreenElement = (element: Element | null) => {
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: element });
+    document.dispatchEvent(new Event("fullscreenchange"));
+  };
+
+  Object.defineProperty(panel, "requestFullscreen", {
+    configurable: true,
+    value: vi.fn(() => {
+      setFullscreenElement(panel);
+      return Promise.resolve();
+    }),
+  });
+  Object.defineProperty(document, "exitFullscreen", {
+    configurable: true,
+    value: vi.fn(() => {
+      setFullscreenElement(null);
+      return Promise.resolve();
+    }),
+  });
+
+  return () => {
+    for (const [target, key, descriptor] of [
+      [document, "fullscreenElement", originalFullscreenElement],
+      [document, "exitFullscreen", originalExitFullscreen],
+      [panel, "requestFullscreen", originalRequestFullscreen],
+    ] as const) {
+      if (descriptor) Object.defineProperty(target, key, descriptor);
+      else Reflect.deleteProperty(target, key);
+    }
+  };
+}
+
 /** StatCard renders label, value and hint as siblings, so the value is the
  *  middle child of the label's parent. The batch table heading repeats some
  *  card labels, hence the multi-match fallback to the first (card) hit. */
@@ -165,6 +201,8 @@ describe("ActiveBatchesView header controls", () => {
     expect(screen.getAllByRole("button", { name: /Refresh/i }).length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByRole("button", { name: /Columns/i })).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: /Export/i })).toHaveLength(2);
+    expect(screen.queryByText(/^\d+ scheduled$/)).toBeNull();
+    expect(screen.queryByText(/^\d+ actual$/)).toBeNull();
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
@@ -278,6 +316,78 @@ describe("ActiveBatchesView column visibility", () => {
     await user.click(screen.getByRole("button", { name: /Show all columns/ }));
     expect(screen.getByRole("columnheader", { name: /Enrollments/ })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: /Sessions Conducted/ })).toBeTruthy();
+  });
+
+  it("keeps the ongoing sessions table controls working in fullscreen", async () => {
+    const user = userEvent.setup();
+    renderView({
+      data: makeResponse({
+        sessions: [
+          makeSession({ id: "s-1", sequence_number: 4, session_type: "scheduled" }),
+          makeSession({ id: "s-2", sequence_number: 2, session_type: "actual", module: "Advanced Python" }),
+        ],
+      }),
+    });
+
+    const [, sessionFullscreenButton] = screen.getAllByRole("button", { name: /Full Screen/ });
+    const sessionPanel = sessionFullscreenButton.closest("[data-fullscreen]");
+    expect(sessionPanel).toHaveAttribute("data-fullscreen", "false");
+    const restoreFullscreenApi = mockNativeFullscreen(sessionPanel as HTMLElement);
+
+    try {
+      const [, sessionFiltersButton] = screen.getAllByRole("button", { name: /^Filters/ });
+      await user.click(sessionFiltersButton);
+      expect(screen.getByLabelText("Type")).toBeTruthy();
+
+      await user.click(sessionFullscreenButton);
+      const fullscreenPanel = document.body.querySelector('[data-fullscreen="true"]');
+      expect(fullscreenPanel).toBe(sessionPanel);
+      expect(document.fullscreenElement).toBe(sessionPanel);
+      expect((fullscreenPanel as HTMLElement).style.position).toBe("fixed");
+      expect((fullscreenPanel as HTMLElement).style.width).toBe("100vw");
+      expect((fullscreenPanel as HTMLElement).style.height).toBe("100dvh");
+      expect((fullscreenPanel as HTMLElement).style.zIndex).toBe("1000");
+
+      expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
+      expect(screen.getByLabelText("Type")).toBeTruthy();
+
+      const [, sessionSort] = screen.getAllByLabelText("Sort by") as unknown as HTMLSelectElement[];
+      await user.selectOptions(sessionSort, "sequence");
+      const sessionTable = fullscreenPanel?.querySelector("table");
+      const sequenceColumn = Array.from(sessionTable?.querySelectorAll("thead th") ?? []).findIndex(
+        (header) => header.textContent === "Sequence"
+      );
+      const sequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
+        (row) => row.children[sequenceColumn]?.textContent?.trim()
+      );
+      expect(sequenceValues).toEqual(["4", "2"]);
+      await user.click(screen.getByRole("button", { name: "Sort ascending" }));
+      const ascendingSequenceValues = Array.from(sessionTable?.querySelectorAll("tbody tr") ?? []).map(
+        (row) => row.children[sequenceColumn]?.textContent?.trim()
+      );
+      expect(ascendingSequenceValues).toEqual(["2", "4"]);
+
+      await user.selectOptions(screen.getByLabelText("Type"), "scheduled");
+      expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
+      expect(screen.queryByRole("cell", { name: "2" })).toBeNull();
+
+      const [, sessionColumnsButton] = screen.getAllByRole("button", { name: /Columns/ });
+      await user.click(sessionColumnsButton);
+      await user.click(screen.getByRole("checkbox", { name: "Sequence" }));
+
+      expect(screen.queryByRole("columnheader", { name: "Sequence" })).toBeNull();
+      expect(screen.queryByRole("cell", { name: "4" })).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: /Show all columns/ }));
+      expect(screen.getByRole("columnheader", { name: "Sequence" })).toBeTruthy();
+      expect(screen.getByRole("cell", { name: "4" })).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: /Exit Full Screen/ }));
+      expect(document.fullscreenElement).toBeNull();
+      expect(document.querySelector('[data-fullscreen="false"]')).not.toBeNull();
+    } finally {
+      restoreFullscreenApi();
+    }
   });
 });
 

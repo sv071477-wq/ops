@@ -10,7 +10,7 @@ from app.core.security import (
 )
 from app.core.config import settings
 from app.core.email import generate_random_password, email_service
-from app.models.user import User, UserManagerMapping, AuditEventType
+from app.models.user import User, UserManagerMapping, AuditEventType, AuditLog
 from app.schemas.user import (
     CoordinatorMappingCreate, UserCreate, UserLogin, UserResponse, UserHierarchyNode, UserUpdate,
     ChangePasswordRequest, AdminResetPasswordRequest, TokenPair, AdminUserCreate
@@ -379,8 +379,10 @@ class AuthService:
         """Active users reporting directly to the given user."""
         return [self._enrich_user(u) for u in self.user_repo.list_direct_reports(current_user.id)]
 
-    def list_assignable_users(self, role: str) -> List[User]:
-        """Active users holding the given system role, for owner pickers."""
+    def list_assignable_users(self, role: str, team_name: Optional[str] = None) -> List[User]:
+        """Active users holding the given system role or belonging to the given team, for owner pickers."""
+        if team_name:
+            return self.user_repo.list_by_team_name(team_name)
         return self.user_repo.list_by_role(role)
 
     def get_user_profile(self, user_id: UUID) -> UserResponse:
@@ -472,3 +474,7 @@ class AuthService:
             raise HTTPException(status_code=404, detail="Mapping not found")
         self.user_repo.delete_mapping(mapping)
         return {"detail": "Coordinator-manager mapping removed successfully"}
+
+    def get_audit_logs(self, skip: int = 0, limit: int = 100) -> List[AuditLog]:
+        """Admin Only: Retrieve audit logs with pagination."""
+        return self.user_repo.get_audit_logs(skip=skip, limit=limit)

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, Layers, Clock, Search, Timer, Users, RefreshCw, Star, TrendingUp } from "lucide-react";
 import { ActiveBatchItem, ActiveBatchesResponse, ActiveSessionItem } from "@/lib/api";
 import { formatDate } from "@/lib/dateUtils";
@@ -144,7 +144,7 @@ const BATCH_COLUMN_DEFS = [
   },
 ] as const satisfies readonly TableColumnDef<ActiveBatchItem>[];
 
-type BatchColumnKey = (typeof BATCH_COLUMN_DEFS)[number]["key"];
+type BatchColumnKey = (typeof BATCH_COLUMN_DEFS)[number]["key"] | (typeof EXTRA_BATCH_DEFS)[number]["key"];
 
 // "Program" has no column of its own but stays sortable; "Category" and
 // "Location" stay sortable and filterable on top of that.
@@ -161,10 +161,10 @@ const BATCH_FILTER_FIELDS = buildFilterFields(BATCH_ALL_DEFS);
 const BATCH_SEARCH_ACCESSOR = buildSearchAccessor(BATCH_COLUMN_DEFS);
 const BATCH_DESC_FIRST_KEYS = ["startDate", "endDate", "progress", "enrollments", "sessionsConducted"];
 
-const BATCH_COLUMN_KEYS: readonly { key: BatchColumnKey; label: string }[] = BATCH_COLUMN_DEFS.map((column) => ({
-  key: column.key,
-  label: column.label,
-}));
+const BATCH_COLUMN_KEYS: readonly { key: BatchColumnKey; label: string }[] = [
+  ...BATCH_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label })),
+  ...EXTRA_BATCH_DEFS.map((column) => ({ key: column.key as BatchColumnKey, label: column.label })),
+];
 
 const BATCH_EXPORT_COLUMNS: readonly CsvColumn<ActiveBatchItem>[] = [
   { key: "batch_id", label: "Batch ID" },
@@ -225,7 +225,7 @@ const SESSION_COLUMN_DEFS = [
   },
 ] as const satisfies readonly TableColumnDef<ActiveSessionItem>[];
 
-type SessionColumnKey = (typeof SESSION_COLUMN_DEFS)[number]["key"];
+type SessionColumnKey = (typeof SESSION_COLUMN_DEFS)[number]["key"] | (typeof EXTRA_SESSION_DEFS)[number]["key"];
 
 // "Sequence", "Duration" and "Location" are all sortable, and "Location" is
 // filterable, without any of them being a column.
@@ -242,9 +242,10 @@ const SESSION_FILTER_FIELDS = buildFilterFields(SESSION_ALL_DEFS);
 const SESSION_SEARCH_ACCESSOR = buildSearchAccessor(SESSION_COLUMN_DEFS);
 const SESSION_DESC_FIRST_KEYS = ["date", "startTime", "duration", "sequence"];
 
-const SESSION_COLUMN_KEYS: readonly { key: SessionColumnKey; label: string }[] = SESSION_COLUMN_DEFS.map(
-  (column) => ({ key: column.key, label: column.label })
-);
+const SESSION_COLUMN_KEYS: readonly { key: SessionColumnKey; label: string }[] = [
+  ...SESSION_COLUMN_DEFS.map((column) => ({ key: column.key, label: column.label })),
+  ...EXTRA_SESSION_DEFS.map((column) => ({ key: column.key as SessionColumnKey, label: column.label })),
+];
 
 const SESSION_EXPORT_COLUMNS: readonly CsvColumn<ActiveSessionItem>[] = [
   { key: "batch_id", label: "Batch ID" },
@@ -267,8 +268,6 @@ const SESSION_EXPORT_COLUMNS: readonly CsvColumn<ActiveSessionItem>[] = [
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 // The session-type breakdown pills share one shape and differ only in tone.
-const COUNT_PILL = "whitespace-nowrap rounded-full px-2.5 py-1 text-[0.78rem] font-bold";
-
 // Body cells and headings share these metrics so the two rows line up.
 const CELL_STYLE: React.CSSProperties = { padding: "14px 16px" };
 const HEAD_STYLE: React.CSSProperties = { ...TABLE_TH_STYLE, padding: "14px 16px" };
@@ -422,6 +421,21 @@ function BatchRow({
           )}
         </td>
       )}
+      {columns.isVisible("program") && (
+        <td style={CELL_STYLE}>
+          <div style={{ color: "var(--text-main)" }}>{batch.program_name || "—"}</div>
+        </td>
+      )}
+      {columns.isVisible("category") && (
+        <td style={CELL_STYLE}>
+          <div style={{ color: "var(--text-main)" }}>{batch.category || "—"}</div>
+        </td>
+      )}
+      {columns.isVisible("location") && (
+        <td style={CELL_STYLE}>
+          <div style={{ color: "var(--text-main)" }}>{batch.location_city || "Remote"}</div>
+        </td>
+      )}
     </tr>
   );
 }
@@ -491,6 +505,21 @@ function SessionRow({
           <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 2 }}>{location || "Remote"}</div>
         </td>
       )}
+      {columns.isVisible("sequence") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
+          <div style={{ color: "var(--text-main)" }}>{session.sequence_number ?? "—"}</div>
+        </td>
+      )}
+      {columns.isVisible("duration") && (
+        <td style={{ ...CELL_STYLE, textAlign: "center" }}>
+          <div style={{ color: "var(--text-main)" }}>{session.duration_hours ? `${Number(session.duration_hours).toFixed(2)} hrs` : "—"}</div>
+        </td>
+      )}
+      {columns.isVisible("location") && (
+        <td style={CELL_STYLE}>
+          <div style={{ color: "var(--text-main)" }}>{session.location_city || session.venue || "Remote"}</div>
+        </td>
+      )}
     </tr>
   );
 }
@@ -512,6 +541,8 @@ export function ActiveBatchesView({
   onRefresh,
   onOpenBatchDetail,
 }: ActiveBatchesViewProps) {
+  const [batchesFiltersOpen, setBatchesFiltersOpen] = useState(false);
+  const [sessionsFiltersOpen, setSessionsFiltersOpen] = useState(false);
   const batches = useMemo(() => data?.batches ?? [], [data]);
   const sessions = useMemo(() => data?.sessions ?? [], [data]);
 
@@ -555,15 +586,6 @@ export function ActiveBatchesView({
   const pagedSessions = useMemo(
     () => filteredSessions.slice(sessionStart, sessionStart + sessionPageSize),
     [filteredSessions, sessionStart, sessionPageSize]
-  );
-
-  const scheduledCount = useMemo(
-    () => filteredSessions.filter((session) => session.session_type === "scheduled").length,
-    [filteredSessions]
-  );
-  const actualCount = useMemo(
-    () => filteredSessions.filter((session) => session.session_type === "actual").length,
-    [filteredSessions]
   );
 
   const totalBatches = data?.total_batches ?? 0;
@@ -680,6 +702,8 @@ export function ActiveBatchesView({
         }
         toolbar={
           <TableFilters
+            filtersOpen={batchesFiltersOpen}
+            onFiltersOpenChange={setBatchesFiltersOpen}
             search={{
               value: batchesFilters.search,
               onChange: batchesFilters.setSearch,
@@ -764,11 +788,11 @@ export function ActiveBatchesView({
           <TableCaption>Ongoing batches for the selected date, with delivery progress</TableCaption>
           <thead>
             <tr>
-              {BATCH_COLUMN_DEFS.map((column) =>
-                batchColumns.isVisible(column.key) ? (
+              {BATCH_ALL_DEFS.map((column) =>
+                batchColumns.isVisible(column.key as BatchColumnKey) ? (
                   <SortableHeaderCell
                     key={column.key}
-                    columnKey={column.key}
+                    columnKey={column.key as BatchColumnKey}
                     label={column.label}
                     style={{ ...HEAD_STYLE, textAlign: columnAlign(column) }}
                     sortKey={batchSort.sortKey}
@@ -824,6 +848,7 @@ export function ActiveBatchesView({
       </FullscreenTable>
 
       <FullscreenTable
+        nativeFullscreen
         title={
           <PanelTitle
             title="Ongoing Sessions"
@@ -838,6 +863,8 @@ export function ActiveBatchesView({
         }
         toolbar={
           <TableFilters
+            filtersOpen={sessionsFiltersOpen}
+            onFiltersOpenChange={setSessionsFiltersOpen}
             search={{
               value: sessionsFilters.search,
               onChange: sessionsFilters.setSearch,
@@ -897,12 +924,6 @@ export function ActiveBatchesView({
         }
         actions={
           <>
-            <span className={cn(COUNT_PILL, "border border-primary/20 bg-primary/10 text-primary")}>
-              {scheduledCount} scheduled
-            </span>
-            <span className={cn(COUNT_PILL, "border border-info/20 bg-info/10 text-info")}>
-              {actualCount} actual
-            </span>
             <ColumnsMenu
               columns={SESSION_COLUMN_KEYS}
               hidden={sessionColumns.hidden}
@@ -929,11 +950,11 @@ export function ActiveBatchesView({
           <TableCaption>Ongoing sessions for the selected date, with delivery details</TableCaption>
           <thead>
             <tr>
-              {SESSION_COLUMN_DEFS.map((column) =>
-                sessionColumns.isVisible(column.key) ? (
+              {SESSION_ALL_DEFS.map((column) =>
+                sessionColumns.isVisible(column.key as SessionColumnKey) ? (
                   <SortableHeaderCell
                     key={column.key}
-                    columnKey={column.key}
+                    columnKey={column.key as SessionColumnKey}
                     label={column.label}
                     style={{ ...HEAD_STYLE, textAlign: columnAlign(column) }}
                     sortKey={sessionSort.sortKey}

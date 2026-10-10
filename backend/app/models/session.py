@@ -1,19 +1,17 @@
 import uuid
 from datetime import datetime, timezone, time, date
 from decimal import Decimal
+from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, Uuid, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Time, Uuid, UniqueConstraint, Enum
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 
 
-# A delivery is finished, one way or the other, once it reaches one of these
-# statuses. Kept in one place so the batch-feedback calculation, the session
-# outcome transitions and the Gate 2 precondition cannot drift apart: they
-# previously carried three separate copies, one of which omitted
-# "Not Conducted" and so blocked the batch average forever.
-TERMINAL_UTILIZATION_STATUSES = frozenset({"Completed", "Cancelled", "Not Conducted"})
+class SessionStatus(str, PyEnum):
+    Scheduled = "Scheduled"
+    Completed = "Completed"
 
 
 class TrainingSession(Base):
@@ -34,7 +32,7 @@ class TrainingSession(Base):
     duration_hours = Column(Numeric(5, 2), nullable=False, default=Decimal("8.0"))
     module = Column(Text, nullable=False)
     trainer_name = Column(String(255), nullable=True, index=True)
-    status = Column(String(30), nullable=False, default="Scheduled", index=True)
+    status = Column(Enum(SessionStatus), default=SessionStatus.Scheduled, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -72,13 +70,10 @@ class FacultyUtilization(Base):
     venue = Column(String(255), nullable=True)
     location_city = Column(String(100), nullable=True)
     mode_of_delivery = Column(String(50), nullable=False, default="Online")
-    status = Column(String(30), nullable=False, default="Completed", index=True)
+    status = Column(Enum(SessionStatus), default=SessionStatus.Completed, nullable=False, index=True)
     feedback_submitted = Column(Boolean, nullable=False, default=False)
     feedback_rating = Column(Numeric(3, 2), nullable=True)
     feedback_notes = Column(Text, nullable=True)
-    outcome_reason = Column(Text, nullable=True)
-    outcome_at = Column(DateTime(timezone=True), nullable=True)
-    outcome_by = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     vertical = Column(String(50), nullable=True)
     program_type_id = Column(Uuid(as_uuid=True), ForeignKey("program_types.id", ondelete="SET NULL"), nullable=True, index=True)
     faculty_type_id = Column(Uuid(as_uuid=True), ForeignKey("faculty_types.id", ondelete="SET NULL"), nullable=True, index=True)

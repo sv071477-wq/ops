@@ -81,7 +81,7 @@ class IBatchRepository(ABC):
 
     @abstractmethod
     def get_conducted_session_counts(self, batch_ids: Sequence[UUID]) -> Dict[UUID, int]:
-        """Completed/InProgress utilization rows per batch."""
+        """Completed utilization rows per batch."""
         pass
 
     @abstractmethod

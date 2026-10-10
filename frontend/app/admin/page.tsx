@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import {
-  ArrowRightLeft, Briefcase, Building2, GitFork, Layers, Link2, Network, RefreshCw, Shield, Sliders,
+  ArrowRightLeft, Briefcase, Building2, FileText, GitFork, Layers, Link2, Network, RefreshCw, Shield, Sliders,
   Tag, UserCheck, Users
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,13 +22,13 @@ import { FmsTab } from "@/components/admin/tabs/FmsTab";
 import { HierarchyTab } from "@/components/admin/tabs/HierarchyTab";
 import { MappingsTab } from "@/components/admin/tabs/MappingsTab";
 import {
-  api, type BatchOption, type CoordinatorMappingRecord, type FmsSyncLog, type Role, type Team, type User,
+  api, type AuditLog, type BatchOption, type CoordinatorMappingRecord, type FmsSyncLog, type Role, type Team, type User,
   type UserHierarchyNode
 } from "@/lib/api";
 import { errorMessage, notifyError, notifySuccess } from "@/lib/notify";
 import { cn } from "@/lib/utils";
 
-type AdminTabKey = "teams" | "roles" | "options" | "users" | "fms" | "hierarchy" | "mappings";
+type AdminTabKey = "teams" | "roles" | "options" | "users" | "fms" | "hierarchy" | "mappings" | "audit-logs";
 
 interface AdminTab {
   key: AdminTabKey;
@@ -44,6 +44,7 @@ const TABS: AdminTab[] = [
   { key: "fms", label: "FMS External Sync", icon: ArrowRightLeft },
   { key: "hierarchy", label: "Hierarchy Tree", icon: GitFork },
   { key: "mappings", label: "Coordinator Mappings", icon: Link2 },
+  { key: "audit-logs", label: "Audit Logs", icon: FileText },
 ];
 
 const norm = (value?: string | null) => (value ?? "").trim().toLowerCase();
@@ -64,11 +65,13 @@ export default function AdminPortalPage() {
 
   const [fmsLogs, setFmsLogs] = useState<FmsSyncLog[]>([]);
   const [mappings, setMappings] = useState<CoordinatorMappingRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
   const [isLoadingFms, setIsLoadingFms] = useState(false);
   const [isLoadingMappings, setIsLoadingMappings] = useState(false);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
   const [isSavingApprovers, setIsSavingApprovers] = useState(false);
   const [isAssigningCoordinator, setIsAssigningCoordinator] = useState(false);
   const [isDispatchingFms, setIsDispatchingFms] = useState(false);
@@ -137,6 +140,18 @@ export default function AdminPortalPage() {
     }
   }, []);
 
+  const fetchAuditLogs = useCallback(async () => {
+    setIsLoadingAuditLogs(true);
+    try {
+      setAuditLogs(await api.getAuditLogs(0, 200));
+    } catch (error) {
+      notifyError("Failed to load audit logs", error);
+      setAuditLogs([]);
+    } finally {
+      setIsLoadingAuditLogs(false);
+    }
+  }, []);
+
   const fetchMappings = useCallback(async () => {
     setIsLoadingMappings(true);
     try {
@@ -163,7 +178,8 @@ export default function AdminPortalPage() {
     if (activeTab === "options") fetchBatchOptions(selectedOptionType);
     else if (activeTab === "fms") fetchFmsLogs();
     else if (activeTab === "mappings") fetchMappings();
-  }, [isAdmin, activeTab, selectedOptionType, fetchBatchOptions, fetchFmsLogs, fetchMappings]);
+    else if (activeTab === "audit-logs") fetchAuditLogs();
+  }, [isAdmin, activeTab, selectedOptionType, fetchBatchOptions, fetchFmsLogs, fetchMappings, fetchAuditLogs]);
 
   const setSelectedOptionType = useCallback((optionType: OptionTypeKey) => {
     setSelectedOptionTypeState(optionType);
@@ -173,8 +189,9 @@ export default function AdminPortalPage() {
     if (activeTab === "options") fetchBatchOptions(selectedOptionType);
     else if (activeTab === "fms") fetchFmsLogs();
     else if (activeTab === "mappings") fetchMappings();
+    else if (activeTab === "audit-logs") fetchAuditLogs();
     else fetchCoreData();
-  }, [activeTab, selectedOptionType, fetchBatchOptions, fetchFmsLogs, fetchMappings, fetchCoreData]);
+  }, [activeTab, selectedOptionType, fetchBatchOptions, fetchFmsLogs, fetchMappings, fetchAuditLogs, fetchCoreData]);
 
   const managerCount = useMemo(
     () => users.filter((user) => user.is_manager || (user.direct_reports_count ?? 0) > 0).length,
@@ -488,6 +505,68 @@ export default function AdminPortalPage() {
     clearFmsSyncMessage: () => setFmsSyncMessage(null),
   };
 
+  // Audit Logs Tab Component
+  function AuditLogsTab() {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Audit Logs</h2>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchAuditLogs}
+            disabled={isLoadingAuditLogs}
+          >
+            <RefreshCw className={cn("h-4 w-4", isLoadingAuditLogs && "animate-spin")} aria-hidden="true" />
+            <span>Refresh</span>
+          </Button>
+        </div>
+
+        {isLoadingAuditLogs ? (
+          <div className="flex items-center justify-center py-12">
+            <RefreshCw className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
+            <span className="ml-3 text-sm text-muted-foreground">Loading audit logs...</span>
+          </div>
+        ) : auditLogs.length === 0 ? (
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            No audit logs found.
+          </div>
+        ) : (
+          <div className="rounded-lg border bg-card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full caption-bottom text-sm">
+                <thead className="[&_tr]:border-b">
+                  <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Event Type</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">User</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Email</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">IP Address</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Details</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody className="[&_tr:last-child]:border-0">
+                  {auditLogs.map((log) => (
+                    <tr key={log.id} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                      <td className="p-4 font-mono text-xs">{log.event_type}</td>
+                      <td className="p-4">{log.user_id ? `User ID: ${log.user_id.slice(0, 8)}...` : "N/A"}</td>
+                      <td className="p-4">{log.user_email || "N/A"}</td>
+                      <td className="p-4 font-mono text-xs">{log.ip_address || "N/A"}</td>
+                      <td className="p-4 max-w-xs truncate">{log.details || "N/A"}</td>
+                      <td className="p-4 whitespace-nowrap text-muted-foreground">
+                        {new Date(log.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (isAuthLoading || !isAdmin) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -505,6 +584,7 @@ export default function AdminPortalPage() {
     users: users.length,
     hierarchy: hierarchy.length,
     mappings: mappings.length,
+    "audit-logs": auditLogs.length,
   };
 
   return (
@@ -640,6 +720,7 @@ export default function AdminPortalPage() {
               {activeTab === "fms" && <FmsTab />}
               {activeTab === "hierarchy" && <HierarchyTab />}
               {activeTab === "mappings" && <MappingsTab />}
+              {activeTab === "audit-logs" && <AuditLogsTab />}
             </div>
           </AdminPortalProvider>
         </div>

@@ -160,42 +160,39 @@ export function TaxonomyTab() {
             onClear={filters.clearFilters}
             hasActiveFilters={filters.hasActiveFilters}
             activeFilterCount={filters.activeFilterCount}
-            bespoke={[
-              {
-                key: "option-set",
-                label: "Option set",
-                width: "100%",
-                content: (
-                  <div
-                    role="group"
-                    aria-label="Option set"
-                    className="flex flex-wrap items-center gap-1.5"
-                  >
-                    {OPTION_TYPE_KEYS.map((key) => {
-                      const isActive = selectedOptionType === key;
-                      return (
-                        <Button
-                          key={key}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleSelectType(key)}
-                          aria-pressed={isActive}
-                          className={cn(
-                            "h-9 rounded-full px-3.5 text-xs font-semibold",
-                            isActive
-                              ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
-                              : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                          )}
-                        >
-                          {OPTION_TYPE_LABELS[key]}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                ),
-              },
-            ]}
-          />
+          >
+            <div className="flex w-full flex-col gap-1">
+              <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                Option set
+              </span>
+              <div
+                role="group"
+                aria-label="Option set"
+                className="flex flex-wrap items-center gap-1.5"
+              >
+                {OPTION_TYPE_KEYS.map((key) => {
+                  const isActive = selectedOptionType === key;
+                  return (
+                    <Button
+                      key={key}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleSelectType(key)}
+                      aria-pressed={isActive}
+                      className={cn(
+                        "h-9 rounded-full px-3.5 text-xs font-semibold",
+                        isActive
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      )}
+                    >
+                      {OPTION_TYPE_LABELS[key]}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+          </TableFilters>
         }
         actions={
           <>

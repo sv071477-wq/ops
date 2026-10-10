@@ -1,6 +1,7 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from uuid import UUID
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.batch import Batch
@@ -214,7 +215,7 @@ def _add_batch(db, batch_id, coordinator, manager, **overrides):
         batch_id=batch_id,
         program_name="Cloud and Ops",
         delivery_mode="Online",
-        status="Approved",
+        status="Upcoming",
         primary_manager_id=manager.id if manager else None,
         coordinator_id=coordinator.id if coordinator else None,
         **overrides,
@@ -360,3 +361,392 @@ def test_list_reports_scheduled_session_count(client, db_session, ownership_acto
 
     assert counts["SCHED_NONE_2027"] == 0
     assert counts["SCHED_THREE_2027"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Rejection and Resubmit Flow Tests
+# ---------------------------------------------------------------------------
+
+
+def _future_start():
+    return (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+
+
+def _create_batch_for_approval(db_session, role_ids):
+    """Helper to create a batch that reaches Approval 1 Pending state."""
+    batch = Batch(
+        batch_id="REJECT_TEST_BATCH_2026",
+        program_name="Rejection Test Program",
+        delivery_mode="Online",
+        total_enrollments=20,
+        training_days=5,
+        total_hours=Decimal("40.00"),
+        start_date=datetime.now(timezone.utc) + timedelta(days=30),
+        end_date=datetime.now(timezone.utc) + timedelta(days=37),
+        category="Bootcamp",
+        status="Approval 1 Pending",
+        approver_1_id=UUID(role_ids["primary_manager_id"]),
+        approver_2_id=UUID(role_ids["sales_spoc_id"]),
+        approver_1_status="Pending",
+        approver_2_status="Pending",
+        primary_manager_id=UUID(role_ids["primary_manager_id"]),
+        coordinator_id=UUID(role_ids["coordinator_id"]),
+        sales_spoc_id=UUID(role_ids["sales_spoc_id"]),
+        is_schema_locked=False,
+    )
+    db_session.add(batch)
+    db_session.commit()
+    db_session.refresh(batch)
+    return batch
+
+
+def test_level_1_rejection_sets_rejected_status(client, manager_token_headers, db_session, role_ids):
+    """Level 1 rejection should set batch status to Rejected (not Requested)."""
+    batch = _create_batch_for_approval(db_session, role_ids)
+
+    # Approver 1 rejects
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/approve-level-1",
+        json={"decision": "reject", "reason": "Insufficient budget"},
+        headers=manager_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Rejected"
+    assert data["approver_1_status"] == "Rejected"
+    assert "rejected" in data["remarks"].lower()
+
+
+def test_level_2_rejection_sets_rejected_status(client, admin_token_headers, db_session, role_ids):
+    """Level 2 rejection should set batch status to Rejected."""
+    batch = _create_batch_for_approval(db_session, role_ids)
+
+    # First approve level 1
+    batch.approver_1_status = "Approved"
+    batch.status = "Approval 2 Pending"
+    db_session.commit()
+
+    # Approver 2 rejects
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/approve-level-2",
+        json={"decision": "reject", "reason": "Schedule conflict"},
+        headers=admin_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Rejected"
+    assert data["approver_2_status"] == "Rejected"
+    assert "rejected" in data["remarks"].lower()
+
+
+def test_resubmit_from_rejected_resets_approvers(client, coord_token_headers, db_session, role_ids):
+    """Resubmitting a rejected batch should reset approvers from global config."""
+    batch = _create_batch_for_approval(db_session, role_ids)
+
+    # Reject at level 1
+    batch.approver_1_status = "Rejected"
+    batch.status = "Rejected"
+    batch.remarks = "Approval 1 rejected: Insufficient budget"
+    db_session.commit()
+
+    # Coordinator resubmits
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/submit",
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Approval 1 Pending"
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    # Approver IDs should be reset from config
+    assert data["approver_1_id"] is not None
+    assert data["approver_2_id"] is not None
+
+
+def test_rejected_only_transitions_to_approval_1_pending(client, coord_token_headers, db_session, role_ids):
+    """Rejected batch can only transition to Approval 1 Pending via resubmit."""
+    batch = _create_batch_for_approval(db_session, role_ids)
+    batch.approver_1_status = "Rejected"
+    batch.status = "Rejected"
+    batch.remarks = "Rejected"
+    db_session.commit()
+
+    # Try to transition to Upcoming directly - should fail
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/lifecycle-status",
+        json={"status": "Upcoming", "reason": "Trying to skip approval"},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 400
+
+    # Valid transition: resubmit
+    response = client.post(
+        f"/api/v1/batches/{batch.id}/submit",
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "Approval 1 Pending"
+
+
+def test_operational_scope_users_can_edit_rejected_batches(client, coord_token_headers, db_session, role_ids):
+    """Coordinators/managers with operational scope can edit rejected batches."""
+    batch = _create_batch_for_approval(db_session, role_ids)
+    batch.approver_1_status = "Rejected"
+    batch.status = "Rejected"
+    batch.remarks = "Rejected"
+    db_session.commit()
+
+    # Coordinator can update the batch (e.g., change program_name)
+    response = client.patch(
+        f"/api/v1/batches/{batch.id}",
+        json={"program_name": "Updated After Rejection"},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["program_name"] == "Updated After Rejection"
+
+
+def test_enum_values_enforced_at_db_level(db_session):
+    """Verify enum constraints prevent invalid status values at DB level."""
+    from sqlalchemy.exc import DataError
+
+    # This test verifies the enum types exist; actual constraint enforcement
+    # requires a running DB with the migration applied. Here we just verify
+    # the model uses the correct enum types.
+    from app.models.batch import BatchStatus, ApprovalStatus
+
+    assert "Rejected" in [e.value for e in BatchStatus]
+    assert "Approved" not in [e.value for e in BatchStatus]
+    assert "Rejected" in [e.value for e in ApprovalStatus]
+    assert "Pending" in [e.value for e in ApprovalStatus]
+    assert "Approved" in [e.value for e in ApprovalStatus]
+
+
+# ---------------------------------------------------------------------------
+# Batch Re-Approval on Schedule Change Tests
+# ---------------------------------------------------------------------------
+
+
+def _create_schema_locked_batch(db_session, role_ids, status="Upcoming"):
+    """Helper to create a schema-locked batch in an active status."""
+    from app.models.batch import Batch
+    from decimal import Decimal
+
+    batch = Batch(
+        batch_id=f"SCHED_LOCKED_BATCH_{status.upper().replace(' ', '_')}_2026",
+        program_name="Schedule Locked Test Program",
+        delivery_mode="Online",
+        total_enrollments=20,
+        training_days=5,
+        total_hours=Decimal("40.00"),
+        start_date=datetime.now(timezone.utc) + timedelta(days=30),
+        end_date=datetime.now(timezone.utc) + timedelta(days=37),
+        category="Bootcamp",
+        status=status,
+        approver_1_id=UUID(role_ids["primary_manager_id"]),
+        approver_2_id=UUID(role_ids["sales_spoc_id"]),
+        approver_1_status="Approved",
+        approver_2_status="Approved",
+        primary_manager_id=UUID(role_ids["primary_manager_id"]),
+        coordinator_id=UUID(role_ids["coordinator_id"]),
+        sales_spoc_id=UUID(role_ids["sales_spoc_id"]),
+        is_schema_locked=True,
+    )
+    db_session.add(batch)
+    db_session.commit()
+    db_session.refresh(batch)
+    return batch
+
+
+def test_update_triggers_reapproval_when_training_days_changed(client, coord_token_headers, db_session, role_ids):
+    """Coordinator updates training_days on Upcoming batch -> Batch goes to Approval 1 Pending, schema unlocked."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"training_days": 10},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    assert data["training_days"] == 10
+    assert "training_days" in data["remarks"]
+
+
+def test_update_triggers_reapproval_when_end_date_changed(client, coord_token_headers, db_session, role_ids):
+    """Coordinator updates end_date on Ongoing batch -> Batch goes to Approval 1 Pending."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Ongoing")
+    batch_id = batch.id
+
+    new_end_date = (datetime.now(timezone.utc) + timedelta(days=45)).isoformat()
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"end_date": new_end_date},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    assert "end_date" in data["remarks"]
+
+
+def test_update_triggers_reapproval_when_start_date_changed(client, coord_token_headers, db_session, role_ids):
+    """Coordinator updates start_date on Pending for Closure batch -> Batch goes to Approval 1 Pending."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Pending for Closure")
+    batch_id = batch.id
+
+    # Update both start_date and end_date to keep end_date after start_date
+    new_start_date = (datetime.now(timezone.utc) + timedelta(days=40)).isoformat()
+    new_end_date = (datetime.now(timezone.utc) + timedelta(days=47)).isoformat()
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"start_date": new_start_date, "end_date": new_end_date},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    assert "start_date" in data["remarks"]
+
+
+def test_update_triggers_reapproval_when_total_hours_changed(client, coord_token_headers, db_session, role_ids):
+    """Coordinator updates total_hours on Upcoming batch -> Batch goes to Approval 1 Pending."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"total_hours": "60.00"},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Approval 1 Pending"
+    assert data["is_schema_locked"] is False
+    assert data["approver_1_status"] == "Pending"
+    assert data["approver_2_status"] == "Pending"
+    assert "total_hours" in data["remarks"]
+
+
+def test_update_no_reapproval_for_non_schedule_fields(client, coord_token_headers, db_session, role_ids):
+    """Coordinator updates client_name on schema-locked batch -> No re-approval (non-schedule field)."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"client_name": "New Client Name"},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    # Should remain in Upcoming with schema locked
+    assert data["status"] == "Upcoming"
+    assert data["is_schema_locked"] is True
+    assert data["approver_1_status"] == "Approved"
+    assert data["approver_2_status"] == "Approved"
+    assert data["client_name"] == "New Client Name"
+
+
+def test_update_no_reapproval_for_completed_batch(client, coord_token_headers, db_session, role_ids):
+    """Batch in Completed status updated -> No re-approval (not in active statuses)."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Completed")
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"training_days": 10},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    # Should remain in Completed with schema locked
+    assert data["status"] == "Completed"
+    assert data["is_schema_locked"] is True
+    assert data["approver_1_status"] == "Approved"
+    assert data["approver_2_status"] == "Approved"
+    assert data["training_days"] == 10
+
+
+def test_update_no_reapproval_for_admin(client, admin_token_headers, db_session, role_ids):
+    """Admin updates schedule fields -> No re-approval (admins can edit locked schema)."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"training_days": 10, "end_date": (datetime.now(timezone.utc) + timedelta(days=45)).isoformat()},
+        headers=admin_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    # Should remain in Upcoming with schema locked (admin can edit without re-approval)
+    assert data["status"] == "Upcoming"
+    assert data["is_schema_locked"] is True
+    assert data["approver_1_status"] == "Approved"
+    assert data["approver_2_status"] == "Approved"
+    assert data["training_days"] == 10
+
+
+def test_update_no_reapproval_for_manager(client, manager_token_headers, db_session, role_ids):
+    """Manager updates schedule fields -> No re-approval (managers can edit locked schema)."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"training_days": 10},
+        headers=manager_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    # Should remain in Upcoming with schema locked (manager can edit without re-approval)
+    assert data["status"] == "Upcoming"
+    assert data["is_schema_locked"] is True
+    assert data["approver_1_status"] == "Approved"
+    assert data["approver_2_status"] == "Approved"
+    assert data["training_days"] == 10
+
+
+def test_update_reapproval_preserves_approval_history_in_remarks(client, coord_token_headers, db_session, role_ids):
+    """Re-approval preserves existing approval history in remarks."""
+    batch = _create_schema_locked_batch(db_session, role_ids, status="Upcoming")
+    batch.remarks = "Previous approval history"
+    db_session.commit()
+    batch_id = batch.id
+
+    response = client.patch(
+        f"/api/v1/batches/{batch_id}",
+        json={"training_days": 10},
+        headers=coord_token_headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["status"] == "Approval 1 Pending"
+    assert "Previous approval history" in data["remarks"]
+    assert "Schedule changed" in data["remarks"]
+    assert "training_days" in data["remarks"]

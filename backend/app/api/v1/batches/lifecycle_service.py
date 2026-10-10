@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from app.models.session import TERMINAL_UTILIZATION_STATUSES
+from app.models.session import SessionStatus
 from app.api.v1.batches.repository_interfaces import IBatchLifecycleRepository
 
 
@@ -65,40 +65,26 @@ class BatchLifecycleService:
     def calculate_batch_avg_feedback(self, batch_id: UUID) -> Optional[Decimal]:
         """Calculate and persist the batch average feedback.
 
-        All three conditions must hold before a value is written:
-          1. every non-cancelled planned day has at least one linked ledger row,
-             so the average can never be taken over a subset of the curriculum;
-          2. every linked ledger row is terminal, so no day can still gain a
-             rating after the average is fixed;
-          3. at least one ``Completed`` row carries a rating.
+        Only one condition must hold before a value is written:
+          1. at least one ``Completed`` row carries a rating.
 
-        The mean is taken over rated rows only. Unrated ``Completed`` rows and
-        ``Cancelled`` / ``Not Conducted`` rows are excluded from the mean and
-        never block it.
+        The mean is taken over rated rows only. Unrated ``Completed`` rows are
+        excluded from the mean and never block it.
 
-        This method recalculates the average on every call when preconditions
-        pass, so it can be invoked from multiple trigger points (utilization
-        create/update, nightly sweep, Gate 1) without idempotency concerns.
+        This method recalculates the average on every call, so it can be invoked
+        from multiple trigger points (utilization create/update, nightly sweep,
+        Gate 1) without idempotency concerns.
         """
         batch = self.lifecycle_repo.get_batch_by_id(batch_id)
         if not batch:
             return None
 
-        planned = self.lifecycle_repo.list_non_cancelled_training_sessions(batch_id)
-        if not planned:
-            return None
-
         ledger = self.lifecycle_repo.list_utilizations_for_batch(batch_id)
-        linked_session_ids = {u.training_session_id for u in ledger if u.training_session_id}
-        if any(session.id not in linked_session_ids for session in planned):
-            return None
-        if any(u.status not in TERMINAL_UTILIZATION_STATUSES for u in ledger):
-            return None
 
         ratings = [
             u.feedback_rating
             for u in ledger
-            if u.status == "Completed" and u.feedback_rating is not None
+            if u.status == SessionStatus.Completed and u.feedback_rating is not None
         ]
         if not ratings:
             return None

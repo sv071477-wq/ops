@@ -16,7 +16,7 @@ vi.mock("@/lib/api", () => ({
 
 import { CreateBatchModal } from "./CreateBatchModal";
 
-const option = { id: "1", name: "Unext", is_active: true, created_at: "", updated_at: "" };
+const option = (name: string) => ({ id: name, name, is_active: true, created_at: "", updated_at: "" });
 const person = {
   id: "u1", email: "a@b.c", full_name: "A B", role: "Sales",
   is_active: true, created_at: "",
@@ -24,13 +24,50 @@ const person = {
 
 describe("CreateBatchModal faculty chip field", () => {
   beforeEach(() => {
-    getBatchOptions.mockResolvedValue([option]);
+    getBatchOptions.mockImplementation((type: string) => Promise.resolve([option(type)]));
     getAssignableUsers.mockResolvedValue([person]);
+
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+      configurable: true,
+      value: () => false,
+    });
+    Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+      configurable: true,
+      value: () => {},
+    });
+    Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+      configurable: true,
+      value: () => {},
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: () => {},
+    });
   });
 
   it("renders the open modal without crashing", async () => {
     render(<CreateBatchModal isOpen onClose={() => {}} onBatchCreated={() => {}} />);
     expect(await screen.findByLabelText(/Batch Identifier/i)).toBeTruthy();
+  });
+
+  it("loads lookup dropdowns when an assignable-user request fails", async () => {
+    const user = userEvent.setup();
+    getAssignableUsers.mockRejectedValueOnce(new Error("User list unavailable"));
+    render(<CreateBatchModal isOpen onClose={() => {}} onBatchCreated={() => {}} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Sales contacts/);
+
+    const dropdowns = [
+      ["Operating Entity", "entities"],
+      ["Training Category", "categories"],
+      ["Delivery Mode", "delivery-modes"],
+      ["Faculty Accommodation", "accommodations"],
+    ] as const;
+    for (const [label, optionName] of dropdowns) {
+      await user.click(screen.getByRole("combobox", { name: new RegExp(label, "i") }));
+      expect(await screen.findByRole("option", { name: optionName })).toBeTruthy();
+      await user.keyboard("{Escape}");
+    }
   });
 
   it("adds faculty as array entries, not an object keyed by the draft input", async () => {

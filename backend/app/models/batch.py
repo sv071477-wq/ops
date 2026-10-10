@@ -1,12 +1,32 @@
 from datetime import datetime, timezone
 import uuid
 from decimal import Decimal
+from enum import Enum as PyEnum
 from sqlalchemy import (
     Column, String, Boolean, Date, DateTime, Integer, Numeric, Text,
-    ForeignKey, CheckConstraint, Index, Uuid, JSON
+    ForeignKey, CheckConstraint, Index, Uuid, JSON, Enum
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+
+
+class BatchStatus(str, PyEnum):
+    Requested = "Requested"
+    Approval1Pending = "Approval 1 Pending"
+    Approval2Pending = "Approval 2 Pending"
+    Upcoming = "Upcoming"
+    Ongoing = "Ongoing"
+    PendingForClosure = "Pending for Closure"
+    Completed = "Completed"
+    OnHold = "OnHold"
+    Cancelled = "Cancelled"
+    Rejected = "Rejected"
+
+
+class ApprovalStatus(str, PyEnum):
+    Pending = "Pending"
+    Approved = "Approved"
+    Rejected = "Rejected"
 
 
 class Batch(Base):
@@ -46,12 +66,13 @@ class Batch(Base):
     total_enrollments = Column(Integer, default=0, nullable=False)
 
     # Lifecycle State & Governance Lock
-    status = Column(String(50), default="Requested", nullable=False, index=True)
+    status = Column(Enum(BatchStatus), default=BatchStatus.Requested, nullable=False, index=True)
     is_schema_locked = Column(Boolean, default=False, nullable=False)
+    schedule_complete = Column(Boolean, default=False, nullable=False)
     approver_1_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     approver_2_id = Column(Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    approver_1_status = Column(String(20), default="Pending", nullable=False)
-    approver_2_status = Column(String(20), default="Pending", nullable=False)
+    approver_1_status = Column(Enum(ApprovalStatus), default=ApprovalStatus.Pending, nullable=False)
+    approver_2_status = Column(Enum(ApprovalStatus), default=ApprovalStatus.Pending, nullable=False)
     approver_1_approved_at = Column(DateTime(timezone=True), nullable=True)
     approver_2_approved_at = Column(DateTime(timezone=True), nullable=True)
 

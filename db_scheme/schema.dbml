@@ -1,5 +1,5 @@
 // Enterprise Operations Platform - Database Schema
-// Generated from actual SQLAlchemy models
+// Generated from actual SQLAlchemy models (backend/app/models/)
 
 Table users {
   id uuid [pk]
@@ -152,10 +152,9 @@ Table batches {
   calendar_days integer [null, default: 0]
   total_hours numeric(8,2) [not null, default: 0.00]
   total_enrollments integer [not null, default: 0]
-  residential_enrollments integer [not null, default: 0]
-  non_residential_enrollments integer [not null, default: 0]
   status varchar(50) [not null, default: 'Requested']
   is_schema_locked boolean [not null, default: false]
+  schedule_complete boolean [not null, default: false]
   approver_1_id uuid [null]
   approver_2_id uuid [null]
   approver_1_status varchar(20) [not null, default: 'Pending']
@@ -166,7 +165,7 @@ Table batches {
   coordinator_id uuid [null]
   sales_spoc_id uuid [null]
   faculty_members json [null]
-  faculty_assigned_text varchar(500) [null]  // Legacy raw faculty names string
+  faculty_assigned_text varchar(500) [null]
   finance_status varchar(50) [not null, default: 'Pending']
   finance_status_check_date date [null]
   finance_check integer [null]

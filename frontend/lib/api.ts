@@ -319,7 +319,7 @@ export interface TrainingSession {
   venue?: string | null;
   location_city?: string | null;
   mode_of_delivery: string;
-  status: "Scheduled" | "InProgress" | "Completed" | "Cancelled" | "Rescheduled" | "Not Conducted";
+  status: "Scheduled" | "Completed";
   feedback_submitted: boolean;
   feedback_rating?: number | null;
   feedback_notes?: string | null;
@@ -524,6 +524,17 @@ export interface FmsSyncLog {
   response_code?: number | null;
   message?: string | null;
   timestamp: string;
+}
+
+export interface AuditLog {
+  id: string;
+  event_type: string;
+  user_id?: string | null;
+  user_email?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  details?: string | null;
+  created_at: string;
 }
 
 export class ApiError extends Error {
@@ -800,8 +811,9 @@ class ApiService {
     return this.request<User[]>("/auth/users");
   }
 
-  async getAssignableUsers(role: "Sales" | "Coordinator" | "Manager"): Promise<User[]> {
-    return this.request<User[]>(`/auth/users/assignable?role=${role}`);
+  async getAssignableUsers(role: "Sales" | "Coordinator" | "Manager", teamName?: string): Promise<User[]> {
+    const qs = teamName ? `?role=${role}&team_name=${encodeURIComponent(teamName)}` : `?role=${role}`;
+    return this.request<User[]>(`/auth/users/assignable${qs}`);
   }
 
   async getHierarchy(): Promise<UserHierarchyNode[]> {
@@ -1178,27 +1190,6 @@ class ApiService {
     });
   }
 
-  async cancelSession(id: string, reason: string): Promise<TrainingSession> {
-    return this.request<TrainingSession>(`/sessions/${id}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({ reason }),
-    });
-  }
-
-  async markSessionNotConducted(id: string, reason: string): Promise<TrainingSession> {
-    return this.request<TrainingSession>(`/sessions/${id}/not-conducted`, {
-      method: "POST",
-      body: JSON.stringify({ reason }),
-    });
-  }
-
-  async rescheduleSession(id: string, payload: { date_of_training: string; start_time?: string; end_time?: string; reason: string }): Promise<TrainingSession> {
-    return this.request<TrainingSession>(`/sessions/${id}/reschedule`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  }
-
   async completeSessionGate1(sessionId: string, payload: SessionFeedbackPayload): Promise<Gate1CompleteResponse> {
     return this.request<Gate1CompleteResponse>(`/sessions/${sessionId}/complete`, {
       method: "PATCH",
@@ -1327,6 +1318,10 @@ class ApiService {
 
   async getFmsLogs(skip: number = 0, limit: number = 50): Promise<FmsSyncLog[]> {
     return this.request<FmsSyncLog[]>(`/integrations/fms/logs?skip=${skip}&limit=${limit}`);
+  }
+
+  async getAuditLogs(skip: number = 0, limit: number = 100): Promise<AuditLog[]> {
+    return this.request<AuditLog[]>(`/auth/audit-logs?skip=${skip}&limit=${limit}`);
   }
 }
 

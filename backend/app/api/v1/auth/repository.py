@@ -48,6 +48,18 @@ class UserRepository(IUserRepository):
             User.is_active == True,
         ).order_by(User.full_name).all()
 
+    def list_by_team_name(self, team_name: str) -> List[User]:
+        return (
+            self.db.query(User)
+            .join(Team, User.team_id == Team.id)
+            .filter(
+                Team.name == team_name,
+                User.is_active == True,
+            )
+            .order_by(User.full_name)
+            .all()
+        )
+
     def list_by_ids(self, user_ids: List[UUID]) -> List[User]:
         if not user_ids:
             return []
@@ -225,3 +237,12 @@ class UserRepository(IUserRepository):
         except Exception:
             # Audit logging must never break the caller.
             self.db.rollback()
+
+    def get_audit_logs(self, skip: int = 0, limit: int = 100) -> List[AuditLog]:
+        return (
+            self.db.query(AuditLog)
+            .order_by(AuditLog.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )

@@ -70,8 +70,6 @@ def export_faculty_utilization_csv(
             r.status,
             float(r.feedback_rating) if r.feedback_rating else "",
             r.feedback_notes or "",
-            r.outcome_reason or "",
-            r.outcome_at.isoformat() if r.outcome_at else ""
         ])
     
     output.seek(0)

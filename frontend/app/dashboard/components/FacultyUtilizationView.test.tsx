@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { FacultyUtilizationView } from "./FacultyUtilizationView";
 import { TrainingSession } from "@/lib/api";
 
-const COLUMN_STORAGE_KEY = "ops.table.faculty-utilization.columns.v2";
+const COLUMN_STORAGE_KEY = "ops.table.faculty-utilization.columns.v3";
 
 function makeSession(overrides: Partial<TrainingSession> = {}): TrainingSession {
   return {
@@ -78,21 +78,22 @@ describe("FacultyUtilizationView column visibility", () => {
     expect(screen.getByRole("checkbox", { name: "Outcome Reason" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Faculty Full Name" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Topic" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Mode of Delivery" })).not.toBeChecked();
   });
 
   it("keeps header and body cells 1:1 when a visible column is switched off", async () => {
     const user = userEvent.setup();
     renderView({ data: [makeSession()] });
 
-    expect(headerCells()).toHaveLength(12);
-    expect(bodyCellCount()).toBe(12);
+    expect(headerCells()).toHaveLength(6);
+    expect(bodyCellCount()).toBe(6);
 
     await user.click(screen.getByRole("button", { name: /Columns/ }));
     await user.click(screen.getByRole("checkbox", { name: "Topic" }));
 
-    expect(headerCells()).toHaveLength(11);
+    expect(headerCells()).toHaveLength(5);
     expect(screen.queryByRole("columnheader", { name: /Topic/ })).toBeNull();
-    expect(bodyCellCount()).toBe(11);
+    expect(bodyCellCount()).toBe(5);
   });
 
   it("keeps header and body cells 1:1 when a default-hidden column is switched on", async () => {
@@ -105,8 +106,8 @@ describe("FacultyUtilizationView column visibility", () => {
     await user.click(screen.getByRole("checkbox", { name: "Training Session ID" }));
 
     expect(screen.getByRole("columnheader", { name: /Training Session ID/ })).toBeTruthy();
-    expect(headerCells()).toHaveLength(13);
-    expect(bodyCellCount()).toBe(13);
+    expect(headerCells()).toHaveLength(7);
+    expect(bodyCellCount()).toBe(7);
   });
 
   it("restores all 27 columns after Show all columns", async () => {
@@ -190,14 +191,13 @@ describe("FacultyUtilizationView states", () => {
     cleanup();
 
     renderView({ data: [makeSession()] });
-    // Feedback is one of the secondary filters, so it lives behind the toggle.
-    await user.click(screen.getByRole("button", { name: /More filters/i }));
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     await user.selectOptions(screen.getByLabelText("Feedback"), "PENDING");
 
     expect(screen.getByText("No records match the current filters")).toBeTruthy();
     expect(screen.queryByText("No utilization records in the ledger yet")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /Clear filters/i }));
+    await user.click(screen.getByRole("button", { name: /Clear all/i }));
     expect(within(firstBodyRow()).getByText("Async patterns")).toBeTruthy();
   });
 });
@@ -207,57 +207,44 @@ describe("FacultyUtilizationView filter layout", () => {
     window.localStorage.clear();
   });
 
-  function openMoreFilters(user: ReturnType<typeof userEvent.setup>) {
-    return user.click(screen.getByRole("button", { name: /More filters/i }));
+  function openFilters(user: ReturnType<typeof userEvent.setup>) {
+    return user.click(screen.getByRole("button", { name: /^Filters/ }));
   }
 
-  it("keeps the primary toolbar row to the filters that identify a delivery", () => {
+  it("keeps filters collapsed while leaving search and sort available", () => {
     renderView({ data: [makeSession()] });
 
-    // Twelve controls on one row wrapped into three ragged lines. The primary
-    // row is now search + four dropdowns + sort + clear.
     expect(screen.getByLabelText("Search")).toBeTruthy();
-    for (const label of ["Faculty", "Status", "Mode", "Client"]) {
-      expect(screen.getByLabelText(label)).toBeTruthy();
-    }
     expect(screen.getByLabelText("Sort by")).toBeTruthy();
-
-    // The rest are not on that row yet. `Vertical` is not on it either and not
-    // behind the toggle: no seeder populates it, so a dropdown over it could
-    // only ever offer its own "All verticals" placeholder.
-    for (const label of ["Faculty Type", "Coordinator", "Category", "City", "Vertical"]) {
-      expect(screen.queryByLabelText(label)).toBeNull();
-    }
+    expect(screen.getByRole("button", { name: "Filters" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Faculty")).toBeNull();
+    expect(screen.queryByLabelText("Feedback")).toBeNull();
   });
 
-  it("reveals the secondary filters when More filters is opened", async () => {
+  it("reveals the available filters together when Filters is opened", async () => {
     const user = userEvent.setup();
     renderView({ data: [makeSession()] });
 
-    const toggle = screen.getByRole("button", { name: /More filters/i });
+    const toggle = screen.getByRole("button", { name: "Filters" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
 
-    await openMoreFilters(user);
+    await openFilters(user);
 
-    expect(screen.getByRole("button", { name: /More filters/i })).toHaveAttribute("aria-expanded", "true");
-    for (const label of ["Faculty Type", "Coordinator", "Category", "City", "Feedback"]) {
+    expect(screen.getByRole("button", { name: /^Filters/ })).toHaveAttribute("aria-expanded", "true");
+    for (const label of ["Faculty", "Status", "Mode", "Client", "Faculty Type", "Coordinator", "Category", "City", "Feedback"]) {
       expect(screen.getByLabelText(label)).toBeTruthy();
     }
     expect(screen.getByLabelText("Date From")).toBeTruthy();
     expect(screen.getByLabelText("Date To")).toBeTruthy();
-    // Open state really does carry the panel border, so the collapsed-state
-    // assertion below is testing the render and not a bad selector.
-    expect(document.getElementById("faculty-utilization-more-filters-panel")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Table filters" })).toBeTruthy();
     expect(document.querySelector('[style*="border: 1px solid var(--border-subtle)"]')).toBeTruthy();
   });
 
-  it("renders no bordered panel while More filters is collapsed", () => {
+  it("renders no filter panel while Filters is collapsed", () => {
     renderView({ data: [makeSession()] });
 
-    // The regression: an always-rendered panel wrapper left an empty bordered
-    // box hanging below the toolbar around a lone button.
-    expect(screen.getByRole("button", { name: /More filters/i })).toBeTruthy();
-    expect(document.getElementById("faculty-utilization-more-filters-panel")).toBeNull();
+    expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Table filters" })).toBeNull();
     expect(screen.queryByLabelText("Feedback")).toBeNull();
     expect(document.querySelector('[style*="border: 1px solid var(--border-subtle)"]')).toBeNull();
   });
@@ -267,14 +254,14 @@ describe("FacultyUtilizationView filter layout", () => {
     const blank = makeSession({ id: "row-blank", category: "", topic: "No category" });
     renderView({ data: [blank] });
 
-    await openMoreFilters(user);
+    await openFilters(user);
     // `Category` has no values to filter by, so its dropdown would be dead UI.
     expect(screen.queryByLabelText("Category")).toBeNull();
 
     cleanup();
     renderView({ data: [blank, makeSession({ id: "row-filled", category: "Bootcamp" })] });
 
-    await openMoreFilters(user);
+    await openFilters(user);
     expect(screen.getByLabelText("Category")).toBeTruthy();
   });
 
@@ -284,31 +271,28 @@ describe("FacultyUtilizationView filter layout", () => {
     const internal = makeSession({ id: "row-internal", faculty_type_name: "Internal", topic: "Spark tuning" });
     renderView({ data: [adjunct, internal] });
 
-    await openMoreFilters(user);
+    await openFilters(user);
     await user.selectOptions(screen.getByLabelText("Faculty Type"), "Internal");
 
     expect(within(firstBodyRow()).getByText("Spark tuning")).toBeTruthy();
     expect(screen.queryByText("Async patterns")).toBeNull();
   });
 
-  it("counts filters left inside the collapsed panel on the toggle", async () => {
+  it("shows active filter count on the toggle and clears all criteria", async () => {
     const user = userEvent.setup();
     renderView({ data: [makeSession()] });
 
-    // A filter applied while expanded stays applied when the panel closes, so
-    // the toggle has to keep advertising it.
-    await openMoreFilters(user);
+    await openFilters(user);
     await user.selectOptions(screen.getByLabelText("Coordinator"), "Ravi");
     await user.selectOptions(screen.getByLabelText("Feedback"), "SUBMITTED");
 
-    const toggle = screen.getByRole("button", { name: /More filters/i });
+    const toggle = screen.getByRole("button", { name: /Filters, 2 active filters/ });
     expect(toggle).toHaveTextContent("2");
 
-    await openMoreFilters(user);
-    await user.click(screen.getByRole("button", { name: /Clear/i }));
+    await openFilters(user);
+    await user.click(screen.getByRole("button", { name: /Clear all/i }));
 
-    expect(screen.getByRole("button", { name: /More filters/i })).toHaveTextContent("More filters");
-    expect(screen.getByRole("button", { name: /More filters/i }).textContent).not.toMatch(/\d/);
+    expect(screen.getByRole("button", { name: "Filters" }).textContent).not.toMatch(/\d/);
   });
 
   it("keeps the training date as the pinned first column", () => {
@@ -321,7 +305,7 @@ describe("FacultyUtilizationView filter layout", () => {
     expect(firstHeader).toHaveAttribute("aria-sort", "descending");
   });
 
-  it("lists the 12 default columns in reading order", () => {
+  it("lists the six primary columns in reading order", () => {
     renderView({ data: [makeSession()] });
 
     expect(headerCells().map((cell) => cell.textContent)).toEqual([
@@ -331,12 +315,6 @@ describe("FacultyUtilizationView filter layout", () => {
       "Topic",
       "No. of Hours",
       "Status",
-      "Mode of Delivery",
-      "Feedback Rating",
-      "Client",
-      "Category",
-      "Coordinator",
-      "Location/City",
     ]);
   });
 
@@ -352,15 +330,23 @@ describe("FacultyUtilizationView filter layout", () => {
     expect(cell.style.overflow).toBe("hidden");
   });
 
-  it("renders an empty cell as a muted placeholder rather than real data", () => {
+  it("renders an empty cell as a muted placeholder rather than real data", async () => {
+    const user = userEvent.setup();
     renderView({ data: [makeSession({ category: "" })] });
+
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Category" }));
 
     const cell = within(firstBodyRow()).getByText("—");
     expect(cell.style.color).toBe("var(--text-muted)");
   });
 
-  it("keeps a zero value instead of rendering it as an empty placeholder", () => {
+  it("keeps zero values instead of rendering them as empty placeholders", async () => {
+    const user = userEvent.setup();
     renderView({ data: [makeSession({ no_of_hours: 0, feedback_rating: 0 })] });
+
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("checkbox", { name: "Feedback Rating" }));
 
     const row = firstBodyRow();
     expect(within(row).queryByText("—")).toBeNull();
@@ -373,8 +359,8 @@ describe("FacultyUtilizationView filter layout", () => {
 
     const table = document.querySelector("table") as HTMLTableElement;
     const defaultWidth = Number.parseInt(table.style.minWidth, 10);
-    // 2400px of minimum forced a horizontal scrollbar on every screen.
-    expect(defaultWidth).toBeGreaterThan(0);
+    // Six primary columns should fit a wide dashboard panel without scrolling.
+    expect(defaultWidth).toBe(980);
     expect(defaultWidth).toBeLessThan(2400);
 
     await user.click(screen.getByRole("button", { name: /Columns/ }));

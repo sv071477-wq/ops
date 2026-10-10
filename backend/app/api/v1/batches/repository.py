@@ -25,8 +25,8 @@ _OWNERSHIP_COLUMNS: Dict[str, InstrumentedAttribute] = {
     "manager": Batch.primary_manager_id,
 }
 
-_CONDUCTED_STATUSES = ["Completed", "InProgress"]
-_TERMINAL_STATUSES = {"Completed", "Cancelled"}
+_CONDUCTED_STATUSES = ["Completed"]
+_TERMINAL_STATUSES = {"Completed"}
 
 
 class BatchRepository(IBatchRepository):
@@ -144,7 +144,7 @@ class BatchRepository(IBatchRepository):
         return self.db.query(TrainingSession).filter(
             TrainingSession.batch_id.in_(list(batch_ids)),
             TrainingSession.session_date == target_date,
-            TrainingSession.status.notin_(["Cancelled", "Not Conducted", "Completed"]),
+            TrainingSession.status == "Scheduled",
         ).order_by(TrainingSession.start_time.asc().nullslast()).all()
 
     def list_actual_sessions_on_date(self, batch_ids: Sequence[UUID], target_date: date) -> List[FacultyUtilization]:
@@ -153,7 +153,7 @@ class BatchRepository(IBatchRepository):
         return self.db.query(FacultyUtilization).filter(
             FacultyUtilization.batch_id.in_(list(batch_ids)),
             FacultyUtilization.date_of_training.cast(Date) == target_date,
-            FacultyUtilization.status.notin_(["Cancelled", "Not Conducted", "Completed"]),
+            FacultyUtilization.status == "Scheduled",
         ).order_by(FacultyUtilization.start_time.asc().nullslast()).all()
 
     def export_finance_rows(

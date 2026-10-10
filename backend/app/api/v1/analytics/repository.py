@@ -12,7 +12,7 @@ from app.models.user import User
 from app.api.v1.analytics.repository_interfaces import DomainAggregate, IAnalyticsRepository
 
 
-_DEPLOYED_STATUSES = ["Scheduled", "InProgress", "Completed"]
+_DEPLOYED_STATUSES = ["Scheduled", "Completed"]
 
 
 class AnalyticsRepository(IAnalyticsRepository):
@@ -107,12 +107,9 @@ class AnalyticsRepository(IAnalyticsRepository):
     # --- Session aggregates ---
     def count_ongoing_sessions(self, batch_ids: Optional[Sequence[UUID]], today: date) -> int:
         return self._sessions(batch_ids).filter(
-            or_(
-                FacultyUtilization.status == "InProgress",
-                and_(
-                    FacultyUtilization.status != "Cancelled",
-                    cast(FacultyUtilization.date_of_training, Date) == today,
-                ),
+            and_(
+                FacultyUtilization.status != "Completed",
+                cast(FacultyUtilization.date_of_training, Date) == today,
             )
         ).count()
 
@@ -130,7 +127,6 @@ class AnalyticsRepository(IAnalyticsRepository):
                 FacultyUtilization.status == "Completed",
                 FacultyUtilization.date_of_training <= now,
             ),
-            FacultyUtilization.status != "Cancelled",
             or_(
                 FacultyUtilization.feedback_rating.is_(None),
                 FacultyUtilization.feedback_submitted == False,

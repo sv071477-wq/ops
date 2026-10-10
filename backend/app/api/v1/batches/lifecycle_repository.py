@@ -51,7 +51,6 @@ class BatchLifecycleRepository(IBatchLifecycleRepository):
     def list_non_cancelled_training_sessions(self, batch_id: UUID) -> List[TrainingSession]:
         return self.db.query(TrainingSession).filter(
             TrainingSession.batch_id == batch_id,
-            TrainingSession.status != "Cancelled",
         ).all()
 
     def list_utilizations_for_batch(self, batch_id: UUID) -> List[FacultyUtilization]:

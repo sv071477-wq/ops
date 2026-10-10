@@ -5,8 +5,10 @@ from app.models.user import User, UserManagerMapping, Role, Team, AuditLog
 from app.models.batch import (
     Accommodation,
     ApprovalConfiguration,
+    ApprovalStatus,
     Batch,
     BatchCategory,
+    BatchStatus,
     DeliveryMode,
     Entity,
     FacultyType,
@@ -14,6 +16,28 @@ from app.models.batch import (
     ProgramType,
 )
 from app.models.session import TrainingSession
+
+
+def _normalize_legacy_session_statuses(connection) -> None:
+    status_updates = (
+        ("Completed", ("Cancelled", "NotConducted", "Not Conducted", "Rescheduled")),
+        ("Scheduled", ("InProgress", "In Progress")),
+    )
+
+    inspector = inspect(connection)
+    for table_name in ("training_sessions", "faculty_utilization"):
+        if not inspector.has_table(table_name):
+            continue
+        columns = {column["name"] for column in inspector.get_columns(table_name)}
+        if "status" not in columns:
+            continue
+
+        for current_status, legacy_statuses in status_updates:
+            legacy_values = ", ".join(f"'{status}'" for status in legacy_statuses)
+            connection.execute(text(
+                f'UPDATE "{table_name}" SET status = \'{current_status}\' '
+                f"WHERE status IN ({legacy_values})"
+            ))
 
 
 def init_db(db: Session = None) -> None:
@@ -49,8 +73,6 @@ def init_db(db: Session = None) -> None:
                     # Two-stage approval chain.
                     "approver_1_id": "UUID REFERENCES users(id) ON DELETE SET NULL",
                     "approver_2_id": "UUID REFERENCES users(id) ON DELETE SET NULL",
-                    "approver_1_status": "VARCHAR(20) DEFAULT 'Pending' NOT NULL",
-                    "approver_2_status": "VARCHAR(20) DEFAULT 'Pending' NOT NULL",
                     "approver_1_approved_at": "TIMESTAMPTZ",
                     "approver_2_approved_at": "TIMESTAMPTZ",
                     "finance_status": "VARCHAR(50) DEFAULT 'Pending' NOT NULL",
@@ -64,6 +86,7 @@ def init_db(db: Session = None) -> None:
                     "nps_detractors": "INTEGER",
                     "faculty_members": "JSON",
                     "faculty_assigned_text": "VARCHAR(500)",
+                    "schedule_complete": "BOOLEAN DEFAULT FALSE NOT NULL",
                 },
                 # The planned curriculum only. Delivery facts (faculty, topic,
                 # hours, feedback, outcomes) live on faculty_utilization and
@@ -80,9 +103,6 @@ def init_db(db: Session = None) -> None:
                     "feedback_submitted": "BOOLEAN DEFAULT FALSE NOT NULL",
                     "feedback_rating": "NUMERIC(3, 2)",
                     "feedback_notes": "TEXT",
-                    "outcome_reason": "TEXT",
-                    "outcome_at": "TIMESTAMPTZ",
-                    "outcome_by": "UUID REFERENCES users(id) ON DELETE SET NULL",
                     "vertical": "VARCHAR(50)",
                     "program_type_id": "UUID REFERENCES program_types(id) ON DELETE SET NULL",
                     "faculty_type_id": "UUID REFERENCES faculty_types(id) ON DELETE SET NULL",
@@ -122,6 +142,89 @@ def init_db(db: Session = None) -> None:
                             f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {definition}'
                         ))
 
+            # Migrate batch status columns to enum types if they exist as strings
+            if inspector.has_table("batches"):
+                batch_columns = {column["name"]: column["type"] for column in inspector.get_columns("batches")}
+                
+                # Check if status column is string type (needs migration to enum)
+                if "status" in batch_columns and "VARCHAR" in str(batch_columns["status"]).upper():
+                    # Create enum type if not exists
+                    conn.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE batch_status AS ENUM (
+                                'Requested', 'Approval 1 Pending', 'Approval 2 Pending',
+                                'Upcoming', 'Ongoing', 'Pending for Closure', 'Completed',
+                                'OnHold', 'Cancelled', 'Rejected'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN NULL;
+                        END $$;
+                    """))
+                    # Create approval_status enum if not exists
+                    conn.execute(text("""
+                        DO $$ BEGIN
+                            CREATE TYPE approval_status AS ENUM (
+                                'Pending', 'Approved', 'Rejected'
+                            );
+                        EXCEPTION WHEN duplicate_object THEN NULL;
+                        END $$;
+                    """))
+                    
+                    # Add temporary enum columns
+                    conn.execute(text('ALTER TABLE "batches" ADD COLUMN "status_new" batch_status'))
+                    conn.execute(text('ALTER TABLE "batches" ADD COLUMN "approver_1_status_new" approval_status'))
+                    conn.execute(text('ALTER TABLE "batches" ADD COLUMN "approver_2_status_new" approval_status'))
+                    
+                    # Migrate data
+                    conn.execute(text("""
+                        UPDATE batches
+                        SET status_new = CASE
+                            WHEN status = 'Requested' THEN 'Requested'::batch_status
+                            WHEN status = 'Approval 1 Pending' THEN 'Approval 1 Pending'::batch_status
+                            WHEN status = 'Approval 2 Pending' THEN 'Approval 2 Pending'::batch_status
+                            WHEN status = 'Upcoming' THEN 'Upcoming'::batch_status
+                            WHEN status = 'Ongoing' THEN 'Ongoing'::batch_status
+                            WHEN status = 'Pending for Closure' THEN 'Pending for Closure'::batch_status
+                            WHEN status = 'Completed' THEN 'Completed'::batch_status
+                            WHEN status = 'OnHold' THEN 'OnHold'::batch_status
+                            WHEN status = 'Cancelled' THEN 'Cancelled'::batch_status
+                            WHEN status = 'Approved' THEN 'Upcoming'::batch_status
+                            ELSE 'Requested'::batch_status
+                        END
+                    """))
+                    
+                    conn.execute(text("""
+                        UPDATE batches
+                        SET approver_1_status_new = CASE
+                            WHEN approver_1_status = 'Pending' THEN 'Pending'::approval_status
+                            WHEN approver_1_status = 'Approved' THEN 'Approved'::approval_status
+                            WHEN approver_1_status = 'Rejected' THEN 'Rejected'::approval_status
+                            ELSE 'Pending'::approval_status
+                        END,
+                        approver_2_status_new = CASE
+                            WHEN approver_2_status = 'Pending' THEN 'Pending'::approval_status
+                            WHEN approver_2_status = 'Approved' THEN 'Approved'::approval_status
+                            WHEN approver_2_status = 'Rejected' THEN 'Rejected'::approval_status
+                            ELSE 'Pending'::approval_status
+                        END
+                    """))
+                    
+                    # Drop old columns and rename new ones
+                    conn.execute(text('ALTER TABLE "batches" DROP COLUMN "status"'))
+                    conn.execute(text('ALTER TABLE "batches" DROP COLUMN "approver_1_status"'))
+                    conn.execute(text('ALTER TABLE "batches" DROP COLUMN "approver_2_status"'))
+                    
+                    conn.execute(text('ALTER TABLE "batches" RENAME COLUMN "status_new" TO "status"'))
+                    conn.execute(text('ALTER TABLE "batches" RENAME COLUMN "approver_1_status_new" TO "approver_1_status"'))
+                    conn.execute(text('ALTER TABLE "batches" RENAME COLUMN "approver_2_status_new" TO "approver_2_status"'))
+                    
+                    # Set defaults and not null
+                    conn.execute(text('ALTER TABLE "batches" ALTER COLUMN "status" SET DEFAULT \'Requested\''))
+                    conn.execute(text('ALTER TABLE "batches" ALTER COLUMN "status" SET NOT NULL'))
+                    conn.execute(text('ALTER TABLE "batches" ALTER COLUMN "approver_1_status" SET DEFAULT \'Pending\''))
+                    conn.execute(text('ALTER TABLE "batches" ALTER COLUMN "approver_1_status" SET NOT NULL'))
+                    conn.execute(text('ALTER TABLE "batches" ALTER COLUMN "approver_2_status" SET DEFAULT \'Pending\''))
+                    conn.execute(text('ALTER TABLE "batches" ALTER COLUMN "approver_2_status" SET NOT NULL'))
+
             for table_name, index_specs in expected_indexes.items():
                 if not inspector.has_table(table_name):
                     continue
@@ -136,6 +239,9 @@ def init_db(db: Session = None) -> None:
             conn.commit()
     except Exception as e:
         print(f"Note: Column migration check returned: {e}")
+
+    with engine.begin() as conn:
+        _normalize_legacy_session_statuses(conn)
 
     if db is None:
         db = SessionLocal()

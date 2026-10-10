@@ -150,7 +150,7 @@ class ApprovalConfigurationResponse(ApprovalConfigurationBase):
 
 
 class BatchLifecycleStatusUpdate(BaseModel):
-    status: str = Field(..., pattern="^(OnHold|Cancelled|Upcoming|Ongoing|Approved|Requested|Approval 1 Pending|Approval 2 Pending|Resume)$", description="Target lifecycle status")
+    status: str = Field(..., pattern="^(OnHold|Cancelled|Upcoming|Ongoing|Requested|Approval 1 Pending|Approval 2 Pending|Rejected|Resume)$", description="Target lifecycle status")
     reason: str = Field(..., min_length=3, max_length=1000, description="Mandatory reason/justification for status change")
 
 
@@ -283,6 +283,7 @@ class BatchResponse(BaseModel):
     sessions_conducted: Optional[int] = 0
     completion_rate: Optional[float] = 0.0
     scheduled_session_count: int = 0
+    schedule_complete: bool = False
     created_at: datetime
     updated_at: datetime
 

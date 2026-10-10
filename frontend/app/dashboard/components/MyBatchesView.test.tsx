@@ -111,14 +111,21 @@ describe("MyBatchesView row actions", () => {
 });
 
 describe("MyBatchesView empty state", () => {
+  it("keeps Add New Batch on its own row outside the table header", () => {
+    const onCreateBatch = vi.fn();
+    renderView({ data: [makeBatch()], canCreateBatch: true, onCreateBatch });
+
+    const createButton = screen.getByRole("button", { name: /Add New Batch/i });
+    expect(createButton.closest("[data-fullscreen]")).toBeNull();
+    expect(createButton.parentElement).toHaveClass("flex", "justify-end");
+  });
+
   it("offers Add New Batch when the user can create batches", () => {
     const onCreateBatch = vi.fn();
     renderView({ data: [], canCreateBatch: true, onCreateBatch });
 
     expect(screen.getByText("No batches assigned to you yet")).toBeTruthy();
-    // Once in the panel toolbar and once inside the empty state, matching the
-    // admin tables.
-    expect(screen.getAllByRole("button", { name: /Add New Batch/i }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Add New Batch/i })).toBeInTheDocument();
   });
 
   it("omits the create pointer when the user cannot create batches", () => {
@@ -175,6 +182,7 @@ describe("MyBatchesView filters", () => {
     const user = userEvent.setup();
     renderView({ data: [acme, globex] });
 
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     await user.selectOptions(screen.getByLabelText("Client"), "Globex");
 
     expect(screen.getByText("GLOBEX_001")).toBeTruthy();
@@ -185,14 +193,17 @@ describe("MyBatchesView filters", () => {
     const user = userEvent.setup();
     renderView({ data: [acme, globex] });
 
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     await user.selectOptions(screen.getByLabelText("Delivery Mode"), "F2F");
 
     expect(screen.getByText("GLOBEX_001")).toBeTruthy();
     expect(screen.queryByText("ACME_001")).toBeNull();
   });
 
-  it("offers the distinct values of every filterable column as options", () => {
+  it("offers the distinct values of every filterable column as options", async () => {
+    const user = userEvent.setup();
     renderView({ data: [acme, globex] });
+    await user.click(screen.getByRole("button", { name: "Filters" }));
 
     // A dropdown rendered without options cannot be used, which is exactly what
     // happened when a select's key had no matching filter field.
@@ -206,6 +217,7 @@ describe("MyBatchesView filters", () => {
     const user = userEvent.setup();
     renderView({ data: [acme, globex] });
 
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     await user.selectOptions(screen.getByLabelText("Client"), "Globex");
     expect(screen.queryByText("ACME_001")).toBeNull();
 

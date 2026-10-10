@@ -137,10 +137,6 @@ BATCH_TEMPLATES = [
 
     # ── ON HOLD ──
     ("Capgemini",          "BFSI",          "Risk & Compliance", "Workshop",  "F2F",     "Mumbai",     "OnHold",    40, 10, 20, 40),
-
-    # ── CANCELLED ──
-    ("Tech Mahindra",      "IT/ITES",       "Legacy COBOL",      "RBT",       "F2F",     "Kolkata",    "Cancelled", 20, 15, 10, 60),
-    ("HCL Technologies",   "DS/ML",         "Tableau Advanced",  "Workshop",  "Online",  "Remote",     "Cancelled", 25, 10, 15, 40),
 ]
 
 MODULES = {
@@ -235,7 +231,7 @@ def main():
             if status in ("Completed", "Ongoing"):
                 start = past_date(abs(start_offset))
                 end   = start + timedelta(days=dur_days)
-            elif status in ("Cancelled", "OnHold"):
+            elif status in ("OnHold",):
                 start = future_date(abs(start_offset) - 10)
                 end   = start + timedelta(days=dur_days)
             else:
@@ -297,7 +293,7 @@ def main():
                 approver_2_id=mgrs[1].id,
                 approver_1_status="Approved" if status not in ("Requested", "Approval 1 Pending") else "Pending",
                 approver_2_status="Approved" if status not in ("Requested", "Approval 1 Pending", "Approval 2 Pending") else "Pending",
-                remarks=f"Demo batch for {client} — {tech}. Created for presentation purposes." if status in ("Completed", "Cancelled") else None,
+                remarks=f"Demo batch for {client} — {tech}. Created for presentation purposes." if status == "Completed" else None,
             )
             db.add(batch)
             db.flush()
@@ -339,13 +335,9 @@ def main():
                 today = date.today()
                 if batch.status == "Completed":
                     sess_status = "Completed"
-                elif batch.status == "Cancelled":
-                    sess_status = "Cancelled"
                 elif batch.status == "Ongoing":
-                    if sess_date < today:
+                    if sess_date <= today:
                         sess_status = "Completed"
-                    elif sess_date == today:
-                        sess_status = "InProgress"
                     else:
                         sess_status = "Scheduled"
                 else:
@@ -411,19 +403,11 @@ def main():
                     util_status = "Completed"
                     fb_submitted = True
                     fb_rating = rnd_feedback()
-                elif batch.status == "Cancelled":
-                    util_status = "Cancelled"
-                    fb_submitted = False
-                    fb_rating = None
                 elif batch.status == "Ongoing":
-                    if sess_d < today:
+                    if sess_d <= today:
                         util_status = "Completed"
                         fb_submitted = True
                         fb_rating = rnd_feedback()
-                    elif sess_d == today:
-                        util_status = "InProgress"
-                        fb_submitted = False
-                        fb_rating = None
                     else:
                         util_status = "Scheduled"
                         fb_submitted = False

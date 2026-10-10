@@ -28,6 +28,7 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
     modes: [],
     accommodations: [],
   });
+  const [optionsError, setOptionsError] = useState<string | null>(null);
   const [assignableUsers, setAssignableUsers] = useState<Record<string, User[]>>({
     sales: [],
     coordinators: [],
@@ -36,20 +37,55 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
 
   useEffect(() => {
     if (!isOpen) return;
-    Promise.all([
+    setOptionsError(null);
+    let isCurrent = true;
+    const requests = [
       api.getBatchOptions("entities"),
       api.getBatchOptions("categories"),
       api.getBatchOptions("delivery-modes"),
       api.getBatchOptions("accommodations"),
-      api.getAssignableUsers("Sales"),
+      api.getAssignableUsers("Sales", "Sales"),
       api.getAssignableUsers("Coordinator"),
       api.getAssignableUsers("Manager"),
-    ])
-      .then(([entities, categories, modes, accommodations, sales, coordinators, managers]) => {
-        setOptions({ entities, categories, modes, accommodations });
-        setAssignableUsers({ sales, coordinators, managers });
-      })
-      .catch((err) => console.error("Failed to load options:", err));
+    ] as const;
+    const labels = [
+      "entities",
+      "categories",
+      "delivery modes",
+      "accommodations",
+      "Sales contacts",
+      "coordinators",
+      "managers",
+    ];
+
+    Promise.allSettled(requests).then((results) => {
+      if (!isCurrent) return;
+
+      setOptions({
+        entities: results[0].status === "fulfilled" ? results[0].value : [],
+        categories: results[1].status === "fulfilled" ? results[1].value : [],
+        modes: results[2].status === "fulfilled" ? results[2].value : [],
+        accommodations: results[3].status === "fulfilled" ? results[3].value : [],
+      });
+      setAssignableUsers({
+        sales: results[4].status === "fulfilled" ? results[4].value : [],
+        coordinators: results[5].status === "fulfilled" ? results[5].value : [],
+        managers: results[6].status === "fulfilled" ? results[6].value : [],
+      });
+
+      const failedLabels = results.flatMap((result, index) => {
+        if (result.status !== "rejected") return [];
+        console.error(`Failed to load create-batch ${labels[index]}:`, result.reason);
+        return [labels[index]];
+      });
+      if (failedLabels.length > 0) {
+        setOptionsError(`Could not load ${failedLabels.join(", ")}. Please try again.`);
+      }
+    });
+
+    return () => {
+      isCurrent = false;
+    };
   }, [isOpen]);
 
   const handleSubmit = async (data: CreateBatchInput) => {
@@ -99,6 +135,11 @@ export const CreateBatchModal: React.FC<CreateBatchModalProps> = ({ isOpen, onCl
       size="full"
       render={(form) => (
         <div className="space-y-form-lg p-4">
+          {optionsError && (
+            <p role="alert" className="text-sm text-destructive">
+              {optionsError}
+            </p>
+          )}
           <section className="space-y-form">
             <SectionHeading title="Program & Client" />
             <div className="grid-form-2">

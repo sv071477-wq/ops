@@ -496,3 +496,368 @@ The current worktree implements items 13–17:
 * Reused form modals reset when opened for a different initial-data snapshot.
 
 Validation: `frontend` tests pass (`197/197`) and `npm run build` passes.
+
+---
+
+## Backend Workflow & State Machine Reference
+
+This section documents the exact backend workflows, state machines, and business logic as implemented in the FastAPI application.
+
+---
+
+### Authentication & Authorization
+
+**JWT-Based Authentication with RBAC**
+
+| Role | Description |
+|------|-------------|
+| `Admin` | Full system access, cannot create batches |
+| `Manager` | Scope-based batch access, analytics |
+| `Coordinator` | Create/edit owned batches, log sessions |
+| `Sales` | Limited batch ownership via `sales_spoc` |
+| `Faculty` | View assigned sessions, receive notifications |
+
+**Special Teams**
+
+| Team | Special Permissions |
+|------|---------------------|
+| `Delivery` | Only team that can create batches |
+| `Finance` | Can update finance fields, sees all batches |
+
+**Login Workflow** (`POST /api/v1/auth/login`)
+- Validates email/password, checks account lockout
+- On failure: increments `failed_login_attempts`, locks after 5 attempts for 15 minutes
+- On success: resets counters, updates `last_login_at`, generates access (30min) + refresh (7d) tokens
+- Audit events: `LOGIN_SUCCESS`, `LOGIN_FAILED`, `ACCOUNT_LOCKED`, `ACCOUNT_UNLOCKED`
+
+**Token Refresh** (`POST /api/v1/auth/refresh`)
+- Validates refresh token, user must be active
+- Generates new token pair, logs `REFRESH_TOKEN_USED`
+
+**Password Change** (`POST /api/v1/auth/change-password`)
+- Requires current password + new password meeting policy (min 12 chars, 1 uppercase, 1 lowercase, 1 number, 1 special)
+
+**Admin Password Reset** (`POST /api/v1/auth/users/{id}/change-password`)
+- Admin only, unlocks account, resets failed attempts, logs `PASSWORD_RESET_ADMIN`
+
+**Manager Scope Resolution**
+- **Admin/Finance**: Unrestricted (see everything)
+- **Manager**: Self + all direct/indirect reports (via `User.manager_id` + `UserManagerMapping`)
+- **Coordinator**: Self + manager + all coordinators under same manager
+
+---
+
+### Batch Lifecycle State Machine
+
+**States**
+
+| State | Description |
+|-------|-------------|
+| `Requested` | Initial draft before submission |
+| `Approval 1 Pending` | Awaiting first approver decision |
+| `Approval 2 Pending` | Awaiting second approver decision |
+| `Approved` | Both approval levels completed |
+| `Upcoming` | Approved, start date in the future |
+| `Ongoing` | Approved, start date has arrived |
+| `Pending for Closure` | End date passed, awaiting Gate 2 |
+| `Completed` | Gate 2 closed, batch finished |
+| `OnHold` | Temporarily paused |
+| `Cancelled` | Terminal state |
+
+**Valid Transitions**
+
+```
+Requested           → Approval 1 Pending, OnHold, Cancelled
+Approval 1 Pending  → Approval 2 Pending, Requested, OnHold, Cancelled
+Approval 2 Pending  → Approved, Upcoming, Ongoing, Requested, OnHold, Cancelled
+Approved            → Upcoming, Ongoing, OnHold, Cancelled
+Upcoming            → Ongoing, OnHold, Cancelled, Approved
+Ongoing             → Pending for Closure, OnHold, Cancelled
+Pending for Closure → Completed, OnHold, Cancelled
+Completed           → OnHold (reopen for corrections)
+OnHold              → Requested, Approval 1 Pending, Approval 2 Pending, Approved, Upcoming, Ongoing, Cancelled
+Cancelled           → {} (terminal)
+```
+
+**Approval Required Statuses**: `{Approved, Upcoming, Ongoing, Pending for Closure, Completed}`
+
+**Create Batch** (`POST /api/v1/batches`)
+- Authenticated, NOT Admin, Delivery team only
+- Both approvers configured in `ApprovalConfiguration`
+- `start_date >= today`, `end_date >= start_date`
+- `training_days > 0`, `total_hours > 0` and `<= training_days * max_hours_per_day`
+- At least 1 faculty member
+
+**Level 1 Approval** (`POST /api/v1/batches/{id}/approve-level-1`)
+- User must be `approver_1`, batch in `Approval 1 Pending`
+- `approve`: sets status to `Approval 2 Pending`
+- `reject`: sets status to `Requested`
+
+**Level 2 Approval** (`POST /api/v1/batches/{id}/approve-level-2`)
+- User must be `approver_2`, `approver_1_status = Approved`, batch in `Approval 2 Pending`
+- `approve`: locks schema, sets `approval_id` from reason, auto-transitions to `Upcoming`/`Ongoing`
+- `reject`: sets status to `Requested`
+
+**Manager Direct Approval** (`POST /api/v1/batches/{id}/approve`)
+- Manager/Admin only, bypasses Level 1 if Admin
+- Locks schema, assigns `primary_manager_id`
+
+**Lifecycle Status Update** (`POST /api/v1/batches/{id}/lifecycle-status`)
+- Validates transition against `VALID_TRANSITIONS`
+- Prevents entering approval-required statuses without completed approvals
+- Creates audit entry in `remarks`
+- Cascades cancellation to all non-terminal sessions
+
+**Resume from OnHold** (special case with `status="Resume"`)
+- Determines target based on approval state
+
+**Close Batch (Gate 2)** (`POST /api/v1/batches/{id}/close`)
+- Preconditions: `batch_avg_feedback` not null, ALL sessions terminal
+- Computes NPS, sets `status="Completed"`, `is_schema_locked=True`
+
+**Auto-Transition Rules (Scheduler - Daily 00:30 IST)**
+- `Upcoming` + `start_date <= today` → `Ongoing`
+- `Ongoing` + `end_date < today` → `Pending for Closure`
+
+**Schema Lock** (`is_schema_locked=True`)
+- Only Admin/Manager/Coordinator can modify
+- Restricted fields for others: `client_name`, `category`, `program_name`, `technology`, `domain`
+- Finance team can always update finance fields
+
+---
+
+### Session Management State Machine
+
+**Models**
+
+| Model | Purpose |
+|-------|---------|
+| `TrainingSession` | Curriculum timetable (planned) |
+| `FacultyUtilization` | Actual delivery ledger |
+
+**TrainingSession States**: `Scheduled`, `Completed`, `Cancelled`, `Not Conducted`
+**FacultyUtilization States**: `Scheduled`, `InProgress`, `Completed`, `Cancelled`, `Not Conducted`
+**TERMINAL_UTILIZATION_STATUSES**: `Completed`, `Cancelled`, `Not Conducted`
+
+**Transitions - TrainingSession**
+- `Scheduled` → `Completed` (when linked utilization marked Completed)
+- Any → `Cancelled`/`Not Conducted` (batch cancellation cascade)
+
+**Transitions - FacultyUtilization**
+- `Scheduled` → `InProgress`
+- `InProgress` → `Completed` (via Gate 1)
+- `Scheduled`/`InProgress` → `Cancelled` (with `outcome_reason`)
+- `Scheduled`/`InProgress` → `Not Conducted` (with `outcome_reason`)
+- `Scheduled` → `Scheduled` (reschedule)
+- `Completed` → cannot change (409)
+
+**Create Utilization** (`POST /api/v1/sessions`)
+- Requires `faculty_name`, validates time window (`end_time > start_time`)
+- Auto-resolves faculty from user roster (exact → ilike → free-text)
+- If linked to `TrainingSession` and `status="Completed"`, marks scheduled session `Completed`
+- Triggers `batch_avg_feedback` calculation
+
+**Gate 1 (Complete Session)** (`PATCH /api/v1/sessions/{id}/complete`)
+- Rating 1.0-5.0, `topic_feedback` min 3 chars, `total_students_present >= 0`
+- Sets `status="Completed"`, `feedback_submitted=True`
+- Syncs linked `TrainingSession` to `Completed`
+- Triggers batch feedback calculation
+
+**Batch Auto-Completion**
+After any session transition: if ALL sessions (scheduled + logged) are terminal and batch not `Completed`/`Cancelled`, sets batch to `Completed`
+
+---
+
+### Quality Gates
+
+**Gate 1 (Session Feedback)** - `PATCH /api/v1/sessions/{id}/complete`
+- Records feedback, marks session `Completed`
+- Payload: `rating` (1.0-5.0), `topic_feedback` (min 3 chars), `faculty_observations` (optional), `total_students_present`
+- Triggers `batch_avg_feedback` calculation
+
+**Gate 2 (Batch NPS Closure)** - `POST /api/v1/batches/{id}/close`
+- Preconditions: `batch_avg_feedback` not null, ALL sessions terminal
+- Payload: `promoters_count`, `passive_count`, `detractors_count` (all >= 0, total > 0)
+- Computes `batch_nps = ((promoters - detractors) / total) * 100`
+- Sets `status="Completed"`, `is_schema_locked=True`
+
+**Batch Average Feedback Calculation**
+Runs after: Gate 1, any session create/update/cancel, nightly sync
+Preconditions (ALL must hold):
+1. Every non-cancelled planned day (`TrainingSession`) has at least one linked ledger row
+2. Every linked ledger row has terminal status
+3. At least one `Completed` row has `feedback_rating`
+- Mean taken over rated rows only
+- Unrated `Completed`, `Cancelled`, `Not Conducted` excluded but don't block
+- Rounded to 2 decimals, idempotent
+
+---
+
+### Schedule Ingestion
+
+**Endpoints**
+- `POST /api/v1/schedules/ingest` - Preview only, no persistence
+- `POST /api/v1/schedules/apply` - Validate and persist atomically
+
+**Supported Formats**
+1. **Flat**: Standard rows with Date, Topic, Time, Faculty
+2. **TOC**: Day headers with dates, subtopics underneath
+3. **Curriculum**: Module/Subtopic/Hours without dates (assigns sequential from 2026-01-01)
+4. **Topic-Column**: Date + topic columns with complex names
+
+**Column Aliases** (normalized to canonical fields)
+| Canonical | Accepted Aliases |
+|-----------|------------------|
+| `batch_id` | batch id, batch_id, batch, batch code, batch no |
+| `date_of_training` | date of training, training date, date, session date |
+| `start_time` | start time, start, session start |
+| `end_time` | end time, end, session end |
+| `topic` | topic, session topic, module, subject, program, program name |
+| `faculty_name` | faculty name, faculty, trainer, instructor |
+| `no_of_hours` | no of hours, hours, duration, session hours |
+| `venue` | venue, room, location |
+| `location_city` | location city, city, location |
+| `mode_of_delivery` | mode of delivery, delivery mode, mode, delivery |
+
+**Apply Conditions**
+- Batch status in: `Approval 1 Pending`, `Approval 2 Pending`, `Approved`, `Upcoming`, `Ongoing`
+- NOT `Completed` or `Cancelled`
+- Date bounds: `item_date >= batch.start_date` and `<= batch.end_date`
+- Faculty required (from row or `batch.faculty_assigned_text`)
+- No duplicates in upload or existing DB
+- No faculty time overlaps within same upload
+
+**Missing Day Auto-Generation**
+If `batch.training_days > scheduled_dates`:
+- Requires `batch.faculty_assigned_text`
+- Fills missing weekdays (Mon-Fri) in batch range
+- Creates placeholders: `"Generated training day - details required"`
+
+---
+
+### Faculty Governance
+
+**Faculty Types**: `Internal Full-time`, `External Consultant`, `HOP`
+**Domains**: `IT/ITES`, `Cloud`, `DS/ML`, `CyberSecurity`, `FullStack`
+
+**Faculty Resolution** (when logging utilization)
+1. `faculty_id` provided → look up active user by ID
+2. `faculty_name` provided → exact match Faculty role → ilike Faculty → exact any active → ilike any active
+3. No match → use provided name as free-text
+4. No name → 422 error
+
+**Faculty Utilization Overview** (`GET /api/v1/faculty/utilization`)
+- `total_faculty_count`: Active users with role=`Faculty`
+- `active_deployed_faculty`: Distinct faculty names in non-cancelled utilizations matching roster
+- `overall_utilization_percentage`: `(deployed / total) * 100`
+- `domain_breakdown`: Per-domain faculty count and hours
+
+**FMS Sync** (`POST /api/v1/integrations/fms/sync`) - Admin only
+- Currently returns mock success, does not call external API
+
+---
+
+### Notifications
+
+**Events & Current Implementation**
+
+| Event | Trigger | Recipients | Email Status |
+|-------|---------|------------|--------------|
+| Approval Requested | Batch submitted/decision | approver_1, approver_2 | Logged only |
+| Batch Approved | `/batches/{id}/approve` | primary_manager, sales_spoc | **Wired** |
+| Session Scheduled | `/sessions` create | faculty_email (if provided) | **Wired** |
+| Gate Completion | Gate 1 or 2 | None | Logged only |
+
+**Email Service Configuration**
+- SMTP: `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_TLS` (True), `EMAIL_FROM`, `EMAIL_FROM_NAME`, `FRONTEND_URL`
+- Fallback: Logs to console if SMTP not configured
+
+**Welcome Email** (on admin user creation)
+- Includes temporary password, security notice, login link
+
+---
+
+### RBAC Conditions
+
+**Permission Matrix (Selected Endpoints)**
+
+| Endpoint | Auth | Additional Conditions |
+|----------|------|----------------------|
+| `POST /batches` | Coordinator+ | NOT Admin, Delivery team only |
+| `PATCH /batches/{id}` | Coordinator+ | Operational scope |
+| `POST /batches/{id}/submit` | Coordinator+ | Operational scope |
+| `POST /batches/{id}/approve-level-1` | Any | Must be approver_1 |
+| `POST /batches/{id}/approve-level-2` | Any | Must be approver_2, approver_1 approved |
+| `POST /batches/{id}/approve` | Manager/Admin | Admin bypasses approver_1 check |
+| `POST /batches/{id}/close` | Coordinator+ | Operational scope, Gate 1 complete |
+| `POST /sessions` | Coordinator+ | Operational scope |
+| `PATCH /sessions/{id}` | Coordinator+ | Operational scope, batch not Completed |
+| `GET /analytics/manager-dashboard` | Manager/Admin | - |
+| `POST /integrations/fms/sync` | Admin | - |
+
+**Critical Rules**
+- **Admin CANNOT create batches** (403 Forbidden)
+- **Only Delivery team** can create batches
+- **Finance fields** only updatable by Finance team or Admin
+- **Schema lock** restricts non-governance fields for non-Admin/Manager/Coordinator
+
+---
+
+### Scheduled Jobs
+
+**Batch Lifecycle Sync** - Daily at 00:30 IST (19:00 UTC)
+- Job ID: `batch_lifecycle_sync`
+- Syncs batch statuses: `Upcoming`→`Ongoing`, `Ongoing`→`Pending for Closure`
+- Syncs session statuses: Completed utilization → mark TrainingSession Completed
+- Recalculates `batch_avg_feedback` for all batches missing it
+
+**Manual Trigger**: `POST /api/v1/batches/{id}/sync-status` (Admin only)
+
+**Startup**
+- Dev mode (`ENVIRONMENT != "production"`): Runs `init_db()` (auto-migrate + seed)
+- Production: Skips auto-migration (requires manual `alembic upgrade head`)
+
+---
+
+### Data Models (Key Entities)
+
+**User**
+- `id`, `email` (unique), `hashed_password`, `full_name`, `role`, `role_id`, `team_id`, `manager_id`
+- `is_active`, `failed_login_attempts`, `locked_until`, `last_login_at`
+- Relationships: `role_detail`, `team_detail`, `manager`, `direct_reports`, `managed_coordinators`, `assigned_managers`
+
+**Batch**
+- `id`, `batch_id` (unique), `sow_number`, `approval_id`, `category`, `entity_id`, `category_id`, `delivery_mode_id`, `accommodation_id`
+- `program_name`, `technology`, `domain`, `client_name`, `location_city`
+- `start_date`, `end_date`, `batch_request_date`, `training_days`, `calendar_days`, `total_hours`, `total_enrollments`
+- `status` (default "Requested"), `is_schema_locked`
+- `approver_1_id`, `approver_2_id`, `approver_1_status`, `approver_2_status`, `approver_1_approved_at`, `approver_2_approved_at`
+- `primary_manager_id`, `coordinator_id`, `sales_spoc_id`, `faculty_members` (JSON), `faculty_assigned_text`
+- `finance_status`, `finance_status_check_date`, `finance_check`
+- `batch_avg_feedback`, `batch_nps`, `nps_total_responses`, `nps_promoters`, `nps_passives`, `nps_detractors`
+- `remarks` (audit trail)
+- Relationships: `primary_manager`, `coordinator`, `sales_spoc`, `entity`, `delivery_mode_detail`, `scheduled_sessions`, `faculty_utilizations`
+
+**TrainingSession**
+- `id`, `batch_id`, `sequence_number`, `week`, `session_date`, `day_name`, `start_time`, `end_time`, `duration_hours`, `module`, `trainer_name`, `status` (default "Scheduled")
+- Unique constraint: `(batch_id, session_date, module)`
+- Computed: `effective_status` (Completed/Upcoming/Ongoing/Overdue)
+
+**FacultyUtilization**
+- `id`, `batch_id`, `training_session_id` (nullable), `faculty_name`, `date_of_training`, `start_time`, `end_time`, `topic`, `no_of_hours`, `venue`, `location_city`, `mode_of_delivery`, `status` (default "Completed")
+- `feedback_submitted`, `feedback_rating`, `feedback_notes`, `outcome_reason`, `outcome_at`, `outcome_by`
+- `vertical`, `program_type_id`, `faculty_type_id`
+
+**Lookup Tables** (seeded): `roles`, `teams`, `batch_categories`, `delivery_modes`, `accommodations`, `entities`, `verticals`, `program_types`, `faculty_types`, `approval_configurations` (singleton)
+
+**Junction Table**: `UserManagerMapping` (coordinator_id, manager_id, assigned_at)
+
+**AuditLog**: `event_type` (enum), `user_id`, `user_email`, `ip_address`, `user_agent`, `details`, `created_at`
+
+**Key Constraints**
+- `batches.batch_id`: UNIQUE
+- `training_sessions`: UNIQUE on `(batch_id, session_date, module)`
+- `users.email`: UNIQUE
+- All lookup `name` fields: UNIQUE
+
+**Indexes**: Batches (status, start_date), TrainingSessions (batch_id, session_date), FacultyUtilization (batch_id, training_session_id, faculty_name, date_of_training, status, program_type_id, faculty_type_id)

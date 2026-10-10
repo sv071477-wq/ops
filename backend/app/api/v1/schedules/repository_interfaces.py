@@ -28,8 +28,20 @@ class IScheduleRepository(ABC):
         pass
 
     @abstractmethod
+    def list_scheduled_sessions_for_batch(self, batch_id: UUID) -> List[TrainingSession]:
+        pass
+
+    @abstractmethod
+    def get_scheduled_session_count(self, batch_id: UUID) -> int:
+        pass
+
+    @abstractmethod
     def persist_sessions(self, sessions: List[TrainingSession]) -> List[TrainingSession]:
         """Insert every session as one transaction, refreshing each on success."""
+        pass
+
+    @abstractmethod
+    def commit(self) -> None:
         pass
 
     @abstractmethod

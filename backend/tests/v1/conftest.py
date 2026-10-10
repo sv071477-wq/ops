@@ -77,7 +77,7 @@ def db_session():
             program_name="Full Stack Python Track",
             delivery_mode="Online",
             location_city="Bengaluru",
-            status="Approved",
+            status="Upcoming",
             batch_avg_feedback=Decimal("4.50"),
             primary_manager_id=manager.id,
             coordinator_id=coord.id,

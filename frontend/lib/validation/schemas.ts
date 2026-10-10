@@ -78,8 +78,8 @@ export const scheduleDeliverySchema = z.object({
   training_days: positiveInt,
   total_hours: z.coerce.number().min(0.5, "Hours must be ≥ 0.5"),
 }).refine(
-  (data) => new Date(data.end_date) > new Date(data.start_date),
-  { message: "End date must be after start date", path: ["end_date"] }
+  (data) => new Date(data.end_date) >= new Date(data.start_date),
+  { message: "End date must be on or after start date", path: ["end_date"] }
 ).refine(
   (data) => new Date(data.start_date) >= today,
   { message: "Start date cannot be in the past", path: ["start_date"] }
@@ -141,8 +141,8 @@ export const createBatchSchema = z.object({
   sow_number: nonEmptyString,
   remarks: z.string().max(2000).optional().nullable(),
 }).refine(
-  (data) => new Date(data.end_date) > new Date(data.start_date),
-  { message: "End date must be after start date", path: ["end_date"] }
+  (data) => new Date(data.end_date) >= new Date(data.start_date),
+  { message: "End date must be on or after start date", path: ["end_date"] }
 ).refine(
   (data) => new Date(data.start_date) >= today,
   { message: "Start date cannot be in the past", path: ["start_date"] }
@@ -210,7 +210,7 @@ export const logUtilizationSchema = z.object({
   venue: optionalString,
   location_city: optionalString,
   mode_of_delivery: z.enum(["Online", "F2F", "Blended", "Hybrid"]),
-  status: z.enum(["Completed", "Cancelled", "Not Conducted", "Scheduled", "InProgress", "Rescheduled"]),
+  status: z.enum(["Completed", "Scheduled"]),
   feedback_submitted: z.boolean().default(false),
   feedback_rating: z.coerce.number().min(1).max(5).optional().nullable(),
   feedback_notes: optionalString,
@@ -218,9 +218,6 @@ export const logUtilizationSchema = z.object({
   program_type_id: optionalString,
   outcome_reason: optionalString,
 }).refine(
-  (data) => data.status !== "Cancelled" && data.status !== "Not Conducted" || (data.outcome_reason?.length ?? 0) >= 3,
-  { message: "Outcome reason required when cancelled/not conducted", path: ["outcome_reason"] }
-).refine(
   (data) => data.status !== "Completed" || !!data.training_session_id,
   { message: "Training session ID is required when status is Completed", path: ["training_session_id"] }
 );

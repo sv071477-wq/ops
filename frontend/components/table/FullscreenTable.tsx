@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,8 @@ export interface FullscreenTableProps {
   fullscreenLabel?: string;
   exitFullscreenLabel?: string;
   fullscreenBackground?: string;
+  /** Uses the browser Fullscreen API rather than the page-level overlay. */
+  nativeFullscreen?: boolean;
   /**
    * "fixed" covers the viewport. "absolute" fills the nearest positioned
    * ancestor instead — required for tables rendered inside a dialog/drawer,
@@ -50,7 +53,7 @@ const HEADER_PADDING = "14px 20px";
 const TOOLBAR_ROW_GAP = 10;
 
 /**
- * Panel wrapper that gives any table a fullscreen mode, Escape-to-exit,
+ * Panel wrapper that gives any table overlay or browser-native fullscreen,
  * body scroll locking and a header that holds the title, the filter toolbar and
  * the row/table actions. It only controls layout — the table markup stays with
  * the consumer.
@@ -72,6 +75,7 @@ export function FullscreenTable({
   fullscreenLabel = "Full Screen",
   exitFullscreenLabel = "Exit Full Screen",
   fullscreenBackground = "#f8fbff",
+  nativeFullscreen = false,
   strategy = "fixed",
   initialFullscreen = false,
   onFullscreenChange,
@@ -80,6 +84,14 @@ export function FullscreenTable({
   stickyThead,
 }: FullscreenTableProps) {
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+  const [canPortal, setCanPortal] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCanPortal(true);
+  }, []);
 
   const applyFullscreen = useCallback(
     (next: boolean) => {
@@ -89,17 +101,54 @@ export function FullscreenTable({
     [onFullscreenChange]
   );
 
-  const toggleFullscreen = useCallback(() => applyFullscreen(!isFullscreen), [applyFullscreen, isFullscreen]);
+  const toggleFullscreen = useCallback(async () => {
+    if (!nativeFullscreen) {
+      applyFullscreen(!isFullscreen);
+      return;
+    }
+
+    setFullscreenError(null);
+    try {
+      if (document.fullscreenElement === panelRef.current) {
+        await document.exitFullscreen();
+      } else if (isFullscreen) {
+        applyFullscreen(false);
+      } else if (panelRef.current?.requestFullscreen) {
+        await panelRef.current.requestFullscreen();
+      } else {
+        throw new Error("This browser does not support fullscreen mode.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (document.fullscreenElement !== panelRef.current) {
+        applyFullscreen(true);
+        setFullscreenError(`Browser fullscreen was unavailable; using expanded view instead. ${message}`);
+      } else {
+        setFullscreenError(message);
+      }
+    }
+  }, [applyFullscreen, isFullscreen, nativeFullscreen]);
+
+  useEffect(() => {
+    if (!nativeFullscreen) return;
+    const onFullscreenChange = () => {
+      const active = document.fullscreenElement === panelRef.current;
+      setIsNativeFullscreen(active);
+      applyFullscreen(active);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, [applyFullscreen, nativeFullscreen]);
 
   // Escape is the expected way out of a fullscreen overlay.
   useEffect(() => {
-    if (!isFullscreen) return;
+    if (!isFullscreen || (nativeFullscreen && isNativeFullscreen)) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") applyFullscreen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isFullscreen, applyFullscreen]);
+  }, [isFullscreen, isNativeFullscreen, nativeFullscreen, applyFullscreen]);
 
   // Keep the page behind the overlay from scrolling while it is open.
   useEffect(() => {
@@ -117,8 +166,9 @@ export function FullscreenTable({
   const scrollBody = stickyHeader || isFullscreen;
   const pinThead = stickyThead ?? stickyHeader;
 
-  return (
+  const panel = (
     <div
+      ref={panelRef}
       className={cn(panelClassName, isFullscreen ? "table-fullscreen-panel" : null, className)}
       data-fullscreen={isFullscreen ? "true" : "false"}
       style={{
@@ -132,11 +182,20 @@ export function FullscreenTable({
           ? {
               position: strategy,
               inset: 0,
-              zIndex: 100,
+              zIndex: 1000,
               borderRadius: 0,
               padding: 16,
               overflow: "hidden",
               background: fullscreenBackground,
+              ...(strategy === "fixed"
+                ? {
+                    boxSizing: "border-box",
+                    width: "100vw",
+                    height: "100dvh",
+                    maxWidth: "100vw",
+                    maxHeight: "100dvh",
+                  }
+                : null),
             }
           : null),
         ...(stickyHeader && !isFullscreen
@@ -166,6 +225,8 @@ export function FullscreenTable({
             justifyContent: "flex-start",
             gap: TOOLBAR_ROW_GAP,
             flexShrink: 0,
+            position: "relative",
+            zIndex: 10,
           }}
         >
           {title && (
@@ -182,6 +243,12 @@ export function FullscreenTable({
               }}
             >
               {title}
+            </div>
+          )}
+
+          {fullscreenError && (
+            <div role="alert" className="mx-5 mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              Fullscreen notice: {fullscreenError}
             </div>
           )}
 
@@ -203,14 +270,18 @@ export function FullscreenTable({
               )}
 
               <div
+                role="group"
+                aria-label="Table actions"
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "flex-end",
                   gap: 8,
-                  flexWrap: "wrap",
+                  flexWrap: "nowrap",
                   marginLeft: "auto",
                   flexShrink: 0,
+                  paddingBottom: 2,
+                  position: "relative",
                 }}
               >
                 {actions}
@@ -255,4 +326,11 @@ export function FullscreenTable({
       {footer}
     </div>
   );
+
+  return isFullscreen &&
+    strategy === "fixed" &&
+    canPortal &&
+    (!nativeFullscreen || !isNativeFullscreen)
+    ? createPortal(panel, document.body)
+    : panel;
 }
